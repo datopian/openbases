@@ -128,9 +128,7 @@ jobs:
           fetch-depth: 0
 
       - name: secret scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/secret_scan.sh
 
       - uses: actions/setup-go@v5
         with:

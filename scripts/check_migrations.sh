@@ -45,5 +45,7 @@ done
 dupes="$(printf '%s\n' "${files[@]}" | xargs -n1 basename 2>/dev/null | cut -c1-4 | sort | uniq -d)"
 [ -n "$dupes" ] && note "duplicate migration numbers: $dupes"
 
+python3 scripts/check_reserved_words.py || fail=1
+
 if [ "$fail" -eq 0 ]; then echo "migration checks OK"; else echo "migration checks FAILED"; fi
 exit "$fail"

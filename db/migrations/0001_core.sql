@@ -94,7 +94,7 @@ CREATE TABLE execution_cells (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     execution_node_id   uuid NOT NULL REFERENCES execution_nodes(id) ON DELETE RESTRICT,
     slug                text NOT NULL UNIQUE,
-    system_user         text NOT NULL UNIQUE,
+    system_username     text NOT NULL UNIQUE,
     trust_domain        text NOT NULL,
     max_concurrent_agents integer NOT NULL DEFAULT 2 CHECK (max_concurrent_agents > 0),
     cpu_quota_percent   integer CHECK (cpu_quota_percent > 0),
