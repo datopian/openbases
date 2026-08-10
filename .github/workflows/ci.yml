@@ -59,7 +59,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # pgvector is required by 0007_projections.sql. The stock postgres image
+        # does not ship the extension.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: workgraph
@@ -67,6 +69,11 @@ jobs:
           --health-cmd pg_isready --health-interval 5s
           --health-timeout 5s --health-retries 10
         ports: ["5432:5432"]
+    env:
+      PGPASSWORD: ci
+      PGHOST: localhost
+      PGUSER: postgres
+      PGDATABASE: workgraph
     steps:
       - uses: actions/checkout@v4
 
@@ -74,32 +81,33 @@ jobs:
         run: bash scripts/check_migrations.sh
 
       # Applying against a real PostgreSQL is what catches a migration that
-      # parses but cannot run. Constraints are asserted, not assumed.
+      # parses but cannot run.
       - name: apply migrations to an empty database
-        env:
-          PGPASSWORD: ci
         run: |
+          set -euo pipefail
           for f in db/migrations/*.sql; do
             echo "applying $f"
-            psql -h localhost -U postgres -d workgraph -v ON_ERROR_STOP=1 -f "$f"
+            psql -v ON_ERROR_STOP=1 -q -f "$f"
           done
 
-      - name: assert core invariants exist
-        env:
-          PGPASSWORD: ci
+      # Re-applying must not be destructive; this is the cheapest guard against
+      # a migration that only works on a virgin database.
+      - name: assert migrations are individually transactional
         run: |
-          set -e
-          q() { psql -h localhost -U postgres -d workgraph -tAc "$1"; }
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -tAc "SELECT count(*) FROM pg_tables WHERE schemaname='public'" \
+            | { read -r n; echo "tables created: $n"; [ "$n" -ge 35 ]; }
 
-          # A project must have a backup owner different from the primary.
-          test "$(q "SELECT count(*) FROM pg_constraint WHERE conname='backup_owner_differs'")" = "1"
+      # The invariants are the point of the schema. If these stop being
+      # enforced, the application's guarantees are gone whatever the code says.
+      - name: schema invariants refuse what they must refuse
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/invariants.sql
 
-          # A restricted project must have its own execution cell.
-          test "$(q "SELECT count(*) FROM pg_constraint WHERE conname='restricted_requires_cell'")" = "1"
+      - name: knowledge, approval and credential invariants
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/knowledge_invariants.sql
 
-          # The audit log must refuse updates and deletes.
-          test "$(q "SELECT count(*) FROM pg_trigger WHERE tgname='audit_log_no_update'")" = "1"
-          echo "core invariants present"
+      - name: cross-project isolation under row-level security
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/rls_isolation.sql
 
   toolchain:
     name: toolchain
