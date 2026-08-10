@@ -130,6 +130,25 @@ BEGIN
   SELECT count(*) INTO n FROM knowledge_records;
   IF n <> 0 THEN RAISE EXCEPTION 'an unidentified session must see no records, saw %', n; END IF;
 
+  -- A member must still be able to write. RLS that blocks legitimate writes
+  -- gets disabled in a hurry, which is how these controls die.
+  PERFORM set_config('workgraph.user_id', bob, true);
+  INSERT INTO knowledge_records (organisation_id, record_type, statement, scope, project_id,
+                                 owner_user_id, reviewer_user_id, visibility, review_after,
+                                 human_authored, author_user_id)
+  VALUES ('00000000-0000-0000-0000-0000000000a1', 'constraint', 'Acme requires EU data residency.',
+          'project', '00000000-0000-0000-0000-0000000000d2',
+          '00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000b2',
+          'restricted', CURRENT_DATE + 365, true, '00000000-0000-0000-0000-0000000000b2');
+
+  SELECT count(*) INTO n FROM knowledge_records;
+  IF n <> 2 THEN RAISE EXCEPTION 'Bob should now see 2 of his records, saw %', n; END IF;
+
+  -- ...and the new record must still be invisible to Alice.
+  PERFORM set_config('workgraph.user_id', alice, true);
+  SELECT count(*) INTO n FROM knowledge_records;
+  IF n <> 0 THEN RAISE EXCEPTION 'a newly written restricted record leaked to a non-member'; END IF;
+
   RAISE NOTICE 'RLS isolation: all assertions passed';
 END
 $$;

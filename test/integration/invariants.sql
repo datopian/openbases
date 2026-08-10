@@ -53,3 +53,21 @@ END
 $$;
 
 ROLLBACK;
+
+-- Regression guard for the bug found in review: a permissive FOR ALL policy
+-- also covers SELECT, so it re-opens every read it was meant to leave alone.
+-- No policy on an RLS-protected table may use FOR ALL.
+DO $$
+DECLARE offending text;
+BEGIN
+  SELECT string_agg(format('%s.%s', schemaname, policyname), ', ')
+    INTO offending
+  FROM pg_policies
+  WHERE schemaname = 'public' AND cmd = 'ALL';
+
+  IF offending IS NOT NULL THEN
+    RAISE EXCEPTION 'FOR ALL policies silently grant SELECT; scope these to INSERT/UPDATE/DELETE: %', offending;
+  END IF;
+  RAISE NOTICE 'no FOR ALL policies';
+END
+$$;

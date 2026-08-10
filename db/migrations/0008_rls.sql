@@ -71,76 +71,112 @@ ALTER TABLE record_embeddings     FORCE ROW LEVEL SECURITY;
 ALTER TABLE record_search         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE record_search         FORCE ROW LEVEL SECURITY;
 
-CREATE POLICY projects_read ON projects FOR SELECT
-    USING (can_read_project(id));
+-- Read predicates, named once so that the SELECT policy and the UPDATE/DELETE
+-- policies cannot drift apart.
+CREATE OR REPLACE FUNCTION can_read_source(p_project_id uuid, p_visibility text) RETURNS boolean AS $$
+    SELECT current_app_user() IS NOT NULL
+       AND ((p_project_id IS NULL AND p_visibility = 'internal')
+            OR can_read_project(p_project_id));
+$$ LANGUAGE sql STABLE;
 
-CREATE POLICY work_refs_read ON work_refs FOR SELECT
+-- IMPORTANT: policies are permissive and OR together, and a FOR ALL policy
+-- also covers SELECT. Write policies are therefore scoped to INSERT, UPDATE and
+-- DELETE explicitly. A FOR ALL write policy here would silently re-open every
+-- read — which is exactly what test/integration/rls_isolation.sql caught.
+
+-- projects
+CREATE POLICY projects_read   ON projects FOR SELECT USING (can_read_project(id));
+CREATE POLICY projects_insert ON projects FOR INSERT WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY projects_update ON projects FOR UPDATE
+    USING (can_read_project(id)) WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY projects_delete ON projects FOR DELETE USING (can_read_project(id));
+
+-- work_refs
+CREATE POLICY work_refs_read   ON work_refs FOR SELECT
+    USING (project_id IS NULL OR can_read_project(project_id));
+CREATE POLICY work_refs_insert ON work_refs FOR INSERT WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY work_refs_update ON work_refs FOR UPDATE
+    USING (project_id IS NULL OR can_read_project(project_id))
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY work_refs_delete ON work_refs FOR DELETE
     USING (project_id IS NULL OR can_read_project(project_id));
 
--- A source with no project scope is company-internal; a project-scoped source
--- is visible only to that project's members.
-CREATE POLICY knowledge_sources_read ON knowledge_sources FOR SELECT
-    USING (
-      current_app_user() IS NOT NULL
-      AND (project_id IS NULL AND visibility = 'internal'
-           OR can_read_project(project_id))
-    );
+-- knowledge_sources: no project scope means company-internal.
+CREATE POLICY knowledge_sources_read   ON knowledge_sources FOR SELECT
+    USING (can_read_source(project_id, visibility));
+CREATE POLICY knowledge_sources_insert ON knowledge_sources FOR INSERT
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY knowledge_sources_update ON knowledge_sources FOR UPDATE
+    USING (can_read_source(project_id, visibility)) WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY knowledge_sources_delete ON knowledge_sources FOR DELETE
+    USING (can_read_source(project_id, visibility));
 
--- A candidate inherits its source's reach. This is the row that stops an
--- unauthorised reviewer discovering a restricted meeting's text.
+-- knowledge_candidates inherit their source's reach. This is the row that stops
+-- an unauthorised reviewer discovering a restricted meeting's text.
 CREATE POLICY knowledge_candidates_read ON knowledge_candidates FOR SELECT
     USING (EXISTS (
         SELECT 1 FROM knowledge_sources s
         WHERE s.id = knowledge_candidates.source_id
-          AND (s.project_id IS NULL AND s.visibility = 'internal'
-               OR can_read_project(s.project_id))
+          AND can_read_source(s.project_id, s.visibility)
+    ));
+CREATE POLICY knowledge_candidates_insert ON knowledge_candidates FOR INSERT
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY knowledge_candidates_update ON knowledge_candidates FOR UPDATE
+    USING (EXISTS (
+        SELECT 1 FROM knowledge_sources s
+        WHERE s.id = knowledge_candidates.source_id
+          AND can_read_source(s.project_id, s.visibility)
+    ))
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY knowledge_candidates_delete ON knowledge_candidates FOR DELETE
+    USING (EXISTS (
+        SELECT 1 FROM knowledge_sources s
+        WHERE s.id = knowledge_candidates.source_id
+          AND can_read_source(s.project_id, s.visibility)
     ));
 
+-- knowledge_records
 CREATE POLICY knowledge_records_read ON knowledge_records FOR SELECT
-    USING (
-      current_app_user() IS NOT NULL
-      AND (scope = 'company' AND visibility = 'internal'
-           OR can_read_project(project_id))
-    );
+    USING (current_app_user() IS NOT NULL
+           AND ((scope = 'company' AND visibility = 'internal') OR can_read_project(project_id)));
+CREATE POLICY knowledge_records_insert ON knowledge_records FOR INSERT
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY knowledge_records_update ON knowledge_records FOR UPDATE
+    USING (current_app_user() IS NOT NULL
+           AND ((scope = 'company' AND visibility = 'internal') OR can_read_project(project_id)))
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY knowledge_records_delete ON knowledge_records FOR DELETE
+    USING (current_app_user() IS NOT NULL
+           AND ((scope = 'company' AND visibility = 'internal') OR can_read_project(project_id)));
 
-CREATE POLICY marketing_packets_read ON marketing_packets FOR SELECT
+-- marketing_packets
+CREATE POLICY marketing_packets_read   ON marketing_packets FOR SELECT
+    USING (can_read_project(project_id));
+CREATE POLICY marketing_packets_insert ON marketing_packets FOR INSERT
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY marketing_packets_update ON marketing_packets FOR UPDATE
+    USING (can_read_project(project_id)) WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY marketing_packets_delete ON marketing_packets FOR DELETE
     USING (can_read_project(project_id));
 
--- The retrieval projections carry the same filter as the records they index,
--- so a vector or keyword search cannot reach further than a direct read.
-CREATE POLICY record_embeddings_read ON record_embeddings FOR SELECT
-    USING (
-      current_app_user() IS NOT NULL
-      AND (project_id IS NULL AND visibility = 'internal'
-           OR can_read_project(project_id))
-    );
+-- The retrieval projections carry the same filter as the records they index, so
+-- a vector or keyword search cannot reach further than a direct read.
+CREATE POLICY record_embeddings_read   ON record_embeddings FOR SELECT
+    USING (can_read_source(project_id, visibility));
+CREATE POLICY record_embeddings_insert ON record_embeddings FOR INSERT
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY record_embeddings_update ON record_embeddings FOR UPDATE
+    USING (can_read_source(project_id, visibility)) WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY record_embeddings_delete ON record_embeddings FOR DELETE
+    USING (can_read_source(project_id, visibility));
 
-CREATE POLICY record_search_read ON record_search FOR SELECT
-    USING (
-      current_app_user() IS NOT NULL
-      AND (project_id IS NULL AND visibility = 'internal'
-           OR can_read_project(project_id))
-    );
-
--- Writes go through the domain services, which check permissions before
--- issuing the statement. These permissive write policies exist so that RLS does
--- not silently break inserts; they are not the authorisation boundary for
--- writes, and tightening them is tracked with the services that need it.
-CREATE POLICY projects_write ON projects FOR ALL
-    USING (current_app_user() IS NOT NULL) WITH CHECK (current_app_user() IS NOT NULL);
-CREATE POLICY work_refs_write ON work_refs FOR ALL
-    USING (current_app_user() IS NOT NULL) WITH CHECK (current_app_user() IS NOT NULL);
-CREATE POLICY knowledge_sources_write ON knowledge_sources FOR ALL
-    USING (current_app_user() IS NOT NULL) WITH CHECK (current_app_user() IS NOT NULL);
-CREATE POLICY knowledge_candidates_write ON knowledge_candidates FOR ALL
-    USING (current_app_user() IS NOT NULL) WITH CHECK (current_app_user() IS NOT NULL);
-CREATE POLICY knowledge_records_write ON knowledge_records FOR ALL
-    USING (current_app_user() IS NOT NULL) WITH CHECK (current_app_user() IS NOT NULL);
-CREATE POLICY marketing_packets_write ON marketing_packets FOR ALL
-    USING (current_app_user() IS NOT NULL) WITH CHECK (current_app_user() IS NOT NULL);
-CREATE POLICY record_embeddings_write ON record_embeddings FOR ALL
-    USING (current_app_user() IS NOT NULL) WITH CHECK (current_app_user() IS NOT NULL);
-CREATE POLICY record_search_write ON record_search FOR ALL
-    USING (current_app_user() IS NOT NULL) WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY record_search_read   ON record_search FOR SELECT
+    USING (can_read_source(project_id, visibility));
+CREATE POLICY record_search_insert ON record_search FOR INSERT
+    WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY record_search_update ON record_search FOR UPDATE
+    USING (can_read_source(project_id, visibility)) WITH CHECK (current_app_user() IS NOT NULL);
+CREATE POLICY record_search_delete ON record_search FOR DELETE
+    USING (can_read_source(project_id, visibility));
 
 COMMIT;
