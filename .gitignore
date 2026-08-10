@@ -41,3 +41,8 @@ crash.log
 .dolt/
 *.db
 .beads-credential-key
+
+# OpenTofu variable files may contain environment-specific values
+infra/tofu/**/terraform.tfvars
+infra/tofu/**/*.auto.tfvars
+tfplan
