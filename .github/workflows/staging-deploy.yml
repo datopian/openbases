@@ -1,0 +1,51 @@
+name: staging-deploy
+
+# Every merge to main deploys automatically to staging (plan section 16.4).
+# The job is gated on the staging environment actually existing: until WP-B1
+# provisions it, the job skips rather than reporting a deployment that did not
+# happen.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy to staging
+    if: vars.STAGING_PROVISIONED == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      # Images are built on GitHub-hosted runners. A privileged self-hosted
+      # runner must never execute untrusted pull request code (plan section 16.2).
+      - name: build and push image
+        run: |
+          echo "image build and push land with WP-B1/WP-I1"
+          exit 1
+
+      - name: deploy by immutable digest
+        run: |
+          echo "deployment triggers the host pull through a Cloudflare-protected endpoint"
+          exit 1
+
+      - name: smoke tests
+        run: echo "smoke tests land with WP-I1"
+
+  not-provisioned:
+    name: staging not provisioned
+    if: vars.STAGING_PROVISIONED != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: explain
+        run: |
+          echo "Staging is not provisioned yet, so there is nothing to deploy to."
+          echo "WP-B1 provisions it and sets the STAGING_PROVISIONED repository variable."

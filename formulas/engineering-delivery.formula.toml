@@ -1,0 +1,78 @@
+# The normal engineering execution flow, from bead to merged evidence.
+# Work package: WP-E3. Plan section 4.5.
+formula = "engineering-delivery"
+version = 1
+description = """Take one bead through branch, implementation, tests, pull request, review, and
+merge, attaching evidence at each stage.
+
+One bead, one short-lived branch and worktree, one pull request. A user must be able to follow the
+whole flow in the browser without attaching to tmux."""
+
+[[steps]]
+id = "check-policy"
+title = "Evaluate policy before dispatch"
+description = """
+Check project access, budget headroom, target repository, and action class. Refuse dispatch if the
+budget is exhausted or the action class is protected without an approval.
+"""
+
+[[steps]]
+id = "create-worktree"
+title = "Create the branch and isolated worktree"
+description = """
+Create `bead/<id>-<slug>` and an isolated worktree. Inject a short-lived, repository-scoped GitHub
+App token into an isolated agent home.
+
+The token must not be written into the repository remote, git config, logs, telemetry, or the bead.
+It is removed when the process ends.
+"""
+
+[[steps]]
+id = "implement"
+title = "Implement the change"
+description = """
+Make the smallest change that satisfies the bead. Incomplete work goes behind a feature flag rather
+than a long-lived branch.
+"""
+
+[[steps]]
+id = "test"
+title = "Run the required tests"
+description = """
+Run unit tests, race tests for touched packages, and any contract tests for adapters that changed.
+A failing test is reported, never suppressed.
+"""
+
+[[steps]]
+id = "open-pr"
+title = "Open the pull request with evidence"
+description = """
+The pull request body must state: the bead and objective; scope and user impact; tests and
+evidence; security and permission impact; data migration and rollback; prompt or formula evaluation
+impact; and the staging result.
+"""
+
+[[steps]]
+id = "review"
+title = "Route required human review"
+description = """
+Route only reviews that genuinely need a human. Sensitive paths pull in CODEOWNERS and additional
+approvals. A merge to a protected branch is a protected action bound to the exact diff digest.
+"""
+
+[[steps]]
+id = "close-with-evidence"
+title = "Merge, attach evidence, and close"
+description = """
+Attach the merged commit or deployed image digest as evidence. Close the bead, update the
+narrative, record cost and any human corrections, and emit a marketable or improvement signal if
+one applies.
+"""
+
+[vars]
+[vars.bead]
+description = "Bead ID to implement"
+required = true
+[vars.repository]
+description = "Target repository, owner/name"
+required = true

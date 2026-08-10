@@ -1,0 +1,56 @@
+# Governed self-improvement. Plan sections 14.8, 16.6.
+#
+# The system may propose changes to its own code, prompts, formulas, skills,
+# policies, tests and runbooks. It may not approve or deploy its own protected
+# change.
+version: 1
+name: self-improvement
+
+proposal:
+  requires_evidence: true
+  evidence_sources: [agent_run_outcomes, human_corrections, incidents, evaluation_failures]
+  requires_bead: true
+  requires_expected_improvement: true
+  requires_rollback_plan: true
+
+pipeline:
+  - evidence
+  - bead
+  - pull_request_with_tests_and_evaluation_cases
+  - ci
+  - staging_replay_against_regression_suite
+  - human_approval
+  - immutable_production_rollout
+  - before_after_measurement
+
+self_approval: forbidden
+self_deployment: forbidden
+
+qualified_human_review_required_for:
+  - authentication
+  - authorisation
+  - approval_policy
+  - deployment_logic
+  - audit_behaviour
+  - secrets
+  - data_classification
+
+two_approvals_required_for:
+  - any path listed above
+  - any change that relaxes a guardrail
+  - any change to this file
+
+gates:
+  safety_regression_blocks_rollout: true
+  evaluation_pass_rate_threshold: 0.95
+  automatic_rollback_on:
+    - health_check_failure
+    - evaluation_gate_failure
+    - error_rate_above_baseline
+
+scope:
+  # Start where the leverage is and the risk is contained.
+  initial: [prompts, extraction_schemas, retrieval_rules, examples, deterministic_checks]
+  # Fine-tuning is out of scope until a clean, sufficiently large correction
+  # dataset exists (plan section 14.8).
+  excluded: [model_fine_tuning]

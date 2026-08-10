@@ -1,0 +1,38 @@
+# Build output
+/bin/
+/dist/
+apps/web/dist/
+*.test
+coverage.out
+
+# Dependencies
+node_modules/
+
+# Secrets — never committed. Host secrets use SOPS/age; the age private key
+# lives on the host, not here.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!*.pub
+*.p12
+credentials.json
+client_secret*.json
+service-account*.json
+
+# Infrastructure state. Remote state is configured per environment; local state
+# would contain secret values.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+
+# Local runtime
+.beads/
+*.sqlite
+.DS_Store
+
+# Pinned toolchain installed by scripts/bootstrap.sh
+.toolchain/

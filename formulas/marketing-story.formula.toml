@@ -1,0 +1,73 @@
+# Turn an approved project signal into published content.
+# Work package: WP-G2. Plan section 5.2.
+formula = "marketing-story"
+version = 1
+description = """Take one approved marketing packet from evidence review to a published blog asset,
+social variants, and outcome metrics.
+
+Marketing consumes approved summaries and evidence. It does not read project source code or
+unapproved client detail."""
+
+[[steps]]
+id = "evidence-review"
+title = "Review the packet evidence"
+description = """
+Confirm the claim, supporting evidence, named technical reviewer, client and confidentiality
+status, permitted project and client names, embargo date, and known caveats.
+
+A claim without a named technical reviewer does not proceed.
+"""
+
+[[steps]]
+id = "audience-and-angle"
+title = "Select audience and angle"
+description = "Choose the audience, the angle, and the channels. Record the canonical strategy as campaign metadata."
+
+[[steps]]
+id = "research"
+title = "Research"
+description = "Gather supporting context. Every external claim carries a source link in the review view."
+
+[[steps]]
+id = "draft"
+title = "Long-form draft"
+description = "Draft the article as Markdown in the website repository. Keep source links inline for the reviewers."
+
+[[steps]]
+id = "technical-review"
+title = "Technical and client review"
+description = """
+The named technical reviewer confirms accuracy. Any client name, quote, metric, or case-study
+detail requires the `client-approved` flag on the packet.
+"""
+
+[[steps]]
+id = "editorial-review"
+title = "Brand and editorial review"
+description = "Brand voice, structure, and accuracy of framing."
+
+[[steps]]
+id = "publication-pr"
+title = "Open the publication pull request"
+description = "Open the blog pull request. Final publication is a protected action requiring approval."
+
+[[steps]]
+id = "social-variants"
+title = "Generate social variants"
+description = """
+Produce channel variants. Publish through authorised channel integrations where they exist,
+otherwise present them as approved, ready-to-post assets.
+"""
+
+[[steps]]
+id = "measure"
+title = "Capture outcome metrics"
+description = """
+Record publication evidence and resulting metrics as market-signal beads linked back to the
+originating product, client work, and sales opportunity.
+"""
+
+[vars]
+[vars.packet_id]
+description = "Marketing packet ID"
+required = true

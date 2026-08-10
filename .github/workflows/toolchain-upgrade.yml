@@ -1,0 +1,49 @@
+name: toolchain-upgrade
+
+# A scheduled workflow may open an upgrade pull request. It must never deploy
+# one (plan section 7.6). The compatibility fixture runs on the resulting PR
+# like any other change, and a human approves it.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check for newer pinned versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: compare versions.lock against upstream releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/lockfile.sh
+
+          report=""
+          for pair in "gastown gastownhall/gastown" "beads gastownhall/beads" "dolt dolthub/dolt"; do
+            set -- $pair
+            tool="$1"; repo="$2"
+            pinned="$(lock_version "$tool")"
+            latest="$(gh api "repos/$repo/releases/latest" --jq .tag_name 2>/dev/null || echo "$pinned")"
+            if [ "$pinned" != "$latest" ]; then
+              report="${report}- ${tool}: pinned ${pinned}, upstream ${latest}"$'\n'
+            fi
+          done
+
+          if [ -n "$report" ]; then
+            echo "Newer releases are available:"
+            echo "$report"
+            echo
+            echo "An upgrade requires the whole matrix to move together, the compatibility"
+            echo "fixture to pass in staging, and human approval. Opening the upgrade PR is"
+            echo "delivered by WP-E2; this job reports the drift so it is never silent."
+          else
+            echo "versions.lock matches the latest upstream releases."
+          fi

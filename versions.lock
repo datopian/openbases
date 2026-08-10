@@ -1,0 +1,106 @@
+# versions.lock — the validated Gas Town / Beads / Dolt compatibility matrix.
+#
+# Plan sections 1.4 and 7.6:
+#   - pin gt, bd and dolt by exact version and checksum;
+#   - download only release artefacts and verify checksums before install;
+#   - never use "latest" in production;
+#   - a scheduled workflow may open an upgrade PR but must never deploy it;
+#   - roll back the entire matrix, not one binary.
+#
+# The matrix moves together. Bumping one entry without running the compatibility
+# fixture in staging is a policy violation, not a convenience.
+#
+# Digests below were read from the GitHub release API on 2026-08-10 and are the
+# publisher-reported SHA-256 of each release artefact.
+
+version: 1
+verified_at: "2026-08-10"
+
+matrix:
+  gastown:
+    version: "v1.2.0"
+    repository: "gastownhall/gastown"
+    # v1.2.1 exists upstream. It is deliberately not adopted: an upgrade goes
+    # through the compatibility fixture and an approved PR (plan section 7.6).
+    declares:
+      beads: "v1.0.4"          # exact — gt 1.2.0 fails fast on a newer bd
+      dolt_minimum: "2.0.7"
+    artefacts:
+      linux_amd64:
+        file: "gastown_1.2.0_linux_amd64.tar.gz"
+        sha256: "952e5375c451b9e56e1e7e8ade2348562c5f2e495cf01c7e430b5a55fe2f0e63"
+      linux_arm64:
+        file: "gastown_1.2.0_linux_arm64.tar.gz"
+        sha256: "0386f14534d57434f34b8cf23f99043e4d826704ea09832d62fa1510b4bfd359"
+      darwin_arm64:
+        file: "gastown_1.2.0_darwin_arm64.tar.gz"
+        sha256: "c31fbbe6014befccf8ae464124288c087e2e7a600abae732c463b13dce37a951"
+      darwin_amd64:
+        file: "gastown_1.2.0_darwin_amd64.tar.gz"
+        sha256: "5c7049503f3bbd777d338e50fe9682279813684f84d2dbea215dabe75526c419"
+    checksums_file:
+      file: "gastown_1.2.0_checksums.txt"
+      sha256: "6ba0d7fba2eefb5a486701b2949418613b3c9a28cc4152ee1d68373b51fde9e3"
+    sbom:
+      file: "gastown-v1.2.0.spdx.json"
+      sha256: "2068e46b3a791ff4efea8b0c676f03e31667cc03097c28acdff73757dd26d3a8"
+
+  beads:
+    version: "v1.0.4"
+    repository: "gastownhall/beads"
+    # Newer Beads releases exist (v1.1.2 at the time of writing). They are not
+    # adopted because Gas Town v1.2.0 refuses to run against them. Following the
+    # orchestrator's compatibility declaration is the rule (plan section 1.4).
+    artefacts:
+      linux_amd64:
+        file: "beads_1.0.4_linux_amd64.tar.gz"
+        sha256: "643e602e27f666c8726abff0f22001e2b5883988fa960204bde20a3129d448a5"
+      linux_arm64:
+        file: "beads_1.0.4_linux_arm64.tar.gz"
+        sha256: "48cdf571cd8b64bae81da829c1309e402bc12e6a4cc6b87606dfc9220b7ece60"
+      darwin_arm64:
+        file: "beads_1.0.4_darwin_arm64.tar.gz"
+        sha256: "0c53479fea070a1cabe8eb31e3824d74c5643b1deca71a5fe832ebd38e9ef877"
+      darwin_amd64:
+        file: "beads_1.0.4_darwin_amd64.tar.gz"
+        sha256: "8a52f7e54fe038d369cc9ea0e65f76853b75f5469c70c9c693d64671623c4ce9"
+    checksums_file:
+      file: "checksums.txt"
+      sha256: "de3c4bebec24b16d065dc915c69fa685876381a9554adba1465d447093fc2c66"
+    sbom:
+      file: "beads-v1.0.4.spdx.json"
+      sha256: "a97777c2f4c4c8d4aeeae7486fa9da8a9ac9f970c49ef0414203b0d0987205d6"
+
+  dolt:
+    # Gas Town 1.2.0 pins its CI, Docker, and release builds to the validated
+    # 2.0.7 baseline, so that is what the execution node runs.
+    version: "v2.0.7"
+    repository: "dolthub/dolt"
+    artefacts:
+      linux_amd64:
+        file: "dolt-linux-amd64.tar.gz"
+        sha256: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc314539a3b9795a"
+      linux_arm64:
+        file: "dolt-linux-arm64.tar.gz"
+        sha256: "ebc6352c00bbdd4b1980c3fd7072ee6dde03b85cb8c1417ff1468af0d0d52cc4"
+      darwin_arm64:
+        file: "dolt-darwin-arm64.tar.gz"
+        sha256: "69cee8fb7cd2de10689a45021e6c5e2f815514f33f722e121fcaa52c6c672169"
+      darwin_amd64:
+        file: "dolt-darwin-amd64.tar.gz"
+        sha256: "4a054b3417b22a3f07ce2e98fc5e23db027cdfa6b2e9835790c11c4ab0fed0bb"
+
+# Language and build toolchain, pinned so that CI, local development, and the
+# release image agree.
+toolchain:
+  go: "1.26.0"
+  node: "22"
+
+# Upgrade procedure (plan section 7.6). The fixture must:
+#   initialise a town and rig; create and link beads; query ready work;
+#   dispatch a worker; survive agent termination and handoff; create a PR;
+#   close work; perform backup and restore; verify projections and audit events.
+upgrade:
+  requires_fixture: "test/contract/compatibility"
+  auto_deploy: false
+  rollback_unit: "whole matrix"

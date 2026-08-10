@@ -1,0 +1,142 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: unit tests with race detector
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: build binaries
+        run: make build
+
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+
+  database:
+    name: database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: workgraph
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: structural migration checks
+        run: bash scripts/check_migrations.sh
+
+      # Applying against a real PostgreSQL is what catches a migration that
+      # parses but cannot run. Constraints are asserted, not assumed.
+      - name: apply migrations to an empty database
+        env:
+          PGPASSWORD: ci
+        run: |
+          for f in db/migrations/*.sql; do
+            echo "applying $f"
+            psql -h localhost -U postgres -d workgraph -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: assert core invariants exist
+        env:
+          PGPASSWORD: ci
+        run: |
+          set -e
+          q() { psql -h localhost -U postgres -d workgraph -tAc "$1"; }
+
+          # A project must have a backup owner different from the primary.
+          test "$(q "SELECT count(*) FROM pg_constraint WHERE conname='backup_owner_differs'")" = "1"
+
+          # A restricted project must have its own execution cell.
+          test "$(q "SELECT count(*) FROM pg_constraint WHERE conname='restricted_requires_cell'")" = "1"
+
+          # The audit log must refuse updates and deletes.
+          test "$(q "SELECT count(*) FROM pg_trigger WHERE tgname='audit_log_no_update'")" = "1"
+          echo "core invariants present"
+
+  toolchain:
+    name: toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Installs gt, bd and dolt at exactly the pinned versions and fails on any
+      # checksum mismatch. This is what stops an unvalidated upgrade reaching a
+      # deployment (plan section 7.6).
+      - name: install and verify the pinned matrix
+        run: bash scripts/bootstrap.sh
+
+      - name: verify versions match versions.lock
+        run: PATH="$PWD/.toolchain/bin:$PATH" bash scripts/verify_versions.sh
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

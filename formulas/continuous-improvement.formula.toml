@@ -1,0 +1,68 @@
+# Turn recurring corrections and failures into a governed improvement.
+# Work package: WP-H6. Plan section 14.8.
+formula = "continuous-improvement"
+version = 1
+description = """Take evidence of a recurring failure or friction through an improvement bead, a
+pull request with evaluation cases, staging replay, human approval, immutable rollout, and
+before/after measurement.
+
+The system may propose. It may not approve or deploy its own protected change."""
+
+[[steps]]
+id = "gather-evidence"
+title = "Gather the evidence"
+description = """
+Collect the run outcomes, human corrections, incidents, or evaluation failures that show a
+recurring problem. A single anecdote is not evidence of a recurring problem.
+"""
+
+[[steps]]
+id = "create-bead"
+title = "Create the improvement bead"
+description = """
+State the observed problem, the proposed change, the expected improvement, and how it will be
+measured. Name the target: code, prompt, formula, skill, policy, test, or runbook.
+"""
+
+[[steps]]
+id = "open-pr"
+title = "Open the pull request with evaluation cases"
+description = """
+Include the change, new or updated evaluation cases, tests, and an explicit rollback plan.
+A change with no way to measure whether it worked is not ready.
+"""
+
+[[steps]]
+id = "staging-replay"
+title = "Replay against the regression suite in staging"
+description = """
+Replay the changed prompt, formula, skill, or policy against the golden and regression suites.
+A safety regression blocks rollout outright — it is not a judgement call.
+"""
+
+[[steps]]
+id = "human-approval"
+title = "Human approval proportionate to risk"
+description = """
+Security, authentication, authorisation, approval policy, deployment logic, audit behaviour,
+secrets, and data classification require a qualified human reviewer. High-risk changes require two
+approvals. The system cannot approve its own protected change.
+"""
+
+[[steps]]
+id = "rollout"
+title = "Immutable rollout"
+description = "Deploy through the normal release path using signed, immutable artefacts. Keep the previous version available."
+
+[[steps]]
+id = "measure"
+title = "Measure before and after"
+description = """
+Record quality, cost, and cycle-time before and after. If the measured result does not show the
+expected improvement, roll back and record why.
+"""
+
+[vars]
+[vars.target]
+description = "code | prompt | formula | skill | policy | test | runbook"
+required = true

@@ -1,0 +1,75 @@
+# Onboard a project and its repositories into the work graph.
+# Work package: WP-C3. Plan sections 4.3, 7.4, 11.
+formula = "project-onboarding"
+version = 1
+description = """Register a project, assign primary and backup operators, attach repositories,
+select a policy bundle and execution cell, and create the project Beads graph.
+
+A project is not onboarded until a backup operator is named. Full-cycle ownership must not become
+a single point of failure."""
+
+[[steps]]
+id = "register-project"
+title = "Register the project in the control plane"
+description = """
+Create the project record with slug, name, objective, portfolio or function, and classification.
+
+**Required before proceeding:**
+1. Primary operator named.
+2. Backup operator named, and different from the primary.
+3. Classification chosen: internal, confidential, or restricted.
+"""
+
+[[steps]]
+id = "select-cell"
+title = "Select or create the execution cell"
+description = """
+Cells are drawn by trust boundary, not by employee.
+
+- Open-source and non-sensitive internal repositories may share a cell.
+- Every restricted client engagement gets its own cell.
+- Any project holding production credentials gets its own cell.
+
+A restricted project without its own cell is rejected by the registry.
+"""
+
+[[steps]]
+id = "attach-repositories"
+title = "Attach repositories and scope the GitHub App installation"
+description = """
+Attach each repository and confirm the GitHub App installation covers only those repositories.
+Record the provider's stable repository ID so a rename does not orphan the link.
+"""
+
+[[steps]]
+id = "apply-policy"
+title = "Apply the policy bundle and budgets"
+description = """
+Select `default`, `client-restricted`, or `open-source`. Set the daily agent cost ceiling and
+concurrency limit. Confirm which action classes are automatic and which are protected.
+"""
+
+[[steps]]
+id = "create-graph"
+title = "Create the project Beads graph"
+description = """
+Initialise the project Beads database in the selected cell, apply the label taxonomy, and register
+it in `beads_databases`. Verify `bd ready` responds and the first backup runs.
+"""
+
+[[steps]]
+id = "verify-isolation"
+title = "Verify isolation and visibility"
+description = """
+Confirm that a user without membership cannot see the project, its work, its repositories, or its
+source metadata. For a restricted project, confirm the cell cannot read another cell's filesystem
+or credentials. Attach the test evidence to the bead before closing it.
+"""
+
+[vars]
+[vars.project_slug]
+description = "Project slug, unique within the organisation"
+required = true
+[vars.classification]
+description = "internal | confidential | restricted"
+default = "internal"

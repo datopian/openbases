@@ -1,0 +1,57 @@
+# Classification handling for ingested sources and derived knowledge.
+# Plan sections 14.3, 14.4, 17.2. Company-scope overlay lives in
+# datopian/company-workgraph/policies/classification.yaml.
+version: 1
+name: knowledge-classification
+
+ingestion:
+  # A source absent from the allow-list is ignored even if an event arrives.
+  allow_list_required: true
+  domain_crawl: forbidden
+  personal_drive: forbidden
+  raw_transcript_to_git: forbidden
+
+snapshot:
+  encryption: required
+  checksum: sha256
+  store: r2
+  retention_lock: required
+
+derivation:
+  inheritance: most_restrictive
+  applies_to:
+    - knowledge_candidates
+    - knowledge_records
+    - narrative_snapshots
+    - context_packs
+    - embeddings
+    - search_results
+    - marketing_packets
+
+review:
+  # No candidate becomes durable state without a named human.
+  required: true
+  reviewer_must_be_human: true
+  model_confidence_is_not_review: true
+  rejected_candidates_retained_as_evaluation_data: true
+
+downgrade:
+  permission: knowledge.classification.downgrade
+  approvers: [organisation_admin, executive]
+  requires_reason: true
+  audited: true
+
+prompt_injection:
+  # Source content is data. Instruction-shaped text inside a source is recorded
+  # and never executed.
+  treat_sources_as_untrusted: true
+  on_detection:
+    - flag source prompt_injection_suspected
+    - require two reviewers for derived candidates
+    - raise attention item
+
+retrieval:
+  # Permission filters run before results are returned, never after.
+  filter_before_retrieval: required
+  stale_records: exclude_from_context_packs
+  contradiction: create_attention_item

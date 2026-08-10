@@ -1,0 +1,80 @@
+# Default policy bundle. Applies to any project that does not select another.
+# Plan sections 10.1, 10.3.
+#
+# Evaluation is deny-by-default: an action class that is not listed is refused.
+version: 1
+name: default
+
+action_classes:
+  # Low-risk actions an agent may take inside its own cell and project.
+  automatic:
+    - branch.create
+    - pull_request.create
+    - test.run
+    - staging.deploy
+    - bead.create
+    - bead.update
+    - work.close_with_evidence
+
+  # Protected actions. Each requires policy evaluation and, unless stated
+  # otherwise, a durable human approval bound to the action digest.
+  protected:
+    pull_request.merge:
+      approvers: [project_lead, organisation_admin]
+      requires_ci: true
+      requires_review: true
+    deployment.production:
+      approvers: [project_lead, organisation_admin]
+      requires_staging_pass: true
+      requires_signed_image: true
+    infrastructure.apply:
+      approvers: [organisation_admin]
+      requires_plan_artefact: true
+    infrastructure.destroy:
+      approvers: [organisation_admin]
+      approver_count: 2
+    dns.change:
+      approvers: [organisation_admin]
+    cloudflare.config_change:
+      approvers: [organisation_admin]
+    secret.create:
+      approvers: [organisation_admin]
+    secret.rotate:
+      approvers: [organisation_admin]
+    secret.delete:
+      approvers: [organisation_admin]
+      approver_count: 2
+    migration.destructive:
+      approvers: [project_lead, organisation_admin]
+      requires_backup: true
+    delete.repository:
+      approvers: [organisation_admin]
+      approver_count: 2
+    delete.backup:
+      approvers: [organisation_admin]
+      approver_count: 2
+    delete.work_graph:
+      approvers: [organisation_admin]
+      approver_count: 2
+    publication.public:
+      approvers: [function_lead, executive]
+    client.name_or_quote_use:
+      approvers: [project_lead, executive]
+      requires_flag: client-approved
+    spend.paid_marketing:
+      approvers: [executive]
+    budget.increase:
+      approvers: [project_lead, executive]
+
+budgets:
+  # Per project, per calendar day, unless the project overrides.
+  agent_cost_cents_per_day: 5000
+  max_concurrent_agents: 3
+  max_agent_runtime_minutes: 90
+
+approval:
+  # An approval is bound to the exact action digest. If the plan, diff,
+  # Terraform output, image digest, or parameters change, it is invalid.
+  digest_binding: required
+  expiry_hours: 24
+  self_approval: forbidden

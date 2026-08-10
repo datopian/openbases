@@ -1,0 +1,22 @@
+# Default owner for everything.
+*                                   @anuveyatsu
+
+# Sensitive paths require an organisation admin review (plan section 16.3).
+/policies/                          @anuveyatsu
+/infra/                             @anuveyatsu
+/deploy/                            @anuveyatsu
+/db/migrations/                     @anuveyatsu
+/versions.lock                      @anuveyatsu
+/.github/                           @anuveyatsu
+/AGENTS.md                          @anuveyatsu
+/CODEOWNERS                         @anuveyatsu
+
+# Security-relevant packages.
+/internal/authn/                    @anuveyatsu
+/internal/authz/                    @anuveyatsu
+/internal/approvals/                @anuveyatsu
+/internal/audit/                    @anuveyatsu
+/cmd/agentd/                        @anuveyatsu
+
+# Architecture decisions.
+/docs/adr/                          @anuveyatsu

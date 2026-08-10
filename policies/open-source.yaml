@@ -1,0 +1,36 @@
+# Policy for a public open-source project.
+# Plan section 10.3. Looser on publication, unchanged on infrastructure.
+version: 1
+name: open-source
+extends: default
+
+visibility:
+  default: internal
+
+action_classes:
+  automatic:
+    - branch.create
+    - pull_request.create
+    - test.run
+    - staging.deploy
+    - bead.create
+    - bead.update
+    - work.close_with_evidence
+    - issue.comment
+
+  protected:
+    pull_request.merge:
+      approvers: [project_lead, contributor]
+      requires_ci: true
+      requires_review: true
+    release.publish:
+      approvers: [project_lead]
+    github.settings_change:
+      approvers: [organisation_admin]
+
+github:
+  # GitHub remains the public intake channel; Beads is the internal execution
+  # and agent memory ledger. Community context is linked, never hidden
+  # (plan section 20, Wave 3).
+  issues_are_public_intake: true
+  mirror_beads_to_issues: false

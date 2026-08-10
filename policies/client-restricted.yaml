@@ -1,0 +1,57 @@
+# Policy for a restricted client engagement.
+# Plan sections 10.3, 7.4, 17.2. Inherits default.yaml and tightens it.
+version: 1
+name: client-restricted
+extends: default
+
+isolation:
+  dedicated_execution_cell: required
+  shared_cell: forbidden
+  cross_cell_filesystem_access: forbidden
+  credential_profile: dedicated
+
+visibility:
+  default: restricted
+  # Derived artefacts inherit restricted classification transitively.
+  inheritance: most_restrictive
+
+action_classes:
+  automatic:
+    - branch.create
+    - pull_request.create
+    - test.run
+    - bead.create
+    - bead.update
+    - work.close_with_evidence
+    # Staging deployment is NOT automatic here: the staging environment is
+    # shared, and a restricted artefact must not land in it unreviewed.
+
+  protected:
+    deployment.production:
+      approvers: [project_lead, organisation_admin]
+      requires_staging_pass: true
+      requires_signed_image: true
+      requires_client_policy_check: true
+    publication.public:
+      # External publication is blocked by default for a restricted project.
+      allowed: false
+      override_approvers: [executive, organisation_admin]
+      requires_flag: client-approved
+    marketing.packet_create:
+      requires_flag: client-approved
+      approvers: [project_lead, executive]
+    infrastructure.apply:
+      approvers: [organisation_admin]
+      requires_plan_artefact: true
+      requires_named_approver: true
+
+context:
+  # A restricted project's source code and documents never enter company-level
+  # summarisation, marketing context, or a cross-project context pack.
+  company_summarisation: forbidden
+  cross_project_context_pack: forbidden
+  marketing_agent_access: summaries_only
+
+budgets:
+  agent_cost_cents_per_day: 5000
+  max_concurrent_agents: 2
