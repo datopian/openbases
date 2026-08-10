@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-10
+- **Bead:** wg-8yv.2
 - **Plan reference:** §6.4, §7.1, §7.2
 
 ## Context

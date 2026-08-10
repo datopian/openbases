@@ -1,5 +1,7 @@
 # Architecture decision records
 
+**Epic:** `wg-8yv` · **Work package:** `wg-8yv.2`
+
 One file per decision, named `NNNN-short-slug.md`. A decision is recorded **before** the code that
 depends on it, and is linked to the Bead that motivated it.
 
