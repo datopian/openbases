@@ -1,0 +1,77 @@
+name: main-push-guard
+
+# Compensating control for ADR-0016.
+#
+# Branch protection is unavailable on this plan, so a direct push to main cannot
+# be prevented by GitHub. This job detects one and fails loudly, so that a
+# bypass is visible in the run history rather than silent.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    name: every commit on main came from a pull request
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: check pushed commits against merged pull requests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          # The very first push to a branch has an all-zero "before" SHA and no
+          # ancestor to diff against. Bootstrap commits are covered by ADR-0016.
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            echo "Initial push to main — nothing to compare against."
+            exit 0
+          fi
+
+          commits="$(git rev-list "$BEFORE..$AFTER")"
+          if [ -z "$commits" ]; then
+            echo "No new commits."
+            exit 0
+          fi
+
+          bypassed=0
+          for sha in $commits; do
+            # A commit that arrived through a merged PR reports that PR here.
+            prs="$(gh api "repos/$REPO/commits/$sha/pulls" \
+                     -H "Accept: application/vnd.github+json" \
+                     --jq '[.[] | select(.merged_at != null)] | length' 2>/dev/null || echo 0)"
+            subject="$(git log -1 --format=%s "$sha")"
+            if [ "$prs" -gt 0 ]; then
+              echo "  ok       $(git rev-parse --short "$sha")  $subject"
+            else
+              echo "  BYPASS   $(git rev-parse --short "$sha")  $subject"
+              bypassed=1
+            fi
+          done
+
+          if [ "$bypassed" -ne 0 ]; then
+            echo
+            echo "A commit reached main without a merged pull request."
+            echo
+            echo "Branch protection is unavailable on the current GitHub plan (ADR-0016),"
+            echo "so this is detection, not prevention. Either the commit was a recorded"
+            echo "bootstrap or break-glass event, or the review process was bypassed."
+            echo
+            echo "Required: record a break-glass event with a named actor and open a"
+            echo "follow-up pull request, or revert. See blocker Bead wg-8yv.30."
+            exit 1
+          fi
+
+          echo
+          echo "All pushed commits arrived through a merged pull request."

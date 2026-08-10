@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Refuse a direct push to main.
+#
+# Compensating control for ADR-0016: branch protection is unavailable on the
+# current GitHub plan. This hook stops the accidental case, which is the common
+# one. It is not a security control — a determined actor can pass --no-verify —
+# and it is not a substitute for protected branches.
+set -uo pipefail
+
+protected="main"
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = "refs/heads/$protected" ]; then
+    echo "refusing to push directly to $protected." >&2
+    echo >&2
+    echo "Every change belongs to a Bead and arrives through a pull request:" >&2
+    echo "  bd ready                       # pick unblocked work" >&2
+    echo "  git switch -c bead/<id>-<slug>" >&2
+    echo "  gh pr create" >&2
+    echo >&2
+    echo "If this is a recorded bootstrap or break-glass event, push with" >&2
+    echo "--no-verify and open the follow-up pull request in the same session." >&2
+    exit 1
+  fi
+done
+exit 0

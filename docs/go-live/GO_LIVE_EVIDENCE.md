@@ -22,7 +22,7 @@ scenario in plan §19 passes in production or a production-identical environment
 | End-to-end scenario results (§19 scenarios 1–14) | outstanding | see below |
 | Backup identifiers and restore timestamps, including evidence snapshots | outstanding | WP-I2 |
 | Load-test results | outstanding | WP-I3 |
-| Known limitations within the defined go-live scope | outstanding | WP-I4 |
+| Known limitations within the defined go-live scope | **partial** | **Accepted risk: `main` is not protected.** Branch protection and rulesets on private repositories require GitHub Team; the `datopian` organisation is on Free. Direct pushes to `main` cannot be prevented. Compensating controls: the `main-push-guard` workflow fails on any commit that did not arrive through a merged pull request, and `make bootstrap` installs a `pre-push` hook. See [ADR-0016](../adr/0016-interim-unenforced-main-protection.md) and blocker Bead `wg-8yv.30`. |
 | Rollback instructions | outstanding | WP-B1, WP-I2 |
 | Named operational owners | outstanding | WP-I4 |
 

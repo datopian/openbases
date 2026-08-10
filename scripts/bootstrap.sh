@@ -81,6 +81,13 @@ install_tool dolt    dolt
 install_tool beads   bd
 install_tool gastown gt
 
+# Compensating control for ADR-0016 while branch protection is unavailable.
+if [ -d .git ]; then
+  echo "==> git hooks"
+  install -m 0755 scripts/hooks/pre-push .git/hooks/pre-push
+  echo "    installed .git/hooks/pre-push (refuses direct pushes to main)"
+fi
+
 echo "==> Go modules"
 go mod download
 
