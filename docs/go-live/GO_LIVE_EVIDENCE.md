@@ -12,7 +12,8 @@ scenario in plan §19 passes in production or a production-identical environment
 | Infrastructure plan and apply records | outstanding | WP-B1 |
 | Pinned versions and checksums | **complete** | [`versions.lock`](../../versions.lock) — gt v1.2.0, bd v1.0.4, dolt v2.0.7, checksums verified on install by `scripts/bootstrap.sh` |
 | GitHub App permissions | outstanding | WP-D1 |
-| Cloudflare Access policy configuration | outstanding | WP-B1 |
+| Cloudflare Access policy configuration | **partial** | Zero Trust organisation applied from code: `datopian.cloudflareaccess.com`, session 24h, seat expiry 730h, `deny_unmatched_requests` true. Google Workspace IdP created, `apps_domain` datopian.com. Outstanding: group consent (`wg-8yv.44`). |
+| MFA enforcement | outstanding | **Delegated to Google Workspace** by decision `wg-8yv.42`, so it cannot be evidenced from Cloudflare configuration alone. Requires the Workspace 2FA enforcement evidence in `wg-8yv.46`, and ideally the AMR assertion rule in `wg-8yv.45`. |
 | Google API scopes, Pub/Sub resources, allow-listed sources, subscription renewal evidence | outstanding | WP-H1 |
 | Security and cross-source isolation test results | outstanding | WP-I3 |
 | Meeting-to-workgraph scenario results | outstanding | WP-H3 |

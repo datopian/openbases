@@ -28,19 +28,19 @@ resource "cloudflare_zero_trust_organization" "this" {
   session_duration                   = var.session_duration
   user_seat_expiration_inactive_time = var.user_seat_expiration_inactive_time
 
-  # MFA is NOT set here yet, and that is a deliberate gap tracked as wg-8yv.42.
+  # MFA is deliberately NOT configured here. Decided 2026-08-12 (wg-8yv.42):
+  # Google Workspace enforces 2FA and Cloudflare trusts it.
   #
-  # Plan section 8.1 requires MFA at the identity edge. Cloudflare rejects
-  # mfa_required_for_all_apps unless mfa_config is also set, because that flag
-  # turns on Cloudflare's own INDEPENDENT second factor — an extra enrolment on
-  # top of whatever the identity provider already enforces.
+  # Setting mfa_required_for_all_apps would enable Cloudflare's own INDEPENDENT
+  # second factor — a second enrolment on top of the Google 2FA people already
+  # have — and Cloudflare refuses the flag without an mfa_config anyway.
   #
-  # The alternative is to let Google Workspace enforce 2FA and have Cloudflare
-  # trust it through the AMR claim. That is less friction and uses the factor
-  # people already have, but it moves the control into Google Workspace admin
-  # settings, which are not represented in this repository.
-  #
-  # Both are defensible; the choice belongs to Datopian, not to a default.
+  # The cost of this choice, stated plainly so it is not forgotten: the control
+  # now lives in Google Workspace admin settings, which are not in this
+  # repository and are therefore invisible to drift detection. Two follow-ups
+  # exist to stop that being an act of faith — wg-8yv.45 adds an Access policy
+  # rule requiring the identity provider to ASSERT MFA through the AMR claim,
+  # and wg-8yv.46 captures Workspace enforcement for the go-live evidence pack.
 
   # Refuse any request that matches no Access application, instead of letting it
   # through to an origin. Fail closed.
