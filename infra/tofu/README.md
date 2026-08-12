@@ -26,7 +26,7 @@ team domain. `account/` then owns the settings that plan §8.1 requires:
 |---|---|---|
 | `auth_domain` | `datopian.cloudflareaccess.com` | Visible on every login screen and the JWT issuer the control API validates. The generated `icy-boat-89aa` reads like a phishing domain to a client. |
 | `mfa_required_for_all_apps` | `true` | Enforced org-wide rather than per application, so a new Access application cannot omit it. |
-| `deny_unmatched_requests` | `true` | A request matching no Access application is refused rather than passed to an origin. |
+| `deny_unmatched_requests` | **`false`** | Set to `true` on 2026-08-12 and it returned 403 error 1050 across live zones on this account. Reverted. See the warning below. |
 | `auto_redirect_to_identity` | `false` | Keeps the login screen that shows which organisation is asking for identity — the check that makes a phishing domain noticeable. |
 
 `auth_domain` is written as the **full** domain because the API stores and returns it that way.
@@ -94,6 +94,22 @@ Workspace account is itself protected by Cloudflare Access.
 
 Renaming the team domain invalidates enrolled devices, registered identity-provider callback URLs,
 and saved bookmarks. It is cheap only before any Access application exists.
+
+### ⚠️ This Cloudflare account is shared with Datopian production
+
+Workgraph does not own this account. It carries roughly 50 zones — `datopian.com`, `portaljs.com`,
+`datahub.io`, `viderum.com` and others — that have nothing to do with Workgraph.
+
+Every setting in `account/` is therefore **production-affecting**, whatever its name suggests.
+`deny_unmatched_requests = true` was applied on the reasoning that with zero Access applications it
+could not affect anything; it returned 403 across live zones until reverted.
+
+Rules that follow:
+
+- Prefer a per-application control over an account-level one whenever both exist.
+- Apply account-level changes **one at a time**, so an effect can be attributed.
+- Check the live zones after any `account/` apply, not only the Workgraph hostname.
+- Reason about *observed* behaviour, not about what a setting's name implies.
 
 ## Required environment
 

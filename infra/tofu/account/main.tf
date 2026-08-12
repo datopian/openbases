@@ -42,9 +42,14 @@ resource "cloudflare_zero_trust_organization" "this" {
   # rule requiring the identity provider to ASSERT MFA through the AMR claim,
   # and wg-8yv.46 captures Workspace enforcement for the go-live evidence pack.
 
-  # Refuse any request that matches no Access application, instead of letting it
-  # through to an origin. Fail closed.
-  deny_unmatched_requests = true
+  # DISABLED 2026-08-12 pending investigation (wg-8yv.47).
+  #
+  # Setting this true correlated with 403 error 1050 across live zones on this
+  # account. It was intended to fail closed for Workgraph hostnames, but this is
+  # an ACCOUNT-level setting on an account carrying ~50 production zones, and the
+  # blast radius was not what the name implies. Do not re-enable without
+  # establishing exactly which traffic it evaluates.
+  deny_unmatched_requests = false
 
   # Do not skip the login page. Auto-redirect is convenient, but it removes the
   # screen that tells a user which organisation is asking for their identity —
