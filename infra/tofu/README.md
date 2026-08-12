@@ -79,6 +79,10 @@ tofu show -json tfplan | jq '[.resource_changes[] | select(.change.actions | ind
 tofu apply tfplan              # only after approval, and only this artefact
 ```
 
+Plan files are encrypted too, so `tofu show` needs `TF_ENCRYPTION` exported in the
+same shell. Without it you get *"the given plan file is encrypted and requires a valid
+encryption configuration to decrypt"* — the encryption working, not a corrupt plan.
+
 **Always check the delete list before approving.** Any planned deletion of a record this
 configuration does not own is a bug, not something to approve through.
 
