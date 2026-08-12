@@ -8,7 +8,8 @@ LDFLAGS  := -X github.com/datopian/workgraph/internal/version.Version=$(shell gi
             -X github.com/datopian/workgraph/internal/version.BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 .PHONY: help bootstrap dev test check fmt vet lint build clean \
-        web-install web-build web-dev verify-versions migrate-check sql-check infra-check e2e
+        web-install web-build web-dev verify-versions migrate-check sql-check infra-check \
+        live-zones e2e
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -53,6 +54,9 @@ verify-versions: ## Check installed gt/bd/dolt against versions.lock
 
 sql-check: ## Basic structural checks on migrations
 	@bash scripts/check_migrations.sh
+
+live-zones: ## Smoke-check the Datopian production zones sharing this Cloudflare account
+	@bash scripts/check_live_zones.sh
 
 infra-check: ## Structural guards on the infrastructure security posture
 	@python3 scripts/check_infra.py

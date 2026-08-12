@@ -122,6 +122,69 @@ def check_tfvars_hold_no_secrets() -> None:
                 )
 
 
+# Attributes we have deliberately reviewed as safe to set on the SHARED account.
+# Workgraph does not own this Cloudflare account: it carries ~50 Datopian
+# production zones and other teams' tunnels. An account-level setting is
+# therefore production-affecting whatever its name suggests.
+#
+# Adding a name here is a claim that you have established what the setting does
+# to traffic that is not ours.
+REVIEWED_ACCOUNT_ATTRS = {
+    "account_id",
+    "auth_domain",
+    "name",
+    "session_duration",
+    "user_seat_expiration_inactive_time",
+    "auto_redirect_to_identity",
+}
+
+# Settings that may appear only at a specific value. Declaring the safe value
+# explicitly is better than omitting the attribute: Terraform then reverts it if
+# someone flips it in the dashboard, instead of ignoring the change.
+PINNED_ACCOUNT_ATTRS = {
+    # Set true on 2026-08-12; returned 403 across live zones until reverted
+    # (wg-8yv.47). Pinned false so a dashboard change is undone on next apply.
+    "deny_unmatched_requests": "false",
+}
+
+
+def check_account_level_settings() -> None:
+    """Fail on an unreviewed attribute of the shared-account Zero Trust org."""
+    path = ROOT / "infra" / "tofu" / "account" / "main.tf"
+    if not path.exists():
+        return
+    text = path.read_text()
+
+    m = re.search(
+        r'resource\s+"cloudflare_zero_trust_organization"\s+"\w+"\s*\{(.*?)\n\}', text, re.S
+    )
+    if not m:
+        return
+
+    for line in m.group(1).splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        attr = re.match(r"([a-z_]+)\s*=\s*(\S+)", stripped)
+        if not attr:
+            continue
+        name, value = attr.group(1), attr.group(2).rstrip(",")
+
+        if name in PINNED_ACCOUNT_ATTRS:
+            expected = PINNED_ACCOUNT_ATTRS[name]
+            if value != expected:
+                problems.append(
+                    f"infra/tofu/account/main.tf: '{name}' must stay {expected} on this shared "
+                    f"account, got {value}. It broke live production zones once (wg-8yv.47)."
+                )
+        elif name not in REVIEWED_ACCOUNT_ATTRS:
+            problems.append(
+                f"infra/tofu/account/main.tf: '{name}' is an unreviewed account-level "
+                "setting on a Cloudflare account shared with Datopian production. Establish what "
+                "it does to traffic that is not ours, then add it to REVIEWED_ACCOUNT_ATTRS."
+            )
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -129,6 +192,7 @@ def main() -> int:
         check_nodes_are_protected,
         check_single_dns_record,
         check_tfvars_hold_no_secrets,
+        check_account_level_settings,
     ):
         check()
 

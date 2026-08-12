@@ -104,12 +104,23 @@ Every setting in `account/` is therefore **production-affecting**, whatever its 
 `deny_unmatched_requests = true` was applied on the reasoning that with zero Access applications it
 could not affect anything; it returned 403 across live zones until reverted.
 
-Rules that follow:
+Rules that follow, two of which are now enforced rather than remembered:
 
 - Prefer a per-application control over an account-level one whenever both exist.
 - Apply account-level changes **one at a time**, so an effect can be attributed.
-- Check the live zones after any `account/` apply, not only the Workgraph hostname.
 - Reason about *observed* behaviour, not about what a setting's name implies.
+- **`scripts/check_infra.py` fails on any account-level setting not in
+  `REVIEWED_ACCOUNT_ATTRS`.** Adding a name there is a claim that you have established what the
+  setting does to traffic that is not ours. `deny_unmatched_requests` is pinned to `false` and the
+  build fails if it changes — declared explicitly rather than omitted, so Terraform *reverts* a
+  dashboard change instead of ignoring it.
+- **Run `scripts/check_live_zones.sh` after every `account/` apply**, before calling it successful.
+  It smoke-checks the shared production zones. A 403 there means revert first and diagnose after.
+
+A separate Cloudflare account would make all of this unnecessary by making account-level settings
+genuinely ours. It was weighed and deferred: a new account means a new team domain, which means a
+new OAuth redirect URI, which means redoing the Google client and its admin consent. The guards
+above cost nothing and address the failure that actually happened.
 
 ## Required environment
 
