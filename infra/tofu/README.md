@@ -16,13 +16,27 @@ envs/
 
 Credentials never live in this repository.
 
+Non-secret configuration — account and zone identifiers, hostname, location, and the
+Access allow-list — lives in each environment's committed `terraform.tfvars`. ADR-0015
+requires persistent configuration to be in Git, or production cannot be rebuilt from code.
+Those identifiers appear in every dashboard URL and grant nothing on their own.
+
+Only credentials come from the environment:
+
 ```bash
 set -a; . ~/.config/datopian-workgraph/credentials.env; set +a   # bootstrap only; WP-B3 replaces this
-export TF_VAR_cloudflare_account_id="$CLOUDFLARE_ACCOUNT_ID"
-export TF_VAR_cloudflare_zone_id="$CLOUDFLARE_ZONE_ID"
-export TF_VAR_hostname="$WG_HOSTNAME_STAGING"
-export TF_VAR_access_allowed_emails='["someone@datopian.com"]'
+# HCLOUD_TOKEN and CLOUDFLARE_API_TOKEN are read directly by the providers.
 ```
+
+`scripts/check_infra.py` fails the build if a committed `.tfvars` ever grows something
+credential-shaped.
+
+### Adding or removing a person
+
+`access_allowed_emails` in the environment's `terraform.tfvars` is the join and leave path
+(runbooks 2 and 3). An empty list creates no Access policy at all, so the application denies
+everyone — the correct failure direction, and also the reason a fresh environment locks
+everyone out until the list is populated.
 
 ## State encryption
 

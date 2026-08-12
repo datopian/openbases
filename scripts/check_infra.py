@@ -93,12 +93,37 @@ def check_single_dns_record() -> None:
         problems.append("this configuration must not manage the zone itself, only records in it")
 
 
+def check_tfvars_hold_no_secrets() -> None:
+    """Committed tfvars carry environment config, never credentials.
+
+    Account and zone identifiers are not secrets. A token, key, or passphrase
+    would be, and committing one is the failure this repository is built to
+    prevent.
+    """
+    import re as _re
+
+    secretish = _re.compile(
+        r"(?i)\b(token|secret|password|passphrase|api_key|private_key)\b\s*=|"
+        r"(gh[pous]_|github_pat_|sk-|AKIA|AIza|cfat_|-----BEGIN)"
+    )
+    for path in sorted((ROOT / "infra" / "tofu").rglob("*.tfvars")):
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if secretish.search(line):
+                rel = path.relative_to(ROOT)
+                problems.append(
+                    f"{rel}:{i}: committed tfvars must not contain a credential"
+                )
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
         check_ssh_closed_by_default,
         check_nodes_are_protected,
         check_single_dns_record,
+        check_tfvars_hold_no_secrets,
     ):
         check()
 
