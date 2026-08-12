@@ -102,9 +102,14 @@ def check_tfvars_hold_no_secrets() -> None:
     """
     import re as _re
 
+    # Note the deliberate absence of \b before the keyword: "_" is a word
+    # character, so \bsecret\b does NOT match inside "client_secret". That gap
+    # would have missed the very next credential added to this repository.
     secretish = _re.compile(
-        r"(?i)\b(token|secret|password|passphrase|api_key|private_key)\b\s*=|"
-        r"(gh[pous]_|github_pat_|sk-|AKIA|AIza|cfat_|-----BEGIN)"
+        r"(?i)[a-z0-9_]*"
+        r"(token|secret|password|passphrase|api_key|apikey|private_key|credential)"
+        r"[a-z0-9_]*\s*=|"
+        r"(gh[pous]_|github_pat_|sk-|AKIA|AIza|cfat_|GOCSPX-|-----BEGIN)"
     )
     for path in sorted((ROOT / "infra" / "tofu").rglob("*.tfvars")):
         for i, line in enumerate(path.read_text().splitlines(), 1):

@@ -7,3 +7,8 @@ output "auth_domain_label" {
   description = "The team domain label alone."
   value       = var.team_name
 }
+
+output "identity_providers" {
+  description = "Configured identity providers. Empty until Google Workspace credentials are supplied."
+  value       = [for idp in cloudflare_zero_trust_access_identity_provider.google_workspace : idp.name]
+}

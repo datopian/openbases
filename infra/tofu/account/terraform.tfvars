@@ -9,3 +9,16 @@ cloudflare_account_id = "83025b28472d6aa2bf5ae59f3724aa78"
 # URL has been registered against the old name.
 team_name    = "datopian"
 display_name = "Datopian"
+
+# Google Workspace identity provider.
+#
+# The client ID is not a credential — it appears in OAuth redirect URLs — so it
+# lives here with the rest of the configuration. The client secret is supplied
+# through TF_VAR_google_workspace_client_secret and must never be written to a
+# tfvars file; check_infra.py fails the build if it is.
+#
+# Leave the ID empty until the OAuth client exists in Google Cloud; the resource
+# is created only when both the ID and the secret are present, so a fresh clone
+# plans cleanly before anyone has been to the console.
+google_workspace_client_id = ""
+google_workspace_domain    = "datopian.com"

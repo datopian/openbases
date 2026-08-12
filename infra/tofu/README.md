@@ -32,6 +32,52 @@ team domain. `account/` then owns the settings that plan §8.1 requires:
 `auth_domain` is written as the **full** domain because the API stores and returns it that way.
 Writing the bare label produces a diff on every subsequent plan.
 
+### Adding the Google Workspace identity provider
+
+Google Workspace is chosen over the generic "Google" integration because it restricts sign-in to one
+Workspace domain **and** can read group membership. Groups are what WP-C2 maps onto Workgraph roles,
+so taking the generic integration now would mean redoing it later.
+
+Three of these steps are the ones people miss, and each fails in a way that does not name itself.
+
+**In the Google Cloud console** — the same project WP-H1 needs for Pub/Sub can host this:
+
+1. **APIs & Services → Enable APIs → Admin SDK API.** Without it, group membership never returns.
+2. **Configure Consent Screen**, audience type **Internal**. This blocks ordinary `@gmail.com`
+   accounts from even reaching the login step. Choosing External here is a real exposure.
+3. **Create OAuth Client**, type *Web application*:
+   - Authorized JavaScript origin: `https://datopian.cloudflareaccess.com`
+   - Authorized redirect URI: `https://datopian.cloudflareaccess.com/cdn-cgi/access/callback`
+4. Copy the **Client ID** and **Client secret**.
+
+**In the Google Admin console** (not Cloud — a different console):
+
+5. **Security → Access and data control → API controls → Settings → Internal apps**, tick
+   **Trust internal apps**. It is **off by default and Access does not work without it.** This is the
+   single most common failure, and the symptom is a group-fetch error that says nothing about trust.
+
+**Then here:**
+
+```bash
+# Client ID is not a credential; commit it.
+#   infra/tofu/account/terraform.tfvars → google_workspace_client_id = "…"
+# The secret is:
+echo 'TF_VAR_google_workspace_client_secret=…' >> ~/.config/datopian-workgraph/credentials.env
+tofu -chdir=infra/tofu/account plan
+```
+
+6. After the provider is created, Cloudflare generates a **one-time authorisation link** that a
+   Google Workspace **administrator** must visit to grant group-read consent. Setup is not complete
+   until someone opens it, and testing before that returns
+   *"Failed to fetch group information from the identity provider"* — which reads like a
+   misconfiguration but is just the unfinished step.
+
+7. Verify in the dashboard under Identity providers → **Test**. It should return your identity
+   *and* your group membership.
+
+One incompatibility worth knowing: the Google Workspace integration is not supported if the Google
+Workspace account is itself protected by Cloudflare Access.
+
 Renaming the team domain invalidates enrolled devices, registered identity-provider callback URLs,
 and saved bookmarks. It is cheap only before any Access application exists.
 

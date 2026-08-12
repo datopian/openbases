@@ -42,3 +42,28 @@ resource "cloudflare_zero_trust_organization" "this" {
   # which is exactly the check that makes a phishing domain noticeable.
   auto_redirect_to_identity = false
 }
+
+# Google Workspace as the identity provider.
+#
+# Chosen over the generic "Google" integration because it restricts sign-in to
+# one Workspace domain and can read group membership. Groups are what WP-C2 will
+# map onto Workgraph roles, so taking the generic integration now would mean
+# redoing this later.
+#
+# Created only once credentials are supplied, so a fresh clone plans cleanly
+# before anyone has been to the Google Cloud console.
+resource "cloudflare_zero_trust_access_identity_provider" "google_workspace" {
+  count = var.google_workspace_client_id != "" && var.google_workspace_client_secret != "" ? 1 : 0
+
+  account_id = var.cloudflare_account_id
+  name       = "Google Workspace"
+  type       = "google-apps"
+
+  config = {
+    client_id     = var.google_workspace_client_id
+    client_secret = var.google_workspace_client_secret
+    # Restricts authentication to this Workspace domain. Without it, any Google
+    # account could reach the login step.
+    apps_domain = var.google_workspace_domain
+  }
+}

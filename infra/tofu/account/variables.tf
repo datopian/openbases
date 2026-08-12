@@ -37,3 +37,34 @@ variable "user_seat_expiration_inactive_time" {
   type        = string
   default     = "720h" # 30 days
 }
+
+variable "google_workspace_client_id" {
+  description = <<-EOT
+    OAuth client ID for the Google Workspace identity provider.
+
+    Not a credential on its own — it appears in OAuth redirect URLs — so it is
+    committed with the rest of the environment configuration. The paired secret
+    is not.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "google_workspace_client_secret" {
+  description = <<-EOT
+    OAuth client secret for the Google Workspace identity provider.
+
+    A credential. Supplied through TF_VAR_google_workspace_client_secret and
+    never written to a tfvars file; scripts/check_infra.py fails the build if it
+    ever appears in one.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "google_workspace_domain" {
+  description = "The Google Workspace domain whose users may authenticate, e.g. datopian.com."
+  type        = string
+  default     = ""
+}
