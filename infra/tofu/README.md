@@ -79,9 +79,18 @@ tofu show -json tfplan | jq '[.resource_changes[] | select(.change.actions | ind
 tofu apply tfplan              # only after approval, and only this artefact
 ```
 
-**Always check the delete list before approving.** `datopian.com` is a live zone with hundreds of
-records unrelated to Workgraph. This configuration manages exactly one DNS record per environment;
-any planned deletion of a record we do not own is a bug, not something to approve through.
+**Always check the delete list before approving.** Any planned deletion of a record this
+configuration does not own is a bug, not something to approve through.
+
+### Why `openbases.com` and not `datopian.com`
+
+The deploy token needs `DNS Write` on whichever zone serves these hostnames. `datopian.com` carries
+Datopian's Google Workspace MX records, so `DNS Write` there would let a leaked bootstrap credential
+redirect company email, pass DNS-01 validation to obtain trusted TLS certificates for
+`datopian.com`, and take over anything using DNS for domain verification.
+
+`openbases.com` was dormant — no A, MX, or TXT records — so this configuration owns the whole zone
+with no collateral, and the token cannot reach the primary domain at all.
 
 ## Deliberate design choices
 

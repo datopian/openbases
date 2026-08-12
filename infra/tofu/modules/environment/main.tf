@@ -183,8 +183,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "this" {
 }
 
 # A proxied CNAME to the tunnel. This is the ONLY DNS record this configuration
-# manages. datopian.com is a live zone with hundreds of unrelated records; any
-# plan showing a deletion of a record we do not own is a bug, not an approval.
+# manages, and check_infra.py fails the build if a second one appears.
+#
+# The zone is deliberately not datopian.com: the deploy token needs DNS Write on
+# whichever zone serves this hostname, and datopian.com carries the company
+# Workspace MX records. See infra/tofu/README.md.
 resource "cloudflare_dns_record" "app" {
   zone_id = var.cloudflare_zone_id
   name    = var.hostname

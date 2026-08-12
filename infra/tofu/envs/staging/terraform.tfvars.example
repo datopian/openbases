@@ -4,7 +4,7 @@
 
 cloudflare_account_id = ""
 cloudflare_zone_id    = ""
-hostname              = "work-staging.datopian.com"
+hostname              = "work-staging.openbases.com"
 
 # Empty denies everyone. Add the pilot users before expecting to log in.
 access_allowed_emails = []
