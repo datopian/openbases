@@ -4,6 +4,7 @@ OpenTofu configuration for every Workgraph environment. Nothing persistent is cr
 (ADR-0015).
 
 ```
+account/           account-level singletons: the Zero Trust organisation
 modules/
   environment/     one complete environment: network, firewall, nodes, tunnel, Access, DNS, R2
   google-events/   the minimal Google Cloud Pub/Sub delivery fabric for Workspace Events
@@ -11,6 +12,28 @@ envs/
   staging/         staging root module
   production/      production root module
 ```
+
+## account/
+
+The Cloudflare Zero Trust organisation is a singleton per account, so it cannot live in the
+environment module — that module is instantiated once per environment, and two instances would
+fight over one organisation.
+
+It is **imported**, not created: enabling Zero Trust in the dashboard creates it with a generated
+team domain. `account/` then owns the settings that plan §8.1 requires:
+
+| Setting | Value | Why |
+|---|---|---|
+| `auth_domain` | `datopian.cloudflareaccess.com` | Visible on every login screen and the JWT issuer the control API validates. The generated `icy-boat-89aa` reads like a phishing domain to a client. |
+| `mfa_required_for_all_apps` | `true` | Enforced org-wide rather than per application, so a new Access application cannot omit it. |
+| `deny_unmatched_requests` | `true` | A request matching no Access application is refused rather than passed to an origin. |
+| `auto_redirect_to_identity` | `false` | Keeps the login screen that shows which organisation is asking for identity — the check that makes a phishing domain noticeable. |
+
+`auth_domain` is written as the **full** domain because the API stores and returns it that way.
+Writing the bare label produces a diff on every subsequent plan.
+
+Renaming the team domain invalidates enrolled devices, registered identity-provider callback URLs,
+and saved bookmarks. It is cheap only before any Access application exists.
 
 ## Required environment
 
