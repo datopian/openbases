@@ -52,9 +52,23 @@ Three of these steps are the ones people miss, and each fails in a way that does
 
 **In the Google Admin console** (not Cloud — a different console):
 
-5. **Security → Access and data control → API controls → Settings → Internal apps**, tick
-   **Trust internal apps**. It is **off by default and Access does not work without it.** This is the
-   single most common failure, and the symptom is a group-fetch error that says nothing about trust.
+5. Tick **Trust internal apps**. It is **off by default and Access does not work without it.** This
+   is the single most common failure, and the symptom is a group-fetch error that never mentions
+   trust.
+
+   The reliable route is the direct URL, because Google has renamed this area several times:
+
+   ```
+   https://admin.google.com/ac/owl/settings
+   ```
+
+   By menu: **admin.google.com → Security → Access and data control → API controls**, then the
+   **Settings** link on that page (not the left nav). The control sits under an **Internal apps**
+   heading and is labelled *"Trust internal apps"* or, in newer consoles,
+   *"Trust internal, domain-owned apps"*.
+
+   If the page is not there at all, the account is not a **super admin** — delegated admin roles do
+   not see API controls. That is the usual reason it "cannot be found".
 
 **Then here:**
 

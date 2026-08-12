@@ -20,5 +20,5 @@ display_name = "Datopian"
 # Leave the ID empty until the OAuth client exists in Google Cloud; the resource
 # is created only when both the ID and the secret are present, so a fresh clone
 # plans cleanly before anyone has been to the console.
-google_workspace_client_id = ""
+google_workspace_client_id = "578082810196-p3j2qgb9kvg2qd9q57pmtotb0qmfq2f9.apps.googleusercontent.com"
 google_workspace_domain    = "datopian.com"
