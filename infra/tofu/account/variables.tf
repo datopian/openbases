@@ -33,9 +33,22 @@ variable "session_duration" {
 }
 
 variable "user_seat_expiration_inactive_time" {
-  description = "How long an inactive user keeps their seat. Reclaiming seats is also a leaver control."
+  description = <<-EOT
+    How long an inactive user keeps their seat before it is reclaimed.
+
+    Also a leaver control: a seat that expires is one fewer stale identity. The
+    minimum Cloudflare accepts is 730h (one month), and it is set to exactly that
+    because sooner is stricter. A shorter value is rejected with
+    access.api.error.user_seat_expiration_invalid_time, which does not mention
+    the minimum.
+  EOT
   type        = string
-  default     = "720h" # 30 days
+  default     = "730h"
+
+  validation {
+    condition     = can(regex("^[0-9]+h$", var.user_seat_expiration_inactive_time)) && tonumber(trimsuffix(var.user_seat_expiration_inactive_time, "h")) >= 730
+    error_message = "user_seat_expiration_inactive_time must be expressed in hours and be at least 730h; Cloudflare rejects anything shorter."
+  }
 }
 
 variable "google_workspace_client_id" {
