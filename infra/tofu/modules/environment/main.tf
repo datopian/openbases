@@ -119,14 +119,23 @@ resource "hcloud_server" "control" {
 
   labels = merge(local.common_labels, { role = "control" })
 
-  # The subnet must exist before an server joins it.
+  # First-boot bootstrap. The host dials out to Cloudflare; nothing dials in.
+  user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
+    tunnel_token        = data.cloudflare_zero_trust_tunnel_cloudflared_token.this.token
+    cloudflared_version = var.cloudflared_version
+    cloudflared_sha256  = var.cloudflared_sha256
+  })
+
+  # The subnet must exist before a server joins it.
   depends_on = [hcloud_network_subnet.this]
 
-  lifecycle {
-    # Rebuilding a node is a documented runbook, not a side effect of editing
-    # an image or type. Removing this is a deliberate act.
-    prevent_destroy = true
-  }
+  # No prevent_destroy. It was here as belt-and-braces, but it contradicts the
+  # WP-B1 acceptance criterion that staging can be destroyed and recreated from
+  # code, and it blocks the replacement that a cloud-init change requires.
+  #
+  # Protection comes from the approval path instead: infrastructure.destroy
+  # needs two approvers under policies/default.yaml, every plan is inspected for
+  # deletes before approval, and make live-zones runs afterwards.
 }
 
 # The execution node runs Gas Town cells, Dolt, worktrees and build caches.
@@ -157,11 +166,13 @@ resource "hcloud_server" "execution" {
 
   labels = merge(local.common_labels, { role = "execution" })
 
-  depends_on = [hcloud_network_subnet.this]
+  user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
+    tunnel_token        = data.cloudflare_zero_trust_tunnel_cloudflared_token.this.token
+    cloudflared_version = var.cloudflared_version
+    cloudflared_sha256  = var.cloudflared_sha256
+  })
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  depends_on = [hcloud_network_subnet.this]
 }
 
 # ---------------------------------------------------------------------------
@@ -180,6 +191,38 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "this" {
   name          = local.name
   tunnel_secret = base64encode(random_password.tunnel_secret.result)
   config_src    = "cloudflare"
+}
+
+# The tunnel's own credential, needed by the connector on the host. It reaches
+# the node through cloud-init user-data, which is the only channel available:
+# the firewall has no inbound rules, so there is nothing to SSH into to place a
+# file. The value lands in Hetzner server metadata, so WP-B2 must block agent
+# users from reaching 169.254.169.254.
+data "cloudflare_zero_trust_tunnel_cloudflared_token" "this" {
+  account_id = var.cloudflare_account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.this.id
+}
+
+# Where the tunnel sends traffic once a connector is up. Configured through the
+# API rather than a file on the host, matching config_src = "cloudflare", so
+# routing is in Git rather than in a config file nobody can reach.
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
+  account_id = var.cloudflare_account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.this.id
+
+  config = {
+    ingress = [
+      {
+        hostname = var.hostname
+        service  = "http://localhost:${var.app_port}"
+      },
+      # Required catch-all. Anything not matching the hostname above is refused
+      # at the connector rather than reaching the host.
+      {
+        service = "http_status:404"
+      },
+    ]
+  }
 }
 
 # A proxied CNAME to the tunnel. This is the ONLY DNS record this configuration

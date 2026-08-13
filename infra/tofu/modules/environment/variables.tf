@@ -130,3 +130,21 @@ variable "r2_location" {
     error_message = "r2_location must be one of weur, eeur, enam, wnam, apac, oc."
   }
 }
+
+variable "cloudflared_version" {
+  description = "Pinned cloudflared release. Bootstrapped by cloud-init and verified against cloudflared_sha256."
+  type        = string
+  default     = "2026.7.3"
+}
+
+variable "cloudflared_sha256" {
+  description = "SHA-256 of cloudflared-linux-amd64.deb for cloudflared_version. A mismatch aborts the bootstrap."
+  type        = string
+  default     = "049777d30f9bf93da6df8bbe31383460eb2aa51a832c6551824d56f9fcc55974"
+}
+
+variable "app_port" {
+  description = "Local port the tunnel routes to on the control node. The control API binds here."
+  type        = number
+  default     = 8080
+}

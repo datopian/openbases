@@ -63,16 +63,48 @@ def check_ssh_closed_by_default() -> None:
         )
 
 
-def check_nodes_are_protected() -> None:
-    """Rebuilding a node is a runbook, not a side effect of an edit."""
+def check_nodes_bootstrap_without_inbound() -> None:
+    """Every node must bootstrap itself; nothing may depend on reaching it.
+
+    The firewall has no inbound rules, so a node that does not configure its own
+    outbound tunnel at first boot is unreachable and unrecoverable without
+    opening a port. prevent_destroy is deliberately NOT asserted here: it
+    contradicts the WP-B1 acceptance criterion that staging is destroyed and
+    recreated from code, and destroy is gated by two approvers in policy instead.
+    """
     main = (MODULE / "main.tf").read_text()
     servers = re.findall(r'resource\s+"hcloud_server"\s+"(\w+)"', main)
     for name in servers:
         m = re.search(
             r'resource\s+"hcloud_server"\s+"%s"\s*\{(.*?)\n\}' % re.escape(name), main, re.S
         )
-        if not m or "prevent_destroy = true" not in m.group(1):
-            problems.append(f'hcloud_server "{name}" must set lifecycle.prevent_destroy = true')
+        if not m or "user_data" not in m.group(1):
+            problems.append(
+                f'hcloud_server "{name}" has no user_data. With no inbound firewall rule, a node '
+                "that does not dial out at first boot cannot be reached at all."
+            )
+
+
+def check_cloudinit_template_escaping() -> None:
+    """Catch templatefile over-escaping in cloud-init.
+
+    templatefile only treats `${` specially. `$(` and `$((` are ordinary shell
+    and must be written plainly; `$$(` renders literally, and `$$` is the
+    shell's PID, so the script dies with a syntax error. That failure happens on
+    a host with no inbound path, where there is nothing to read the error from.
+    """
+    for tpl in sorted((MODULE / "templates").glob("*.tftpl")):
+        for i, line in enumerate(tpl.read_text().splitlines(), 1):
+            # A comment mentioning the sequence is harmless; only executable
+            # lines matter.
+            if line.lstrip().startswith("#"):
+                continue
+            if "$$(" in line:
+                problems.append(
+                    f"{tpl.relative_to(ROOT)}:{i}: '$$(' renders literally. "
+                    "Write $( for command substitution and $(( for arithmetic; "
+                    "only ${ needs escaping as $${."
+                )
 
 
 def check_single_dns_record() -> None:
@@ -189,7 +221,8 @@ def main() -> int:
     for check in (
         check_no_inbound_rules,
         check_ssh_closed_by_default,
-        check_nodes_are_protected,
+        check_nodes_bootstrap_without_inbound,
+        check_cloudinit_template_escaping,
         check_single_dns_record,
         check_tfvars_hold_no_secrets,
         check_account_level_settings,

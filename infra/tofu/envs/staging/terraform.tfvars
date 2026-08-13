@@ -26,6 +26,13 @@ access_allowed_emails = [
   "rufus.pollock@datopian.com",
 ]
 
-# Break-glass only. Leave empty: the origin is reached through Cloudflare Tunnel,
-# and setting this opens a public inbound SSH port.
+# The break-glass SSH key stays registered on the node, but no rule admits it.
+# Keeping the key means a future break-glass is a firewall change alone — one
+# apply, no rebuild — rather than replacing the node to add a key. The key is
+# inert while admin_ssh_cidrs is empty, because nothing can reach port 22.
+admin_ssh_key_ids = ["117051669"]
+
+# CLOSED. Setting this opens a public inbound SSH port and shows loudly in the
+# plan diff. It was opened on 2026-08-13 to diagnose a failing cloud-init
+# bootstrap and closed the same session; see docs/runbooks/break-glass-log.md.
 admin_ssh_cidrs = []
