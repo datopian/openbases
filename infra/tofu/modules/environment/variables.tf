@@ -101,9 +101,23 @@ variable "access_session_duration" {
 }
 
 variable "r2_buckets" {
-  description = "R2 bucket base names created for this environment. The environment name is appended."
+  description = <<-EOT
+    R2 bucket base names created for this environment. The environment name is
+    appended.
+
+    "tfstate" is deliberately absent. The state bucket cannot be created by the
+    configuration whose state it holds, so scripts/bootstrap_state_bucket.sh
+    creates it before the first init. Listing it here as well would mean two
+    owners for one bucket, and the apply would fail on a name that already
+    exists.
+  EOT
   type        = list(string)
-  default     = ["backups", "evidence", "audit", "tfstate"]
+  default     = ["backups", "evidence", "audit"]
+
+  validation {
+    condition     = !contains(var.r2_buckets, "tfstate")
+    error_message = "tfstate is owned by scripts/bootstrap_state_bucket.sh, not by this module."
+  }
 }
 
 variable "r2_location" {
