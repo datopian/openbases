@@ -1,6 +1,11 @@
 ---
 # Automated compliance verification.
 #
+# Every task here is read-only and carries check_mode: false. Ansible skips
+# command tasks under --check, which would leave the assertions with nothing to
+# read and fail them for the wrong reason — and this role is exactly what runs
+# during the idempotence check.
+#
 # WP-B2 acceptance requires a test that verifies the required settings, and it
 # must be independent of Ansible's own "changed" reporting: a task can report
 # unchanged because it was skipped, not because the setting is right. Everything
@@ -10,21 +15,31 @@
   ansible.builtin.command: sshd -T
   register: sshd_effective
   changed_when: false
+  check_mode: false
 
 - name: Assert password authentication is disabled
   ansible.builtin.assert:
     that: "'passwordauthentication no' in sshd_effective.stdout | lower"
     fail_msg: "sshd still accepts password authentication"
 
+# sshd -T normalises "prohibit-password" to the older synonym
+# "without-password". Both mean key-only root login, and asserting on the
+# effective config rather than the file we wrote is the point of this role —
+# so accept either spelling and reject the one that actually matters, "yes".
 - name: Assert root cannot log in with a password
   ansible.builtin.assert:
-    that: "'permitrootlogin prohibit-password' in sshd_effective.stdout | lower"
+    that:
+      - >-
+        'permitrootlogin prohibit-password' in sshd_effective.stdout | lower or
+        'permitrootlogin without-password' in sshd_effective.stdout | lower
+      - "'permitrootlogin yes' not in sshd_effective.stdout | lower"
     fail_msg: "sshd permits root password login"
 
 - name: Check the tunnel connector is running
   ansible.builtin.command: systemctl is-active cloudflared
   register: cloudflared_state
   changed_when: false
+  check_mode: false
   failed_when: false
 
 - name: Assert the tunnel connector is active
@@ -36,18 +51,21 @@
   ansible.builtin.command: systemctl show cloudflared -p NoNewPrivileges --value
   register: cloudflared_nnp
   changed_when: false
+  check_mode: false
   failed_when: cloudflared_nnp.stdout != "yes"
 
 - name: Check auditd is running
   ansible.builtin.command: systemctl is-active auditd
   register: auditd_state
   changed_when: false
+  check_mode: false
   failed_when: auditd_state.stdout != "active"
 
 - name: Assert time synchronisation is active
   ansible.builtin.command: systemctl is-active chrony
   register: chrony_state
   changed_when: false
+  check_mode: false
   failed_when: chrony_state.stdout != "active"
 
 # The heart of ADR-0002. Each assertion below is a way one cell could reach
@@ -59,6 +77,7 @@
       ansible.builtin.stat:
         path: "{{ cells_root }}/{{ item.name }}"
       register: cell_homes
+      check_mode: false
       loop: "{{ execution_cells }}"
       loop_control:
         label: "{{ item.name }}"
@@ -81,6 +100,7 @@
       ansible.builtin.stat:
         path: "{{ cells_root }}"
       register: cells_root_stat
+      check_mode: false
 
     - name: Cells root must be traversable but not enumerable
       ansible.builtin.assert:
@@ -93,6 +113,7 @@
       ansible.builtin.command: "getent passwd wgcell_{{ item.name | replace('-', '_') }}"
       register: cell_passwd
       changed_when: false
+      check_mode: false
       failed_when: "'/usr/sbin/nologin' not in cell_passwd.stdout"
       loop: "{{ execution_cells }}"
       loop_control:
@@ -102,6 +123,7 @@
       ansible.builtin.command: "id -nG wgcell_{{ item.name | replace('-', '_') }}"
       register: cell_groups
       changed_when: false
+      check_mode: false
       failed_when: "'sudo' in cell_groups.stdout or 'adm' in cell_groups.stdout"
       loop: "{{ execution_cells }}"
       loop_control:
@@ -111,6 +133,7 @@
       ansible.builtin.stat:
         path: /var/run/docker.sock
       register: docker_sock
+      check_mode: false
 
     - name: Docker socket must not be group-accessible to cell users
       ansible.builtin.assert:
