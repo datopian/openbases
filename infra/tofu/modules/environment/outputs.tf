@@ -42,3 +42,8 @@ output "firewall_id" {
   description = "The deny-by-default firewall applied to every node."
   value       = hcloud_firewall.this.id
 }
+
+output "ssh_hostname" {
+  description = "Hostname for SSH over the tunnel, empty when the path is disabled."
+  value       = var.ssh_hostname
+}

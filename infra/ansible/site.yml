@@ -1,0 +1,28 @@
+---
+# WP-B2: host provisioning and hardening.
+#
+# Idempotent by requirement: a second run must report no changes. Run it twice
+# and compare, or use scripts/ansible_check.sh which does that for you.
+
+- name: Harden every node
+  hosts: all
+  become: false          # cloud-init leaves us as root; no sudo layer to add
+  gather_facts: true
+  roles:
+    - base
+    - ssh
+    - auditd
+
+- name: Configure execution cells
+  hosts: execution
+  become: false
+  gather_facts: true
+  roles:
+    - execution_cell
+
+- name: Verify compliance
+  hosts: all
+  become: false
+  gather_facts: false
+  roles:
+    - compliance

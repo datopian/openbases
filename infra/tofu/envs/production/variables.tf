@@ -36,3 +36,9 @@ variable "admin_ssh_cidrs" {
   type        = list(string)
   default     = []
 }
+
+variable "ssh_hostname" {
+  description = "Hostname for SSH over the tunnel, used by configuration management. Opens no port."
+  type        = string
+  default     = ""
+}

@@ -148,3 +148,16 @@ variable "app_port" {
   type        = number
   default     = 8080
 }
+
+variable "ssh_hostname" {
+  description = <<-EOT
+    Hostname used to reach the node's SSH over Cloudflare Tunnel, for
+    configuration management.
+
+    This opens no port. The connector runs on the host, so it reaches
+    localhost:22 from the inside; the firewall stays deny-all. Empty disables
+    the path entirely.
+  EOT
+  type        = string
+  default     = ""
+}

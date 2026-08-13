@@ -1,0 +1,5 @@
+---
+# auditd rejects a plain systemd restart on Ubuntu; augenrules reloads cleanly.
+- name: Restart auditd
+  ansible.builtin.command: augenrules --load
+  changed_when: true

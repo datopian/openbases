@@ -1,0 +1,16 @@
+# Execution nodes run untrusted agent workloads and must isolate them.
+#
+# One cell per trust domain, never per employee (ADR-0002). Each cell gets its
+# own Linux user, home, and resource limits, and cannot read another cell's
+# files or credentials.
+execution_cells:
+  - name: oss
+    trust_domain: oss
+    cpu_quota_percent: 200
+    memory_limit_mb: 8192
+    max_processes: 512
+  - name: client-nged
+    trust_domain: client-nged
+    cpu_quota_percent: 200
+    memory_limit_mb: 8192
+    max_processes: 512

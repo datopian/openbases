@@ -11,6 +11,7 @@ module "environment" {
   cloudflare_account_id = var.cloudflare_account_id
   cloudflare_zone_id    = var.cloudflare_zone_id
   hostname              = var.hostname
+  ssh_hostname          = var.ssh_hostname
 
   access_allowed_emails = var.access_allowed_emails
   admin_ssh_key_ids     = var.admin_ssh_key_ids

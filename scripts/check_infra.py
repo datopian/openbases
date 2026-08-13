@@ -107,20 +107,33 @@ def check_cloudinit_template_escaping() -> None:
                 )
 
 
-def check_single_dns_record() -> None:
-    """The zone is shared with live production records.
+# DNS records this configuration is allowed to manage. Adding a name here is a
+# deliberate act; a record not listed is either a mistake or someone else's.
+ALLOWED_DNS_RECORDS = {"app", "ssh"}
 
-    This configuration must manage exactly one DNS record per environment. A
-    wildcard, a zone-wide data source, or a second record is how an unrelated
-    record gets clobbered.
+
+def check_dns_records_are_declared() -> None:
+    """Only manage records we have explicitly declared, and never a wildcard.
+
+    The Workgraph zone is ours, but the deploy token holds DNS write on a whole
+    zone, and a wildcard or a zone-level resource turns a narrow permission into
+    a broad one. This keeps the blast radius equal to the records we name.
     """
     main = (MODULE / "main.tf").read_text()
-    records = re.findall(r'resource\s+"cloudflare_dns_record"\s+"(\w+)"', main)
-    if len(records) != 1:
+
+    records = set(re.findall(r'resource\s+"cloudflare_dns_record"\s+"(\w+)"', main))
+    unexpected = records - ALLOWED_DNS_RECORDS
+    if unexpected:
         problems.append(
-            f"expected exactly 1 cloudflare_dns_record, found {len(records)}: {records}. "
-            "The zone holds hundreds of unrelated live records."
+            f"undeclared cloudflare_dns_record resources: {sorted(unexpected)}. "
+            "Add the name to ALLOWED_DNS_RECORDS only after deciding it should exist."
         )
+
+    # A wildcard record would capture every unclaimed name in the zone.
+    for m in re.finditer(r'resource\s+"cloudflare_dns_record"\s+"\w+"\s*\{(.*?)\n\}', main, re.S):
+        if re.search(r'name\s*=\s*"[^"]*\*', m.group(1)):
+            problems.append("a wildcard DNS record would capture every unclaimed name in the zone")
+
     if re.search(r'resource\s+"cloudflare_zone"', main):
         problems.append("this configuration must not manage the zone itself, only records in it")
 
@@ -223,7 +236,7 @@ def main() -> int:
         check_ssh_closed_by_default,
         check_nodes_bootstrap_without_inbound,
         check_cloudinit_template_escaping,
-        check_single_dns_record,
+        check_dns_records_are_declared,
         check_tfvars_hold_no_secrets,
         check_account_level_settings,
     ):

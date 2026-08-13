@@ -211,18 +211,65 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.this.id
 
   config = {
-    ingress = [
-      {
-        hostname = var.hostname
-        service  = "http://localhost:${var.app_port}"
-      },
-      # Required catch-all. Anything not matching the hostname above is refused
-      # at the connector rather than reaching the host.
-      {
-        service = "http_status:404"
-      },
-    ]
+    ingress = concat(
+      var.ssh_hostname != "" ? [
+        # SSH for configuration management, reached through the tunnel rather
+        # than an open port. The connector runs on this host, so localhost:22 is
+        # reachable from the inside while the firewall stays deny-all.
+        {
+          hostname = var.ssh_hostname
+          service  = "ssh://localhost:22"
+        }
+      ] : [],
+      [
+        {
+          hostname = var.hostname
+          service  = "http://localhost:${var.app_port}"
+        },
+        # Required catch-all. Anything not matching a hostname above is refused
+        # at the connector rather than reaching the host.
+        {
+          service = "http_status:404"
+        },
+      ]
+    )
   }
+}
+
+# DNS for the SSH path. Proxied, like the application record, so the node's real
+# address is never published.
+resource "cloudflare_dns_record" "ssh" {
+  count = var.ssh_hostname != "" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.ssh_hostname
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.this.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "Managed by OpenTofu — workgraph ${var.environment} SSH. Do not edit by hand."
+}
+
+resource "cloudflare_zero_trust_access_application" "ssh" {
+  count = var.ssh_hostname != "" ? 1 : 0
+
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-ssh"
+  domain           = var.ssh_hostname
+  type             = "self_hosted"
+  session_duration = "1h"
+
+  # Reuses the same email allow-list as the application. A service token would
+  # be better for unattended runs, but creating one needs an Access: Service
+  # Tokens permission the deploy token does not hold; until then an operator
+  # authenticates interactively with `cloudflared access login`. Tracked as
+  # wg-8yv.49.
+  policies = [
+    for policy in cloudflare_zero_trust_access_policy.allowed_users : {
+      id         = policy.id
+      precedence = 1
+    }
+  ]
 }
 
 # A proxied CNAME to the tunnel. This is the ONLY DNS record this configuration

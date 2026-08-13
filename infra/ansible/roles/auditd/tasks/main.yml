@@ -1,0 +1,34 @@
+---
+# Host auditing. Plan section 11.3 requires auditd or equivalent.
+
+- name: Install audit rules
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/10-workgraph.rules
+    mode: "0640"
+    content: |
+      # Managed by Ansible (WP-B2).
+
+      # Identity and privilege changes.
+      -w /etc/passwd -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/group -p wa -k identity
+      -w /etc/sudoers -p wa -k privilege
+      -w /etc/sudoers.d/ -p wa -k privilege
+
+      # Anything touching credentials or the tunnel that is the only way in.
+      -w /etc/cloudflared/ -p wa -k workgraph_credentials
+      -w /etc/ssh/sshd_config.d/ -p wa -k workgraph_ssh
+
+      # Execution-cell homes. An agent user reading outside its own cell is the
+      # failure ADR-0002 exists to prevent, so it must leave a record.
+      -w /srv/cells/ -p wa -k workgraph_cells
+
+      # Privilege escalation attempts.
+      -a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=4294967295 -k privilege_escalation
+  notify: Restart auditd
+
+- name: Enable and start auditd
+  ansible.builtin.systemd:
+    name: auditd
+    enabled: true
+    state: started
