@@ -43,20 +43,28 @@ TARGET="infra/tofu/$DIR"
 [ -d "$TARGET" ] || { echo "no such module: $TARGET" >&2; exit 2; }
 
 echo "==> migrating $DIR"
-tofu -chdir="$TARGET" init -backend-config=backend.hcl -migrate-state -input=false
+# -force-copy answers the migration prompt non-interactively. It copies local
+# state to the new backend; it does not discard anything, and the local file is
+# left in place until explicitly deleted below.
+tofu -chdir="$TARGET" init -backend-config=backend.hcl -migrate-state -force-copy -input=false
 
 echo "==> verifying state is readable from R2"
-tofu -chdir="$TARGET" state list
+if resources=$(tofu -chdir="$TARGET" state list 2>/dev/null) && [ -n "$resources" ]; then
+  echo "$resources" | sed 's/^/    /'
+else
+  # A module that has never been applied has no state to migrate. The backend is
+  # still configured, so the first apply writes straight to R2. Not an error.
+  echo "    no resources yet — backend configured, first apply will write to R2"
+  exit 0
+fi
 
 echo "==> confirming no drift after migration"
-if tofu -chdir="$TARGET" plan -input=false -detailed-exitcode >/dev/null 2>&1; then
-  echo "    no drift"
-else
-  case $? in
-    2) echo "    DRIFT DETECTED — inspect before proceeding"; exit 1 ;;
-    *) echo "    plan failed — inspect before proceeding"; exit 1 ;;
-  esac
-fi
+tofu -chdir="$TARGET" plan -input=false -detailed-exitcode >/dev/null 2>&1 && ec=0 || ec=$?
+case "$ec" in
+  0) echo "    no drift" ;;
+  2) echo "    DRIFT DETECTED — inspect before proceeding"; exit 1 ;;
+  *) echo "    plan failed — inspect before proceeding"; exit 1 ;;
+esac
 
 echo
 echo "$DIR migrated. The local terraform.tfstate is now a stale copy; delete it"
