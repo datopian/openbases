@@ -186,11 +186,33 @@ There is a genuine chicken-and-egg: remote state wants an R2 bucket, and the buc
 OpenTofu. Resolved by creating the state bucket once with an idempotent committed script, then
 migrating state into it.
 
-1. `scripts/bootstrap_state_bucket.sh` — creates the R2 state bucket via the Cloudflare API.
-   Idempotent, committed, so the step is represented in Git rather than remembered.
-2. Mint R2 S3 credentials **scoped to that bucket**, not account-wide.
-3. `tofu init -backend-config=...` and migrate state.
-4. `tofu plan` → human approval → `tofu apply`.
+1. `scripts/bootstrap_state_bucket.sh <env>` — creates the R2 state bucket via the Cloudflare API.
+   Idempotent, committed, so the step is represented in Git rather than remembered. **Done:**
+   `workgraph-tfstate-staging` and `workgraph-tfstate-production`, both WEUR.
+2. Mint R2 S3 credentials **scoped to those buckets**, not account-wide. See below.
+3. `scripts/migrate_state_to_r2.sh <module>` — init against `backend.hcl`, migrate, verify the
+   state reads back, and confirm no drift.
+4. `tofu plan` → human approval → `tofu apply` → `make live-zones`.
+
+### Minting the R2 credentials
+
+**This account holds 74 R2 buckets**, including client and product data — `ckan-city-of-malmo`,
+`dx-birmingham-city-prod`, `datahub-cloud` and others. An account-wide R2 token would reach every
+one of them, from a credential that only needs to write two state files. Scope it.
+
+Dashboard → **R2 → API → Manage API tokens → Create API token**:
+
+| Field | Value |
+|---|---|
+| Permission | **Object Read & Write** |
+| Specify buckets | **Apply to specific buckets only** — `workgraph-tfstate-staging`, `workgraph-tfstate-production` |
+| TTL | Leave open, or set one and add it to the rotation runbook |
+
+Copy the **Access Key ID** and **Secret Access Key** into `R2_ACCESS_KEY_ID` and
+`R2_SECRET_ACCESS_KEY`. The account ID in the S3 endpoint is already in each `backend.hcl`.
+
+Creating this credential is `secret.create` under `policies/default.yaml` — a protected action, and
+correctly a human one.
 
 ## Applying is a protected action
 

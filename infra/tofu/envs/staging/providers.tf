@@ -35,7 +35,9 @@ terraform {
 
   # Remote state on R2, configured with -backend-config at init time so that
   # bucket names and credentials stay out of the repository.
-  # backend "s3" {}
+  # Configured by backend.hcl at init time so bucket names and credentials
+  # stay out of the repository.
+  backend "s3" {}
 }
 
 provider "hcloud" {}
