@@ -7,7 +7,10 @@ go 1.26
 // Without this, local and CI resolve different patch levels.
 toolchain go1.26.5
 
-require github.com/jackc/pgx/v5 v5.10.0
+require (
+	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/jackc/pgx/v5 v5.10.0
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -15,6 +16,9 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/datopian/workgraph/internal/authn"
 	"github.com/datopian/workgraph/internal/config"
 	"github.com/datopian/workgraph/internal/version"
 )
@@ -32,9 +36,33 @@ func main() {
 	log.Info("starting control-api",
 		"env", cfg.Environment, "addr", cfg.ListenAddr, "build", version.String())
 
+	db, err := sql.Open("pgx", cfg.DatabaseURL)
+	if err != nil {
+		log.Error("opening database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(time.Hour)
+
+	// Outside local development the origin refuses to start without a working
+	// authenticator. A build that cannot verify a token must not serve traffic
+	// while looking healthy.
+	var auth authn.Authenticator
+	if cfg.Environment == config.EnvLocal {
+		auth = &authn.StaticAuthenticator{}
+		log.Warn("local environment: Access validation is disabled")
+	} else {
+		auth = &authn.AccessValidator{
+			TeamDomain: cfg.AccessTeamDomain,
+			Audience:   cfg.AccessAudience,
+		}
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           routes(cfg),
+		Handler:           routes(cfg, db, auth, log),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -66,7 +94,7 @@ func main() {
 	log.Info("stopped cleanly")
 }
 
-func routes(cfg config.ControlAPI) http.Handler {
+func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	// Liveness answers "is the process running"; it must not depend on
@@ -75,14 +103,24 @@ func routes(cfg config.ControlAPI) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	// Readiness answers "can this instance serve traffic". Until the
-	// dependency checks of WP-C1 and WP-C2 exist, it reports not-ready rather
-	// than claiming a health it cannot verify.
+	// Readiness answers "can this instance serve traffic", which means the
+	// database is actually reachable — not merely configured.
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"status": "not_ready",
-			"reason": "dependency checks not implemented (WP-C1)",
-		})
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"status": "not_ready", "reason": "no database",
+			})
+			return
+		}
+		if err := db.PingContext(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"status": "not_ready", "reason": "database unreachable",
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
 	})
 
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
@@ -94,13 +132,39 @@ func routes(cfg config.ControlAPI) http.Handler {
 		})
 	})
 
-	// Every other route is unimplemented and must say so explicitly rather
-	// than returning an empty success that a caller could mistake for data.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// Everything under /v1 requires an authenticated identity. Health and
+	// version stay open because a load balancer cannot present a token, and
+	// neither reveals anything about the graph.
+	authed := http.NewServeMux()
+
+	authed.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := authn.FromContext(r.Context())
+		if !ok {
+			// Unreachable: the middleware fails closed. Present so that a
+			// future refactor that removes it fails loudly rather than
+			// serving an anonymous session.
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"subject":    id.Subject,
+			"email":      id.Email,
+			"user_id":    id.UserID,
+			"is_service": id.IsService,
+		})
+	})
+
+	authed.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{
 			"error": "not implemented",
 			"path":  r.URL.Path,
 		})
+	})
+
+	mux.Handle("/v1/", authn.Middleware(auth, nil, log)(authed))
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
 	})
 	return mux
 }

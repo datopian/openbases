@@ -1,0 +1,41 @@
+[Unit]
+Description=Workgraph control API
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User={{ control_api_user }}
+Group={{ control_api_user }}
+EnvironmentFile=/etc/workgraph/control-api.env
+ExecStart={{ control_api_binary }}
+Restart=on-failure
+RestartSec=5s
+
+# The service holds a database credential and serves client-derived data. It
+# has no reason to gain privileges, write outside its own tmp, or see other
+# processes.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/etc/workgraph
+
+[Install]
+WantedBy=multi-user.target

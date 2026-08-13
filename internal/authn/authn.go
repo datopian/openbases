@@ -26,10 +26,18 @@ var ErrNotImplemented = errors.New("authenticator not implemented (WP-C2)")
 type Identity struct {
 	// Subject is the immutable identifier from the identity provider.
 	Subject string
-	// Email is informational only.
+	// Email is informational only. Empty for a service token.
 	Email string
 	// UserID is the internal application user this identity maps to.
 	UserID string
+
+	// IsService marks a machine caller authenticated by an Access service
+	// token. A service token is not a person: it has no email, cannot be a
+	// knowledge reviewer, and cannot satisfy an approval.
+	IsService bool
+	// ServiceName is the service token's common name, so an audit record
+	// attributes the action to a named token rather than to nobody.
+	ServiceName string
 }
 
 // Authenticator establishes the identity of an inbound request.
