@@ -1,0 +1,96 @@
+---
+# Execution cells: the security boundary for agent work (ADR-0002).
+#
+# A cell is a dedicated Linux user with its own home, its own credentials, and
+# cgroup limits. The acceptance criterion for WP-B2 is that an agent user cannot
+# reach control-plane data or another cell, so every choice here is about that.
+
+- name: Ensure drop-in directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /etc/systemd/system/user-.slice.d
+    - /etc/nftables.d
+
+- name: Create the cells root
+  ansible.builtin.file:
+    path: "{{ cells_root }}"
+    state: directory
+    owner: root
+    group: root
+    # 0711: traversable so a cell can reach its own home, but NOT listable, so
+    # one cell cannot enumerate the others. Enumeration alone leaks client names.
+    mode: "0711"
+
+- name: Create a system user per cell
+  ansible.builtin.user:
+    name: "wgcell_{{ item.name | replace('-', '_') }}"
+    home: "{{ cells_root }}/{{ item.name }}"
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: true
+    password_lock: true
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Lock down each cell home
+  ansible.builtin.file:
+    path: "{{ cells_root }}/{{ item.name }}"
+    state: directory
+    owner: "wgcell_{{ item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    # 0700: only the owning cell user. This is the line that stops one client's
+    # agent reading another client's worktree.
+    mode: "0700"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Apply cgroup limits per cell
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/user-.slice.d/50-wgcell-{{ item.name }}.conf"
+    mode: "0644"
+    content: |
+      # Managed by Ansible (WP-B2). Limits for cell {{ item.name }}.
+      #
+      # A build-heavy agent must not be able to starve the node. Plan section
+      # 1.3 keeps the control plane off this machine for the same reason.
+      [Slice]
+      CPUQuota={{ item.cpu_quota_percent }}%
+      MemoryMax={{ item.memory_limit_mb }}M
+      TasksMax={{ item.max_processes }}
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd
+
+# Cloud metadata carries the tunnel token placed by cloud-init. An agent that
+# can read it can impersonate the tunnel, so no cell user may reach it.
+- name: Block cell users from cloud metadata
+  ansible.builtin.copy:
+    dest: /etc/nftables.d/10-workgraph-metadata.nft
+    mode: "0644"
+    content: |
+      #!/usr/sbin/nft -f
+      # Managed by Ansible (WP-B2).
+      table inet workgraph {
+        chain output {
+          type filter hook output priority 0; policy accept;
+      {% for cell in execution_cells %}
+          # {{ cell.name }}
+          meta skuid "wgcell_{{ cell.name | replace('-', '_') }}" ip daddr 169.254.169.254 counter drop
+      {% endfor %}
+        }
+      }
+  notify: Reload nftables
+
+- name: Ensure nftables includes the drop-in directory
+  ansible.builtin.lineinfile:
+    path: /etc/nftables.conf
+    line: 'include "/etc/nftables.d/*.nft"'
+    state: present
+    create: false
+  notify: Reload nftables

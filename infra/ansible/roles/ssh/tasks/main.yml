@@ -1,0 +1,34 @@
+---
+# SSH hardening.
+#
+# SSH is reachable only through Cloudflare Tunnel — the firewall admits nothing
+# inbound — but the daemon must still be safe if that ever changes, and Access
+# authenticates the connection rather than sshd.
+
+- name: Harden sshd
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-workgraph.conf
+    mode: "0644"
+    validate: "/usr/sbin/sshd -t -f %s"
+    content: |
+      # Managed by Ansible (WP-B2). Do not edit on the host.
+      PasswordAuthentication no
+      PermitEmptyPasswords no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      PubkeyAuthentication yes
+
+      # Root login by key only. The tunnel path authenticates through Access
+      # first, and break-glass has to be attributable, so this is deliberately
+      # not "no" until per-person admin accounts exist.
+      PermitRootLogin prohibit-password
+
+      X11Forwarding no
+      AllowAgentForwarding no
+      AllowTcpForwarding no
+      PermitTunnel no
+      MaxAuthTries 3
+      LoginGraceTime 20
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+  notify: Restart sshd

@@ -1,0 +1,148 @@
+---
+# Automated compliance verification.
+#
+# Every task here is read-only and carries check_mode: false. Ansible skips
+# command tasks under --check, which would leave the assertions with nothing to
+# read and fail them for the wrong reason — and this role is exactly what runs
+# during the idempotence check.
+#
+# WP-B2 acceptance requires a test that verifies the required settings, and it
+# must be independent of Ansible's own "changed" reporting: a task can report
+# unchanged because it was skipped, not because the setting is right. Everything
+# here reads live state and asserts on it.
+
+- name: Gather sshd effective configuration
+  ansible.builtin.command: sshd -T
+  register: sshd_effective
+  changed_when: false
+  check_mode: false
+
+- name: Assert password authentication is disabled
+  ansible.builtin.assert:
+    that: "'passwordauthentication no' in sshd_effective.stdout | lower"
+    fail_msg: "sshd still accepts password authentication"
+
+# sshd -T normalises "prohibit-password" to the older synonym
+# "without-password". Both mean key-only root login, and asserting on the
+# effective config rather than the file we wrote is the point of this role —
+# so accept either spelling and reject the one that actually matters, "yes".
+- name: Assert root cannot log in with a password
+  ansible.builtin.assert:
+    that:
+      - >-
+        'permitrootlogin prohibit-password' in sshd_effective.stdout | lower or
+        'permitrootlogin without-password' in sshd_effective.stdout | lower
+      - "'permitrootlogin yes' not in sshd_effective.stdout | lower"
+    fail_msg: "sshd permits root password login"
+
+- name: Check the tunnel connector is running
+  ansible.builtin.command: systemctl is-active cloudflared
+  register: cloudflared_state
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Assert the tunnel connector is active
+  ansible.builtin.assert:
+    that: cloudflared_state.stdout == "active"
+    fail_msg: "cloudflared is not active; this host has no path in or out"
+
+- name: Assert the connector runs with privileges dropped
+  ansible.builtin.command: systemctl show cloudflared -p NoNewPrivileges --value
+  register: cloudflared_nnp
+  changed_when: false
+  check_mode: false
+  failed_when: cloudflared_nnp.stdout != "yes"
+
+- name: Check auditd is running
+  ansible.builtin.command: systemctl is-active auditd
+  register: auditd_state
+  changed_when: false
+  check_mode: false
+  failed_when: auditd_state.stdout != "active"
+
+- name: Assert time synchronisation is active
+  ansible.builtin.command: systemctl is-active chrony
+  register: chrony_state
+  changed_when: false
+  check_mode: false
+  failed_when: chrony_state.stdout != "active"
+
+# The heart of ADR-0002. Each assertion below is a way one cell could reach
+# another, or reach the control plane.
+- name: Verify execution cell isolation
+  when: execution_cells | default([]) | length > 0
+  block:
+    - name: Stat each cell home
+      ansible.builtin.stat:
+        path: "{{ cells_root }}/{{ item.name }}"
+      register: cell_homes
+      check_mode: false
+      loop: "{{ execution_cells }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Assert each cell home is private to its own user
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.mode == "0700"
+          - item.stat.pw_name == "wgcell_" ~ (item.item.name | replace('-', '_'))
+        fail_msg: >-
+          {{ item.item.name }} home is {{ item.stat.mode | default('missing') }}
+          owned by {{ item.stat.pw_name | default('nobody') }}; it must be 0700
+          and owned by its own cell user, or one client's agent can read another's.
+      loop: "{{ cell_homes.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Assert the cells root is not listable
+      ansible.builtin.stat:
+        path: "{{ cells_root }}"
+      register: cells_root_stat
+      check_mode: false
+
+    - name: Cells root must be traversable but not enumerable
+      ansible.builtin.assert:
+        that: cells_root_stat.stat.mode == "0711"
+        fail_msg: >-
+          {{ cells_root }} is {{ cells_root_stat.stat.mode }}; 0711 keeps a cell
+          from listing the others, and the list of cells leaks client names.
+
+    - name: Assert each cell user has no shell
+      ansible.builtin.command: "getent passwd wgcell_{{ item.name | replace('-', '_') }}"
+      register: cell_passwd
+      changed_when: false
+      check_mode: false
+      failed_when: "'/usr/sbin/nologin' not in cell_passwd.stdout"
+      loop: "{{ execution_cells }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Assert cell users cannot sudo
+      ansible.builtin.command: "id -nG wgcell_{{ item.name | replace('-', '_') }}"
+      register: cell_groups
+      changed_when: false
+      check_mode: false
+      failed_when: "'sudo' in cell_groups.stdout or 'adm' in cell_groups.stdout"
+      loop: "{{ execution_cells }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Assert cell users cannot reach the Docker socket
+      ansible.builtin.stat:
+        path: /var/run/docker.sock
+      register: docker_sock
+      check_mode: false
+
+    - name: Docker socket must not be group-accessible to cell users
+      ansible.builtin.assert:
+        that: not docker_sock.stat.exists or docker_sock.stat.gr_name != 'docker' or (execution_cells | length == 0)
+        fail_msg: >-
+          The host Docker socket is reachable. An agent with it has root on this
+          node (plan section 11.3).
+      when: docker_sock.stat.exists
+
+- name: Report
+  ansible.builtin.debug:
+    msg: "compliance checks passed on {{ inventory_hostname }}"

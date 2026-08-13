@@ -29,6 +29,29 @@ deployment pipeline — never by hand against a running database.
 Only `0001_core.sql` is present in the bootstrap. The rest land with their work packages; the table
 inventory is fixed by plan §12.1 so the shape is not open to drift.
 
+## Applying them
+
+`cmd/migrate` applies pending migrations in lexical order, each in its own
+transaction, and records name plus SHA-256 in `schema_migrations`.
+
+```bash
+make build
+sudo -u postgres env WG_DATABASE_URL='postgres:///workgraph?host=/var/run/postgresql' \
+  /usr/local/bin/workgraph-migrate
+```
+
+Two things about that command are deliberate.
+
+**It runs as the database owner, not as `workgraph_app`.** PostgreSQL 15 and later revoke `CREATE`
+on `public` from `PUBLIC`, so the application role cannot create tables — and should not be able to.
+DDL and DML are different privileges; `0008_rls.sql` grants the application only what it needs.
+
+**It connects over the local unix socket**, so no password crosses a network and no superuser
+credential has to exist as a TCP login.
+
+Editing an applied migration is refused: the recorded checksum would no longer match, which means
+the schema on that database is not what the repository describes. Write a new migration instead.
+
 ## Row-level security
 
 Tables holding project-scoped or classified data enable RLS and are read through a role that

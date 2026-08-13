@@ -41,3 +41,20 @@ crash.log
 .dolt/
 *.db
 .beads-credential-key
+
+# OpenTofu plan artefacts are encrypted but still not for the repository.
+tfplan
+*.tfplan
+
+# Committed tfvars hold NON-SECRET environment config only: account and zone
+# identifiers, hostnames, and the Access allow-list. ADR-0015 requires
+# persistent configuration to live in Git or production cannot be rebuilt from
+# code. Credentials come from the environment and are never written here.
+# A secrets-bearing override, if one is ever needed, uses this name:
+infra/tofu/**/secret.auto.tfvars
+
+# OpenTofu local state. Encrypted at rest, but state belongs in the R2 backend
+# (wg-8yv.43), never in the repository.
+infra/tofu/**/terraform.tfstate
+infra/tofu/**/terraform.tfstate.backup
+infra/tofu/**/.terraform/

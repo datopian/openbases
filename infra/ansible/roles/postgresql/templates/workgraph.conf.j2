@@ -1,0 +1,33 @@
+# Managed by Ansible (WP-C1). Do not edit on the host.
+
+# Bind to loopback only. The API runs on this node; nothing else should reach
+# the database directly, and the host firewall is not the only thing that should
+# be stopping it.
+listen_addresses = '127.0.0.1'
+port = 5432
+
+max_connections = {{ postgresql_max_connections }}
+shared_buffers = {{ postgresql_shared_buffers }}
+effective_cache_size = {{ postgresql_effective_cache_size }}
+
+password_encryption = scram-sha-256
+
+# WAL settings that a later restart would otherwise be needed to change. WP-I2
+# adds the archive_command; turning on the WAL level now means enabling backups
+# does not require downtime.
+wal_level = {{ postgresql_wal_level }}
+archive_mode = {{ postgresql_archive_mode }}
+archive_command = '/bin/true'   # replaced by WP-I2 with the real R2 upload
+max_wal_senders = 3
+
+# Log enough to investigate an incident. Statement logging stays off: query text
+# can contain client data, and this database holds restricted material.
+log_destination = 'stderr'
+logging_collector = off
+log_line_prefix = '%m [%p] %q%u@%d '
+log_checkpoints = on
+log_connections = on
+log_disconnections = on
+log_lock_waits = on
+log_temp_files = 0
+log_min_duration_statement = 1000

@@ -1,0 +1,20 @@
+# Staging inventory.
+#
+# ansible_host is a Cloudflare hostname, not the node's IP. Neither node has an
+# inbound port; cloudflared proxies SSH over the tunnel each node dialled out
+# on, and Access authenticates before the connection is made.
+#
+# One tunnel per node. A shared tunnel routes SSH to whichever connector
+# Cloudflare picks, which makes targeting a specific host impossible.
+all:
+  children:
+    control:
+      hosts:
+        workgraph-staging-control:
+          ansible_host: ssh-staging.openbases.com
+          ansible_user: root
+    execution:
+      hosts:
+        workgraph-staging-execution:
+          ansible_host: ssh-exec-staging.openbases.com
+          ansible_user: root

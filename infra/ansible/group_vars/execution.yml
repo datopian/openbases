@@ -1,0 +1,21 @@
+# Execution nodes run untrusted agent workloads and must isolate them.
+
+# Defined here rather than in the execution_cell role's defaults, because the
+# compliance role runs in a separate play and cannot see another role's
+# defaults. Both need it, so it belongs to the group.
+cells_root: /srv/cells
+#
+# One cell per trust domain, never per employee (ADR-0002). Each cell gets its
+# own Linux user, home, and resource limits, and cannot read another cell's
+# files or credentials.
+execution_cells:
+  - name: oss
+    trust_domain: oss
+    cpu_quota_percent: 200
+    memory_limit_mb: 8192
+    max_processes: 512
+  - name: client-nged
+    trust_domain: client-nged
+    cpu_quota_percent: 200
+    memory_limit_mb: 8192
+    max_processes: 512

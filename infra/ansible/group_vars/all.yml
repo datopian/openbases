@@ -1,0 +1,13 @@
+# Settings shared by every node. Environment-specific values override these.
+
+# Administrative accounts. Password login is disabled everywhere; these exist so
+# that break-glass is attributable to a person rather than to "root".
+admin_users: []
+
+# Unattended security updates. Reboots are controlled rather than automatic: an
+# unannounced reboot of the execution node kills running agent work.
+unattended_upgrades_automatic_reboot: false
+
+# Journald retention. Enough to investigate an incident without filling the disk.
+journald_max_use: 2G
+journald_max_retention: 30day

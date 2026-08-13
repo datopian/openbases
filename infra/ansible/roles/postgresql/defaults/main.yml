@@ -1,0 +1,18 @@
+---
+postgresql_version: 16
+postgresql_database: workgraph
+postgresql_app_user: workgraph_app
+
+# Shared buffers at roughly a quarter of RAM is the usual starting point. The
+# control node also runs the API, worker and observability, so this stays
+# conservative rather than tuning for a dedicated database host.
+postgresql_shared_buffers: 2GB
+postgresql_effective_cache_size: 6GB
+postgresql_max_connections: 100
+
+# WAL archiving underpins the 15-minute recovery point objective in plan
+# section 15.1. The archive command itself is wired up by WP-I2, which owns
+# backups; this turns on the WAL level that makes it possible without needing a
+# restart later.
+postgresql_wal_level: replica
+postgresql_archive_mode: "on"

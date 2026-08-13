@@ -93,7 +93,8 @@ matrix:
 # Language and build toolchain, pinned so that CI, local development, and the
 # release image agree.
 toolchain:
-  go: "1.26.0"
+  # 1.26.0 carries stdlib vulnerabilities fixed in 1.26.4 and 1.26.5.
+  go: "1.26.5"
   node: "22"
 
 # Upgrade procedure (plan section 7.6). The fixture must:

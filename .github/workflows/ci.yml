@@ -127,6 +127,37 @@ jobs:
       - name: verify versions match versions.lock
         run: PATH="$PWD/.toolchain/bin:$PATH" bash scripts/verify_versions.sh
 
+  infrastructure:
+    name: infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.5
+
+      - name: formatting
+        run: tofu fmt -recursive -check -diff infra/tofu
+
+      # Validation needs provider schemas but no credentials and no state.
+      - name: validate modules and environments
+        run: |
+          set -euo pipefail
+          for dir in infra/tofu/modules/* infra/tofu/envs/*; do
+            [ -d "$dir" ] || continue
+            echo "::group::$dir"
+            tofu -chdir="$dir" init -backend=false -input=false >/dev/null
+            tofu -chdir="$dir" validate
+            echo "::endgroup::"
+          done
+
+      # Structural guards on the security posture: no inbound services, SSH
+      # closed by default, nodes protected from casual destruction, and exactly
+      # one DNS record in a zone full of unrelated live records.
+      - name: infrastructure invariants
+        run: python3 scripts/check_infra.py
+
   security:
     name: security
     runs-on: ubuntu-latest

@@ -1,0 +1,13 @@
+# Production inventory. Populated when WP-B1 applies the production environment.
+all:
+  children:
+    control:
+      hosts:
+        workgraph-production-control:
+          ansible_host: ssh.openbases.com
+          ansible_user: root
+    execution:
+      hosts:
+        workgraph-production-execution:
+          ansible_host: ssh-exec.openbases.com
+          ansible_user: root
