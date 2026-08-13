@@ -13,6 +13,13 @@
     - ssh
     - auditd
 
+- name: Provision the control-plane database
+  hosts: control
+  become: false
+  gather_facts: true
+  roles:
+    - postgresql
+
 - name: Configure execution cells
   hosts: execution
   become: false

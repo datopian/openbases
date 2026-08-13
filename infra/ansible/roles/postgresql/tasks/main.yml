@@ -1,0 +1,89 @@
+---
+# PostgreSQL for the control plane (WP-C1).
+#
+# Identity, permissions, cross-graph links, source registry, candidates, events,
+# projections, audit and approvals all live here (plan section 6.4). It runs on
+# the control node only: agent workloads never share a machine with the system
+# of record (plan section 1.3).
+
+- name: Install PostgreSQL and pgvector
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ postgresql_version }}"
+      - "postgresql-contrib-{{ postgresql_version }}"
+      # pgvector backs the rebuildable retrieval projection in 0007.
+      - "postgresql-{{ postgresql_version }}-pgvector"
+      - python3-psycopg2
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure PostgreSQL
+  ansible.builtin.template:
+    src: workgraph.conf.j2
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/conf.d/10-workgraph.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: Restart postgresql
+
+# Local connections only. The API runs on this same node, and nothing else has
+# any business reaching the database directly. The firewall already denies
+# inbound, but a database listening on a public interface is one misconfigured
+# firewall away from exposure.
+- name: Require scram-sha-256 for local TCP connections
+  ansible.builtin.copy:
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/conf.d/pg_hba_note.txt"
+    mode: "0644"
+    content: |
+      Authentication is configured in pg_hba.conf. This file is a marker so the
+      Ansible role's intent is visible on the host: local TCP uses
+      scram-sha-256, and there are no host entries for anything but 127.0.0.1.
+
+- name: Enforce scram-sha-256 in pg_hba
+  ansible.builtin.lineinfile:
+    path: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+    regexp: '^host\s+all\s+all\s+127\.0\.0\.1/32'
+    line: "host    all             all             127.0.0.1/32            scram-sha-256"
+    owner: postgres
+    group: postgres
+  notify: Restart postgresql
+
+- name: Ensure PostgreSQL is running
+  ansible.builtin.systemd:
+    name: postgresql
+    enabled: true
+    state: started
+
+- name: Create the workgraph database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ postgresql_database }}"
+    encoding: UTF-8
+    state: present
+
+- name: Enable required extensions
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_ext:
+    name: "{{ item }}"
+    db: "{{ postgresql_database }}"
+    state: present
+  loop:
+    - pgcrypto
+    - vector
+
+# The application connects as this role. It is deliberately NOT the table owner:
+# an owner bypasses row-level security unless FORCE is set on every table, and
+# depending on remembering FORCE is exactly the assumption 0008_rls.sql removes.
+- name: Create the application role
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ postgresql_app_user }}"
+    password: "{{ postgresql_app_password }}"
+    db: "{{ postgresql_database }}"
+    role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+    state: present
+  no_log: true
