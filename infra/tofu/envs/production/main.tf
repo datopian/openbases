@@ -8,10 +8,11 @@ module "environment" {
 
   with_execution_node = true
 
-  cloudflare_account_id = var.cloudflare_account_id
-  cloudflare_zone_id    = var.cloudflare_zone_id
-  hostname              = var.hostname
-  ssh_hostname          = var.ssh_hostname
+  cloudflare_account_id  = var.cloudflare_account_id
+  cloudflare_zone_id     = var.cloudflare_zone_id
+  hostname               = var.hostname
+  ssh_hostname           = var.ssh_hostname
+  ssh_hostname_execution = var.ssh_hostname_execution
 
   access_allowed_emails = var.access_allowed_emails
   admin_ssh_key_ids     = var.admin_ssh_key_ids

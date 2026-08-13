@@ -9,5 +9,5 @@ all:
     execution:
       hosts:
         workgraph-production-execution:
-          ansible_host: ssh.openbases.com
+          ansible_host: ssh-exec.openbases.com
           ansible_user: root

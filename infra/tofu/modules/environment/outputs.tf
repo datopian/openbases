@@ -18,15 +18,16 @@ output "execution_node_private_ip" {
   value       = var.with_execution_node ? tolist(hcloud_server.execution[0].network)[0].ip : null
 }
 
-output "tunnel_id" {
-  description = "Cloudflare Tunnel identifier."
-  value       = cloudflare_zero_trust_tunnel_cloudflared.this.id
+output "control_tunnel_id" {
+  description = "Cloudflare Tunnel serving the control node."
+  value       = cloudflare_zero_trust_tunnel_cloudflared.control.id
 }
 
-output "tunnel_cname" {
-  description = "The tunnel's CNAME target."
-  value       = "${cloudflare_zero_trust_tunnel_cloudflared.this.id}.cfargotunnel.com"
+output "execution_tunnel_id" {
+  description = "Cloudflare Tunnel serving the execution node, when one exists."
+  value       = try(cloudflare_zero_trust_tunnel_cloudflared.execution[0].id, null)
 }
+
 
 output "hostname" {
   description = "The hostname served by this environment."
@@ -44,6 +45,11 @@ output "firewall_id" {
 }
 
 output "ssh_hostname" {
-  description = "Hostname for SSH over the tunnel, empty when the path is disabled."
+  description = "Hostname for SSH to the control node."
   value       = var.ssh_hostname
+}
+
+output "ssh_hostname_execution" {
+  description = "Hostname for SSH to the execution node."
+  value       = var.with_execution_node ? var.ssh_hostname_execution : null
 }

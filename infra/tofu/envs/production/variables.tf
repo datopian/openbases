@@ -42,3 +42,9 @@ variable "ssh_hostname" {
   type        = string
   default     = ""
 }
+
+variable "ssh_hostname_execution" {
+  description = "Hostname for SSH to the execution node, over its own tunnel."
+  type        = string
+  default     = ""
+}

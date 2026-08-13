@@ -161,3 +161,15 @@ variable "ssh_hostname" {
   type        = string
   default     = ""
 }
+
+variable "ssh_hostname_execution" {
+  description = <<-EOT
+    Hostname for SSH to the execution node, over its own tunnel.
+
+    Separate from ssh_hostname because each node runs its own tunnel. One tunnel
+    shared by two nodes routes SSH to whichever connector Cloudflare picks,
+    which makes it impossible to target a specific host.
+  EOT
+  type        = string
+  default     = ""
+}

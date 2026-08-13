@@ -15,11 +15,16 @@ hostname           = "work-staging.openbases.com"
 
 hcloud_location = "fsn1"
 
+# 2 vCPU / 4 GB, EUR 5.49/mo. Enough to prove cell isolation; production uses
+# cx53 (16 vCPU / 32 GB) because it actually runs concurrent agent builds.
+execution_server_type = "cx23"
+
 # SSH reached through the tunnel, for Ansible. This opens no inbound port: the
 # connector runs on the host and dials out, so localhost:22 is reachable from
 # the inside while the firewall stays deny-all. Authentication is an Access
 # service token scoped to this application alone.
-ssh_hostname = "ssh-staging.openbases.com"
+ssh_hostname           = "ssh-staging.openbases.com"
+ssh_hostname_execution = "ssh-exec-staging.openbases.com"
 
 # Cloudflare Access allow-list. An empty list creates no policy at all, so the
 # application denies everyone — the correct failure direction, but it also means

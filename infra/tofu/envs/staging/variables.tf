@@ -42,3 +42,22 @@ variable "ssh_hostname" {
   type        = string
   default     = ""
 }
+
+variable "execution_server_type" {
+  description = <<-EOT
+    Hetzner type for the staging execution node.
+
+    Deliberately far smaller than production. Staging proves isolation — user
+    separation, home permissions, cgroup limits, blocked metadata — and none of
+    those assertions are memory-bound. Production sizes for 5-8 concurrent
+    build-heavy agents (plan section 11.1); staging does not run them.
+  EOT
+  type        = string
+  default     = "cx23"
+}
+
+variable "ssh_hostname_execution" {
+  description = "Hostname for SSH to the execution node, over its own tunnel."
+  type        = string
+  default     = ""
+}

@@ -1,0 +1,4 @@
+---
+# Overridden by group_vars/execution.yml. Present so the role can run standalone.
+cells_root: /srv/cells
+execution_cells: []

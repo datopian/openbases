@@ -121,7 +121,7 @@ resource "hcloud_server" "control" {
 
   # First-boot bootstrap. The host dials out to Cloudflare; nothing dials in.
   user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
-    tunnel_token        = data.cloudflare_zero_trust_tunnel_cloudflared_token.this.token
+    tunnel_token        = data.cloudflare_zero_trust_tunnel_cloudflared_token.control.token
     cloudflared_version = var.cloudflared_version
     cloudflared_sha256  = var.cloudflared_sha256
   })
@@ -167,7 +167,7 @@ resource "hcloud_server" "execution" {
   labels = merge(local.common_labels, { role = "execution" })
 
   user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
-    tunnel_token        = data.cloudflare_zero_trust_tunnel_cloudflared_token.this.token
+    tunnel_token        = data.cloudflare_zero_trust_tunnel_cloudflared_token.execution[0].token
     cloudflared_version = var.cloudflared_version
     cloudflared_sha256  = var.cloudflared_sha256
   })
@@ -179,43 +179,37 @@ resource "hcloud_server" "execution" {
 # Cloudflare edge
 # ---------------------------------------------------------------------------
 
-# The tunnel connects outbound from the node. The origin has no inbound public
-# service, so there is nothing on the internet to scan or attack directly.
-resource "random_password" "tunnel_secret" {
+# One tunnel PER NODE, not per environment.
+#
+# A single tunnel shared by two nodes means two connectors serving identical
+# ingress, and Cloudflare routes to whichever it likes. SSH then lands on an
+# arbitrary host and the application hostname can reach a node with no
+# application on it. Per-node tunnels make every hostname deterministic.
+
+resource "random_password" "tunnel_secret_control" {
   length  = 64
   special = false
 }
 
-resource "cloudflare_zero_trust_tunnel_cloudflared" "this" {
+resource "cloudflare_zero_trust_tunnel_cloudflared" "control" {
   account_id    = var.cloudflare_account_id
-  name          = local.name
-  tunnel_secret = base64encode(random_password.tunnel_secret.result)
+  name          = "${local.name}-control"
+  tunnel_secret = base64encode(random_password.tunnel_secret_control.result)
   config_src    = "cloudflare"
 }
 
-# The tunnel's own credential, needed by the connector on the host. It reaches
-# the node through cloud-init user-data, which is the only channel available:
-# the firewall has no inbound rules, so there is nothing to SSH into to place a
-# file. The value lands in Hetzner server metadata, so WP-B2 must block agent
-# users from reaching 169.254.169.254.
-data "cloudflare_zero_trust_tunnel_cloudflared_token" "this" {
+data "cloudflare_zero_trust_tunnel_cloudflared_token" "control" {
   account_id = var.cloudflare_account_id
-  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.this.id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.control.id
 }
 
-# Where the tunnel sends traffic once a connector is up. Configured through the
-# API rather than a file on the host, matching config_src = "cloudflare", so
-# routing is in Git rather than in a config file nobody can reach.
-resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "control" {
   account_id = var.cloudflare_account_id
-  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.this.id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.control.id
 
   config = {
     ingress = concat(
       var.ssh_hostname != "" ? [
-        # SSH for configuration management, reached through the tunnel rather
-        # than an open port. The connector runs on this host, so localhost:22 is
-        # reachable from the inside while the firewall stays deny-all.
         {
           hostname = var.ssh_hostname
           service  = "ssh://localhost:22"
@@ -226,8 +220,6 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
           hostname = var.hostname
           service  = "http://localhost:${var.app_port}"
         },
-        # Required catch-all. Anything not matching a hostname above is refused
-        # at the connector rather than reaching the host.
         {
           service = "http_status:404"
         },
@@ -236,18 +228,122 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
   }
 }
 
-# DNS for the SSH path. Proxied, like the application record, so the node's real
-# address is never published.
+resource "random_password" "tunnel_secret_execution" {
+  count   = var.with_execution_node ? 1 : 0
+  length  = 64
+  special = false
+}
+
+resource "cloudflare_zero_trust_tunnel_cloudflared" "execution" {
+  count = var.with_execution_node ? 1 : 0
+
+  account_id    = var.cloudflare_account_id
+  name          = "${local.name}-execution"
+  tunnel_secret = base64encode(random_password.tunnel_secret_execution[0].result)
+  config_src    = "cloudflare"
+}
+
+data "cloudflare_zero_trust_tunnel_cloudflared_token" "execution" {
+  count = var.with_execution_node ? 1 : 0
+
+  account_id = var.cloudflare_account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.execution[0].id
+}
+
+# The execution node exposes SSH only. It never serves the application: agent
+# workloads and the control plane stay on separate machines (plan section 1.3).
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "execution" {
+  count = var.with_execution_node ? 1 : 0
+
+  account_id = var.cloudflare_account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.execution[0].id
+
+  config = {
+    ingress = concat(
+      var.ssh_hostname_execution != "" ? [
+        {
+          hostname = var.ssh_hostname_execution
+          service  = "ssh://localhost:22"
+        }
+      ] : [],
+      [
+        {
+          service = "http_status:404"
+        },
+      ]
+    )
+  }
+}
+
+# ---------------------------------------------------------------------------
+# DNS and Access, one record per hostname
+# ---------------------------------------------------------------------------
+
+resource "cloudflare_dns_record" "app" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.hostname
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.control.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "Managed by OpenTofu — workgraph ${var.environment}. Do not edit by hand."
+}
+
 resource "cloudflare_dns_record" "ssh" {
   count = var.ssh_hostname != "" ? 1 : 0
 
   zone_id = var.cloudflare_zone_id
   name    = var.ssh_hostname
   type    = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.this.id}.cfargotunnel.com"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.control.id}.cfargotunnel.com"
   proxied = true
   ttl     = 1
-  comment = "Managed by OpenTofu — workgraph ${var.environment} SSH. Do not edit by hand."
+  comment = "Managed by OpenTofu — workgraph ${var.environment} control SSH."
+}
+
+resource "cloudflare_dns_record" "ssh_execution" {
+  count = var.with_execution_node && var.ssh_hostname_execution != "" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.ssh_hostname_execution
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.execution[0].id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "Managed by OpenTofu — workgraph ${var.environment} execution SSH."
+}
+
+resource "cloudflare_zero_trust_access_policy" "allowed_users" {
+  count = length(var.access_allowed_emails) > 0 ? 1 : 0
+
+  account_id = var.cloudflare_account_id
+  name       = "${local.name}-allowed-users"
+  decision   = "allow"
+
+  include = [
+    for address in var.access_allowed_emails : {
+      email = {
+        email = address
+      }
+    }
+  ]
+}
+
+resource "cloudflare_zero_trust_access_application" "this" {
+  account_id                 = var.cloudflare_account_id
+  name                       = local.name
+  domain                     = var.hostname
+  type                       = "self_hosted"
+  session_duration           = var.access_session_duration
+  auto_redirect_to_identity  = false
+  http_only_cookie_attribute = true
+
+  policies = [
+    for policy in cloudflare_zero_trust_access_policy.allowed_users : {
+      id         = policy.id
+      precedence = 1
+    }
+  ]
 }
 
 resource "cloudflare_zero_trust_access_application" "ssh" {
@@ -259,11 +355,6 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
   type             = "self_hosted"
   session_duration = "1h"
 
-  # Reuses the same email allow-list as the application. A service token would
-  # be better for unattended runs, but creating one needs an Access: Service
-  # Tokens permission the deploy token does not hold; until then an operator
-  # authenticates interactively with `cloudflared access login`. Tracked as
-  # wg-8yv.49.
   policies = [
     for policy in cloudflare_zero_trust_access_policy.allowed_users : {
       id         = policy.id
@@ -272,56 +363,15 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
   ]
 }
 
-# A proxied CNAME to the tunnel. This is the ONLY DNS record this configuration
-# manages, and check_infra.py fails the build if a second one appears.
-#
-# The zone is deliberately not datopian.com: the deploy token needs DNS Write on
-# whichever zone serves this hostname, and datopian.com carries the company
-# Workspace MX records. See infra/tofu/README.md.
-resource "cloudflare_dns_record" "app" {
-  zone_id = var.cloudflare_zone_id
-  name    = var.hostname
-  type    = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.this.id}.cfargotunnel.com"
-  proxied = true
-  ttl     = 1
-  comment = "Managed by OpenTofu — workgraph ${var.environment}. Do not edit by hand."
-}
+resource "cloudflare_zero_trust_access_application" "ssh_execution" {
+  count = var.with_execution_node && var.ssh_hostname_execution != "" ? 1 : 0
 
-# An empty allow-list creates no policy at all. An Access application with no
-# policy denies everyone, which is the correct failure direction for a system
-# holding client-derived data — and it avoids inventing a placeholder identity.
-resource "cloudflare_zero_trust_access_policy" "allowed_users" {
-  count = length(var.access_allowed_emails) > 0 ? 1 : 0
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-ssh-execution"
+  domain           = var.ssh_hostname_execution
+  type             = "self_hosted"
+  session_duration = "1h"
 
-  account_id = var.cloudflare_account_id
-  name       = "${local.name}-allowed-users"
-  decision   = "allow"
-
-  # One include rule per permitted address. Indexing the first element here
-  # would silently authorise only one person out of the list.
-  include = [
-    for address in var.access_allowed_emails : {
-      email = {
-        email = address
-      }
-    }
-  ]
-}
-
-resource "cloudflare_zero_trust_access_application" "this" {
-  account_id                = var.cloudflare_account_id
-  name                      = local.name
-  domain                    = var.hostname
-  type                      = "self_hosted"
-  session_duration          = var.access_session_duration
-  auto_redirect_to_identity = false
-
-  # The application enforces identity at the edge; the control API independently
-  # validates the Access JWT rather than trusting headers (ADR-0006).
-  http_only_cookie_attribute = true
-
-  # The policy must be attached, or the application would exist with no rules.
   policies = [
     for policy in cloudflare_zero_trust_access_policy.allowed_users : {
       id         = policy.id
