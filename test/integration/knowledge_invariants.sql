@@ -1,9 +1,12 @@
 -- Knowledge-layer invariants: provenance, freshness, supersession, approval.
 
+-- Uses a suite-specific organisation slug so the suite runs against a database
+-- that already carries the pilot seed, not only against an empty one. A test
+-- that only passes on an empty database cannot check production-shaped state.
 BEGIN;
 
 INSERT INTO organisations (id, slug, name)
-VALUES ('00000000-0000-0000-0000-0000000000a1', 'datopian', 'Datopian');
+VALUES ('00000000-0000-0000-0000-0000000000a1', 'test-knowledge', 'Test org: knowledge_invariants');
 INSERT INTO users (id, organisation_id, display_name) VALUES
   ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000a1', 'Alice'),
   ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000a1', 'Bob');
@@ -31,7 +34,7 @@ ROLLBACK;
 BEGIN;
 
 INSERT INTO organisations (id, slug, name)
-VALUES ('00000000-0000-0000-0000-0000000000a1', 'datopian', 'Datopian');
+VALUES ('00000000-0000-0000-0000-0000000000a1', 'test-knowledge', 'Test org: knowledge_invariants');
 INSERT INTO users (id, organisation_id, display_name) VALUES
   ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000a1', 'Alice'),
   ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-0000000000a1', 'Bob');

@@ -1,0 +1,4 @@
+---
+control_api_port: 8080
+control_api_user: workgraph
+control_api_binary: /usr/local/bin/workgraph-control-api

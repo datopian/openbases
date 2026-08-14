@@ -109,6 +109,12 @@ jobs:
       - name: cross-project isolation under row-level security
         run: psql -v ON_ERROR_STOP=1 -f test/integration/rls_isolation.sql
 
+      # The pilot registry, asserted against the seeded data rather than
+      # synthetic fixtures: three projects, distinct owners, and a restricted
+      # client engagement invisible to a non-member.
+      - name: pilot registry and restricted-project isolation
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/pilot_registry.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest

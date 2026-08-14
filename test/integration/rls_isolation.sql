@@ -5,6 +5,9 @@
 -- role that each user sees only their own. Every assertion raises rather than
 -- returning a row, so a silent pass is impossible.
 
+-- Uses a suite-specific organisation slug so the suite runs against a database
+-- that already carries the pilot seed, not only against an empty one. A test
+-- that only passes on an empty database cannot check production-shaped state.
 BEGIN;
 
 -- ---------------------------------------------------------------------------
@@ -12,7 +15,7 @@ BEGIN;
 -- ---------------------------------------------------------------------------
 
 INSERT INTO organisations (id, slug, name)
-VALUES ('00000000-0000-0000-0000-0000000000a1', 'datopian', 'Datopian');
+VALUES ('00000000-0000-0000-0000-0000000000a1', 'test-rls', 'Test org: rls_isolation');
 
 INSERT INTO users (id, organisation_id, display_name, primary_email) VALUES
   ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000a1', 'Alice', 'alice@example.com'),

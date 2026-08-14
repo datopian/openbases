@@ -93,8 +93,10 @@ matrix:
 # Language and build toolchain, pinned so that CI, local development, and the
 # release image agree.
 toolchain:
-  # 1.26.0 carries stdlib vulnerabilities fixed in 1.26.4 and 1.26.5.
-  go: "1.26.5"
+  # Bumped as advisories land. 1.26.0 was vulnerable, then 1.26.5; GO-2026-6218
+  # (net/url) and GO-2026-6090 (crypto/tls) are fixed in 1.26.6, and both were
+  # reachable — from the JWKS fetch and from agentd's TLS listener.
+  go: "1.26.6"
   node: "22"
 
 # Upgrade procedure (plan section 7.6). The fixture must:

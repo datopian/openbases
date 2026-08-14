@@ -1,0 +1,59 @@
+---
+# The control API service (WP-C2).
+#
+# It binds to loopback only. The tunnel connector reaches it from the same host,
+# and Cloudflare Access authenticates before any request arrives — but the
+# service validates the Access JWT itself rather than trusting that (ADR-0006).
+
+- name: Create the service user
+  ansible.builtin.user:
+    name: "{{ control_api_user }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+    password_lock: true
+
+- name: Ensure the configuration directory exists
+  ansible.builtin.file:
+    path: /etc/workgraph
+    state: directory
+    owner: root
+    group: "{{ control_api_user }}"
+    mode: "0750"
+
+- name: Install the control API binary
+  ansible.builtin.copy:
+    src: "{{ control_api_local_binary }}"
+    dest: "{{ control_api_binary }}"
+    mode: "0755"
+    owner: root
+    group: root
+  notify: Restart control-api
+
+- name: Install the service environment
+  ansible.builtin.template:
+    src: control-api.env.j2
+    dest: /etc/workgraph/control-api.env
+    # 0640 root:workgraph — it holds the database password. Readable by the
+    # service, by nobody else, and never world-readable.
+    owner: root
+    group: "{{ control_api_user }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart control-api
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: control-api.service.j2
+    dest: /etc/systemd/system/control-api.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart control-api
+
+- name: Enable and start the control API
+  ansible.builtin.systemd:
+    name: control-api
+    enabled: true
+    state: started
+    daemon_reload: true

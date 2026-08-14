@@ -19,6 +19,7 @@
   gather_facts: true
   roles:
     - postgresql
+    - control_api
 
 - name: Configure execution cells
   hosts: execution
