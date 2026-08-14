@@ -115,6 +115,9 @@ jobs:
       - name: pilot registry and restricted-project isolation
         run: psql -v ON_ERROR_STOP=1 -f test/integration/pilot_registry.sql
 
+      - name: first-login identity linking
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/identity_linking.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest
