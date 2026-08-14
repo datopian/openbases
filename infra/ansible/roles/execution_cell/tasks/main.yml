@@ -32,6 +32,20 @@
     system: true
     create_home: true
     password_lock: true
+    # Exactly one group: its own. Enforced on every run rather than set once.
+    #
+    # Without append: false, a cell user added to another cell's group stays
+    # there forever, and the file modes below stop mattering — group-readable is
+    # all it takes. Adding a user to a group is a one-line fix during an
+    # incident and is never obviously wrong afterwards, which is why this has to
+    # be reasserted rather than assumed.
+    #
+    # Caught by the isolation test: after adding wgcell_oss to the restricted
+    # cell's group by hand, a full playbook run restored the directory modes and
+    # left the membership in place.
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    groups: []
+    append: false
   loop: "{{ execution_cells }}"
   loop_control:
     label: "{{ item.name }}"
