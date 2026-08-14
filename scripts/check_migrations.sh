@@ -36,7 +36,12 @@ for f in "${files[@]}"; do
   fi
 
   # Migrations change schema; they do not edit business records.
-  if grep -qiE '^\s*(UPDATE|DELETE)\s+' "$f" && ! grep -q 'wg:backfill' "$f"; then
+  #
+  # Statements inside a $$-quoted function body are excluded: they are the
+  # definition of code that runs later, not a change this migration makes. A
+  # marker there would assert a backfill that never happens, which is worse than
+  # no marker at all — it trains the reader to ignore the marker.
+  if awk '/\$\$/{q=!q} !q{print}' "$f" | grep -qiE '^\s*(UPDATE|DELETE)\s+' && ! grep -q 'wg:backfill' "$f"; then
     note "$base: data modification without a 'wg:backfill' marker"
   fi
 done

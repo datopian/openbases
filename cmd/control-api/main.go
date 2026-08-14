@@ -255,10 +255,55 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			}
 		}
 
-		// Acknowledge quickly and process in the background (plan section 9.3).
-		// Projection into the domain model lands with the rest of WP-D1.
+		// Acknowledge quickly, then project (plan section 9.3). GitHub times
+		// out a delivery in ten seconds, and a projection that touches several
+		// rows must not be what decides whether the event is acknowledged --
+		// the receipt is already durable, so a slow projection can be retried
+		// from it rather than by asking GitHub to resend.
 		log.Info("webhook received", "delivery", delivery.ID, "event", delivery.Event, "bytes", len(delivery.Body))
 		writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted"})
+
+		if db == nil {
+			return
+		}
+		body, event, id := delivery.Body, delivery.Event, delivery.ID
+		go func() {
+			// A detached context: the request is already answered, so the
+			// projection must not be cancelled when the connection closes.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+			defer cancel()
+
+			var applied bool
+			var err error
+			switch event {
+			case "pull_request":
+				applied, err = githubapp.ProjectPullRequest(ctx, db, body)
+			case "check_suite":
+				applied, err = githubapp.ProjectCheckSuite(ctx, db, body)
+			default:
+				return
+			}
+
+			switch {
+			case errors.Is(err, githubapp.ErrRepositoryNotRegistered):
+				// Expected: the App may be installed on repositories no project
+				// claims. Deliberately NOT marked processed — the receipt stays
+				// replayable, so registering the repository later can recover
+				// the history rather than starting from whatever arrives next.
+				log.Info("event for an unregistered repository", "delivery", id, "event", event)
+				return
+			case err != nil:
+				log.Error("projecting event", "delivery", id, "event", event, "error", err)
+				return
+			}
+
+			if ghStore != nil {
+				if err := ghStore.MarkProcessed(ctx, id); err != nil {
+					log.Error("marking delivery processed", "delivery", id, "error", err)
+				}
+			}
+			log.Info("event projected", "delivery", id, "event", event, "applied", applied)
+		}()
 	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

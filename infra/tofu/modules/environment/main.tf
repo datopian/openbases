@@ -389,12 +389,21 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
   type             = "self_hosted"
   session_duration = "1h"
 
-  policies = [
-    for policy in cloudflare_zero_trust_access_policy.allowed_users : {
-      id         = policy.id
-      precedence = 1
-    }
-  ]
+  # Humans first, then the service token. The email policy is evaluated at
+  # precedence 1 so an operator's identity is what matches when both could,
+  # keeping the audit trail attributed to a person rather than to automation.
+  policies = concat(
+    [
+      for policy in cloudflare_zero_trust_access_policy.allowed_users : {
+        id         = policy.id
+        precedence = 1
+      }
+    ],
+    [{
+      id         = cloudflare_zero_trust_access_policy.ssh_service.id
+      precedence = 2
+    }]
+  )
 }
 
 resource "cloudflare_zero_trust_access_application" "ssh_execution" {
@@ -406,12 +415,21 @@ resource "cloudflare_zero_trust_access_application" "ssh_execution" {
   type             = "self_hosted"
   session_duration = "1h"
 
-  policies = [
-    for policy in cloudflare_zero_trust_access_policy.allowed_users : {
-      id         = policy.id
-      precedence = 1
-    }
-  ]
+  # Humans first, then the service token. The email policy is evaluated at
+  # precedence 1 so an operator's identity is what matches when both could,
+  # keeping the audit trail attributed to a person rather than to automation.
+  policies = concat(
+    [
+      for policy in cloudflare_zero_trust_access_policy.allowed_users : {
+        id         = policy.id
+        precedence = 1
+      }
+    ],
+    [{
+      id         = cloudflare_zero_trust_access_policy.ssh_service.id
+      precedence = 2
+    }]
+  )
 }
 
 # ---------------------------------------------------------------------------
@@ -427,4 +445,45 @@ resource "cloudflare_r2_bucket" "this" {
   account_id = var.cloudflare_account_id
   name       = "workgraph-${each.value}-${var.environment}"
   location   = var.r2_location
+}
+
+# ---------------------------------------------------------------------------
+# Unattended access for Ansible and drift detection (wg-8yv.49)
+# ---------------------------------------------------------------------------
+
+# A service token for automation that cannot complete an interactive login.
+#
+# The SSH applications enforce the same email allow-list as the application
+# itself, so reaching a node requires a human at a browser. That is right for an
+# operator and impossible for a scheduled job, and drift detection is a
+# scheduled job by definition (plan section 16.5).
+#
+# The trade is real and deliberate: this credential opens an SSH session to a
+# node without any human present. It is therefore scoped to the SSH applications
+# alone, given a finite lifetime, and its rotation is a runbook step rather than
+# something left open-ended.
+resource "cloudflare_zero_trust_access_service_token" "automation" {
+  account_id = var.cloudflare_account_id
+  name       = "workgraph-${var.environment}-automation"
+
+  # Finite by design. An expiring credential forces rotation to be a practised
+  # procedure rather than an emergency one discovered during an incident.
+  duration = "8760h"
+}
+
+# The non-identity policy that accepts it.
+#
+# Separate from the email policy rather than merged into it: a service token and
+# a human are different subjects with different revocation stories, and keeping
+# them apart means revoking one never disturbs the other.
+resource "cloudflare_zero_trust_access_policy" "ssh_service" {
+  account_id = var.cloudflare_account_id
+  name       = "workgraph-${var.environment}-ssh-automation"
+  decision   = "non_identity"
+
+  include = [{
+    service_token = {
+      token_id = cloudflare_zero_trust_access_service_token.automation.id
+    }
+  }]
 }
