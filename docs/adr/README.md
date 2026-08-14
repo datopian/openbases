@@ -36,5 +36,5 @@ old one, exactly as knowledge records are superseded rather than overwritten.
 | [0013](0013-source-acl-inheritance.md) | Source ACL inheritance and protected sanitisation | accepted |
 | [0014](0014-governed-self-improvement.md) | Governed self-improvement through evaluation and pull requests | accepted |
 | [0015](0015-gitops-immutable-production.md) | GitOps and immutable production, no undocumented drift | accepted |
-| [0016](0016-interim-unenforced-main-protection.md) | Interim: `main` protection unenforceable, with compensating controls | accepted |
+| [0016](0016-interim-unenforced-main-protection.md) | `main` protection unenforceable, with compensating controls | accepted |
 | [0017](0017-not-adopting-paperclip.md) | Not adopting Paperclip as the execution and governance layer | accepted |
