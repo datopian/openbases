@@ -1,0 +1,20 @@
+[Unit]
+Description=Run Workgraph reconciliation periodically
+Documentation=plan section 18, WP-D3
+
+[Timer]
+# Every fifteen minutes. GitHub retries a failed delivery for roughly a day, so
+# this is not the first line of recovery — it is what catches a delivery that
+# was never sent, or one that arrived while the repository was unregistered.
+OnBootSec=5min
+OnUnitActiveSec=15min
+
+# Without this a fleet of nodes would call the API in lockstep after a reboot.
+RandomizedDelaySec=120
+
+# A missed run (host powered off, unit masked during maintenance) runs once on
+# the next boot instead of being skipped silently.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

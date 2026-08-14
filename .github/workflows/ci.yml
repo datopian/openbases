@@ -124,6 +124,9 @@ jobs:
       - name: pull request and CI projections
         run: psql -v ON_ERROR_STOP=1 -f test/integration/projections.sql
 
+      - name: projection visibility and the system path
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/reconciliation.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest

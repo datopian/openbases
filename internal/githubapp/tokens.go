@@ -10,6 +10,7 @@ package githubapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,6 +38,13 @@ type Client struct {
 	mu     sync.Mutex
 	cached *InstallationToken
 }
+
+// ErrNotInstalled reports a repository the App installation does not cover.
+//
+// Distinct from a transient error on purpose: a repository in another
+// organisation will fail identically forever, and treating that as a failure
+// makes every scheduled run red.
+var ErrNotInstalled = errors.New("repository is not covered by this installation")
 
 // InstallationToken is a short-lived credential scoped to an installation.
 type InstallationToken struct {
@@ -160,6 +168,14 @@ func (c *Client) InstallationToken(ctx context.Context, repositories ...string) 
 	if resp.StatusCode != http.StatusCreated {
 		// The body is not included: on some failures GitHub echoes request
 		// detail, and this error is likely to be logged.
+		// 422 on a scoped mint means the installation does not cover the
+		// repository — it lives in an organisation the App was never installed
+		// on. That is a configuration fact, not a transient failure, and the
+		// caller needs to tell them apart: retrying forever and alerting every
+		// time trains everyone to ignore the alert.
+		if resp.StatusCode == http.StatusUnprocessableEntity {
+			return nil, fmt.Errorf("%w: %v", ErrNotInstalled, repositories)
+		}
 		return nil, fmt.Errorf("minting installation token: GitHub returned %d", resp.StatusCode)
 	}
 
@@ -186,4 +202,25 @@ func (c *Client) InstallationToken(ctx context.Context, repositories ...string) 
 func (t InstallationToken) String() string {
 	return fmt.Sprintf("InstallationToken{expires:%s repositories:%v}",
 		t.ExpiresAt.Format(time.RFC3339), t.Repositories)
+}
+
+// Get performs an authenticated GET against the GitHub API.
+//
+// It exists so callers do not rebuild the base URL, the API version header, or
+// the client timeout. Those defaults being in one place is what keeps an
+// unattended path (reconciliation) behaving like the request path.
+//
+// The caller closes the body.
+func (c *Client) Get(ctx context.Context, tok *InstallationToken, path string) (*http.Response, error) {
+	if tok == nil || tok.Token == "" {
+		return nil, errors.New("no installation token")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.Token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	return c.httpClient().Do(req)
 }
