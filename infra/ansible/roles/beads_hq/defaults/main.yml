@@ -1,0 +1,13 @@
+---
+# Pinned to match versions.lock. The matrix moves together: Gas Town v1.2.0
+# refuses a newer bd, so a drifted binary here is a real incompatibility, not a
+# style preference (plan section 7.6).
+beads_version: "v1.0.4"
+beads_sha256_linux_amd64: "643e602e27f666c8726abff0f22001e2b5883988fa960204bde20a3129d448a5"
+dolt_version: "v2.0.7"
+dolt_sha256_linux_amd64: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc314539a3b9795a"
+
+beads_hq_root: /srv/graphs
+beads_hq_name: company-hq
+beads_hq_prefix: wg
+beads_hq_user: workgraph
