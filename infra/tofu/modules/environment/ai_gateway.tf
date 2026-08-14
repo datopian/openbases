@@ -12,9 +12,27 @@
 # every cell shares. A stolen gateway token is metered, logged, scoped to one
 # security domain, and revocable on its own.
 #
-# One gateway per security domain, never one shared gateway. The isolation is
-# the point: a compromised OSS cell must not be able to spend, or read logs,
-# against client work (plan sections 1.3, 13.2).
+# One gateway per security domain — for attribution and blast-radius bounding,
+# NOT for isolation. The distinction matters and was got wrong here first.
+#
+# Cloudflare cannot scope an AI Gateway token to one gateway: the Read, Run and
+# Edit permissions are account-wide, unlike R2 which supports per-bucket
+# scoping. Any token with Run reaches EVERY gateway in the account and can
+# consume the provider keys stored on them. Confirmed on staging, where one
+# token was accepted by all three gateways and each returned a model response.
+#
+# So a token stolen from an open-source execution node can spend the client
+# domain's budget and forge which domain spent it. What the split does provide
+# is a separate spend ceiling, separate analytics and separate logs per domain.
+#
+# It remains better than putting provider keys on the nodes: the Anthropic key
+# never leaves Cloudflare, the token is revocable centrally without rotating it,
+# and every request is logged and metered.
+#
+# Accepted deliberately on 2026-08-15 rather than overlooked. Cloudflare's own
+# guidance is separate accounts or a Worker-side binding per domain; both were
+# weighed and judged not worth the cost for the pilot. Revisit if the NGED
+# contract requires demonstrable tenant isolation (wg-8yv.37).
 
 locals {
   # Security domains, matching the project visibility classes. A cell is placed
