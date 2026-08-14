@@ -36,7 +36,12 @@ for f in "${files[@]}"; do
   fi
 
   # Migrations change schema; they do not edit business records.
-  if grep -qiE '^\s*(UPDATE|DELETE)\s+' "$f" && ! grep -q 'wg:backfill' "$f"; then
+  #
+  # Statements inside a $$-quoted function body are excluded: they are the
+  # definition of code that runs later, not a change this migration makes. A
+  # marker there would assert a backfill that never happens, which is worse than
+  # no marker at all — it trains the reader to ignore the marker.
+  if awk '/\$\$/{q=!q} !q{print}' "$f" | grep -qiE '^\s*(UPDATE|DELETE)\s+' && ! grep -q 'wg:backfill' "$f"; then
     note "$base: data modification without a 'wg:backfill' marker"
   fi
 done
@@ -44,6 +49,21 @@ done
 # Duplicate sequence numbers would apply in an ambiguous order.
 dupes="$(printf '%s\n' "${files[@]}" | xargs -n1 basename 2>/dev/null | cut -c1-4 | sort | uniq -d)"
 [ -n "$dupes" ] && note "duplicate migration numbers: $dupes"
+
+# Every SQL integration test must actually run.
+#
+# A test file that exists but is not referenced by the workflow passes silently
+# forever and reads as coverage in review. This happened: the projection test was
+# added on a branch cut before the step it anchored to existed, so the edit was a
+# no-op and CI went green having never run it.
+for t in test/integration/*.sql; do
+  [ -e "$t" ] || continue
+  # The FULL path, not the basename. A comment mentioning 0007_projections.sql
+  # matches a bare "projections.sql" and would satisfy this check without any
+  # step existing — the same false positive that hid the gap in the first place.
+  grep -qF "$t" .github/workflows/ci.yml || \
+    note "$(basename "$t") exists but is never run by .github/workflows/ci.yml"
+done
 
 python3 scripts/check_reserved_words.py || fail=1
 

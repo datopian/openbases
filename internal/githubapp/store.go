@@ -41,3 +41,15 @@ func (s *Store) RecordDelivery(ctx context.Context, d *Delivery) error {
 	}
 	return nil
 }
+
+// MarkProcessed records that a delivery's projection completed.
+//
+// Deliveries with a receipt but no processed_at are exactly the ones to replay
+// after a crash: the event was accepted and is durable, but its effect on the
+// domain model may never have landed.
+func (s *Store) MarkProcessed(ctx context.Context, deliveryID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE github_deliveries SET processed_at = now() WHERE delivery_id = $1`,
+		deliveryID)
+	return err
+}
