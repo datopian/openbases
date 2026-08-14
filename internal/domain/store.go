@@ -113,13 +113,27 @@ func (s *Store) LinkIdentityByEmail(ctx context.Context, provider, subject, emai
 		return "", err
 	}
 
+	// Establish the session identity before writing the audit record.
+	//
+	// audit_log carries row-level security, and its INSERT policy requires
+	// current_app_user() to be set — which it is not during linking, because
+	// establishing that identity is precisely what this function does. Setting
+	// it here resolves the ordering: by this point the user is known, the row
+	// is locked, and the identity has been inserted.
+	//
+	// Local to the transaction, so it cannot leak onto a pooled connection.
+	if _, err := tx.ExecContext(ctx,
+		`SELECT set_config('workgraph.user_id', $1, true)`, userID); err != nil {
+		return "", fmt.Errorf("setting session identity for the audit record: %w", err)
+	}
+
 	// Linking an identity is an authentication event and belongs in the audit
 	// trail: it is the moment a person becomes able to act.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO audit_log (actor_user_id, action, target_type, target_id, outcome, reason)
 		VALUES ($1::uuid, 'identity.linked', 'user', $1, 'executed', $2)`,
 		userID, provider+" subject linked on first login"); err != nil {
-		return "", err
+		return "", fmt.Errorf("writing the audit record: %w", err)
 	}
 
 	return userID, tx.Commit()
