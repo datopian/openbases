@@ -173,3 +173,26 @@ variable "ssh_hostname_execution" {
   type        = string
   default     = ""
 }
+
+variable "ai_gateway_requests_per_minute" {
+  type        = number
+  description = "Per-gateway request ceiling. Bounds how fast a stuck agent loop can spend before the cost limit reacts."
+  default     = 120
+}
+
+variable "ai_monthly_budget" {
+  type        = number
+  description = <<-EOT
+    The shared monthly spend ceiling, in US dollars, applied to EACH gateway as a
+    backstop. Cloudflare enforces a limit per gateway and cannot express one pool
+    shared across three; the real shared pool is enforced in the control plane,
+    which can sum them. Zero disables agent spend entirely, which is the correct
+    value until a figure has been agreed.
+  EOT
+  default     = 0
+
+  validation {
+    condition     = var.ai_monthly_budget >= 0
+    error_message = "A negative budget would be silently treated as no limit."
+  }
+}
