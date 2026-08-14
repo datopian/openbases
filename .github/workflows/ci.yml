@@ -136,6 +136,17 @@ jobs:
       - name: verify versions match versions.lock
         run: PATH="$PWD/.toolchain/bin:$PATH" bash scripts/verify_versions.sh
 
+      # The adapter's contract is a CLI, not a library: argument order, JSON
+      # shapes and exit codes can all change upstream without the compiler
+      # noticing. These run against the pinned binary, which is what makes a
+      # version bump checkable rather than hopeful (plan section 7.6).
+      - name: Beads adapter contract tests against the pinned binary
+        run: |
+          export PATH="$PWD/.toolchain/bin:$PATH"
+          git config --global user.email "ci@datopian.com"
+          git config --global user.name "CI"
+          go test -run TestContract ./internal/beads/ -v
+
   infrastructure:
     name: infrastructure
     runs-on: ubuntu-latest

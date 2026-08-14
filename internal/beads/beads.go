@@ -7,8 +7,13 @@
 package beads
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/datopian/workgraph/internal/domain"
@@ -19,10 +24,14 @@ var ErrNotImplemented = errors.New("beads adapter not implemented (WP-D2)")
 
 // DatabaseRef identifies one Beads database in the registry.
 type DatabaseRef struct {
-	ID       string
-	Name     string
-	CellID   string
-	Scope    domain.Scope
+	ID     string
+	Name   string
+	CellID string
+	Scope  domain.Scope
+	// Path is the working directory the database lives under. Beads discovers
+	// its database from the directory, so every invocation is scoped with -C
+	// rather than relying on the process working directory.
+	Path     string
 	DoltPort int
 }
 
@@ -70,6 +79,9 @@ type Client interface {
 	// Backup runs the Beads native backup. The JSONL export is an additional
 	// recovery aid, never the primary backup (plan section 15.3).
 	Backup(ctx context.Context, db DatabaseRef) error
+
+	// List returns issues, optionally filtered by status.
+	List(ctx context.Context, db DatabaseRef, status string) ([]Issue, error)
 }
 
 // CLIClient drives the pinned `bd` binary.
@@ -77,42 +89,211 @@ type CLIClient struct {
 	// Binary is the absolute path to the pinned `bd` executable, verified
 	// against versions.lock before use.
 	Binary string
+
+	// OrganisationID is stamped into every work reference. A bead ID alone is
+	// not a stable identity: project prefixes collide across databases
+	// (plan section 7.3).
+	OrganisationID string
+
+	// Actor attributes writes in the Dolt commit trail. Without it every change
+	// appears to come from the service account, which makes the history useless
+	// for answering who did what.
+	Actor string
+
+	// DatabasePaths maps a Beads database ID to its working directory, loaded
+	// from the registry.
+	DatabasePaths map[string]string
+
 	// Record receives one entry per invocation for the audit log.
 	Record func(CommandRecord)
 }
 
 var _ Client = (*CLIClient)(nil)
 
-func (c *CLIClient) Ready(context.Context, DatabaseRef) ([]Issue, error) {
-	return nil, ErrNotImplemented
+// Ready returns unblocked work.
+//
+// `bd ready` is authoritative for readiness inside a graph and the control
+// plane does not recompute it (ADR-0003). Reimplementing the dependency walk
+// here would mean two answers to "what can be worked on", and they would
+// eventually disagree.
+func (c *CLIClient) Ready(ctx context.Context, db DatabaseRef) ([]Issue, error) {
+	out, err := c.run(ctx, db, "ready", "--json")
+	if err != nil {
+		return nil, err
+	}
+	return c.decodeIssues(out, db)
 }
-func (c *CLIClient) Get(context.Context, domain.WorkRef) (Issue, error) {
-	return Issue{}, ErrNotImplemented
-}
-func (c *CLIClient) Create(context.Context, DatabaseRef, Issue) (domain.WorkRef, error) {
-	return domain.WorkRef{}, ErrNotImplemented
-}
-func (c *CLIClient) Update(context.Context, domain.WorkRef, Issue) error { return ErrNotImplemented }
 
-// Close refuses to close work without evidence even before the adapter is
-// implemented: "close only with evidence" is a governance rule, not a nicety
-// (plan section 24.1).
-func (c *CLIClient) Close(_ context.Context, ref domain.WorkRef, evidence string) error {
+// List returns issues, optionally filtered by status.
+func (c *CLIClient) List(ctx context.Context, db DatabaseRef, status string) ([]Issue, error) {
+	args := []string{"list", "--json"}
+	if status != "" {
+		args = append(args, "--status", status)
+	}
+	out, err := c.run(ctx, db, args...)
+	if err != nil {
+		return nil, err
+	}
+	return c.decodeIssues(out, db)
+}
+
+// Get returns one issue.
+func (c *CLIClient) Get(ctx context.Context, ref domain.WorkRef) (Issue, error) {
+	if err := ref.Validate(); err != nil {
+		return Issue{}, err
+	}
+	db := DatabaseRef{ID: ref.BeadsDatabaseID, CellID: ref.ExecutionCellID, Path: c.pathFor(ref.BeadsDatabaseID)}
+
+	out, err := c.run(ctx, db, "show", ref.BeadID, "--json")
+	if err != nil {
+		return Issue{}, err
+	}
+
+	// `bd show --json` emits an ARRAY, even for a single bead. Assuming an
+	// object here was wrong, and only the contract test against the real binary
+	// caught it — which is the reason those tests exist.
+	var raw []rawIssue
+	if err := json.Unmarshal(bytes.TrimSpace(out), &raw); err != nil {
+		return Issue{}, fmt.Errorf("decoding bd show: %w", err)
+	}
+	if len(raw) == 0 || raw[0].ID == "" {
+		return Issue{}, fmt.Errorf("no such bead: %s", ref.BeadID)
+	}
+	return raw[0].toIssue(db, c.OrganisationID), nil
+}
+
+// Create adds a work item and returns its stable reference.
+func (c *CLIClient) Create(ctx context.Context, db DatabaseRef, issue Issue) (domain.WorkRef, error) {
+	if strings.TrimSpace(issue.Title) == "" {
+		return domain.WorkRef{}, errors.New("a work item needs a title")
+	}
+
+	args := []string{"create", issue.Title, "--silent"}
+	if issue.Type != "" {
+		args = append(args, "--type", issue.Type)
+	}
+	if issue.Description != "" {
+		args = append(args, "--description", issue.Description)
+	}
+	if issue.Priority > 0 {
+		args = append(args, "--priority", strconv.Itoa(issue.Priority))
+	}
+	if len(issue.Labels) > 0 {
+		args = append(args, "--labels", strings.Join(issue.Labels, ","))
+	}
+	if issue.Assignee != "" {
+		args = append(args, "--assignee", issue.Assignee)
+	}
+
+	out, err := c.run(ctx, db, args...)
+	if err != nil {
+		return domain.WorkRef{}, err
+	}
+
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return domain.WorkRef{}, errors.New("bd create returned no id")
+	}
+	return domain.WorkRef{
+		OrganisationID:  c.OrganisationID,
+		ExecutionCellID: db.CellID,
+		BeadsDatabaseID: db.ID,
+		BeadID:          id,
+	}, nil
+}
+
+// Update changes an existing work item.
+func (c *CLIClient) Update(ctx context.Context, ref domain.WorkRef, issue Issue) error {
 	if err := ref.Validate(); err != nil {
 		return err
 	}
-	if evidence == "" {
-		return errors.New("work may be closed only with evidence")
+	db := DatabaseRef{ID: ref.BeadsDatabaseID, CellID: ref.ExecutionCellID, Path: c.pathFor(ref.BeadsDatabaseID)}
+
+	args := []string{"update", ref.BeadID}
+	if issue.Status != "" {
+		args = append(args, "--status", issue.Status)
 	}
-	return ErrNotImplemented
+	if issue.Title != "" {
+		args = append(args, "--title", issue.Title)
+	}
+	if issue.Assignee != "" {
+		args = append(args, "--assignee", issue.Assignee)
+	}
+	if len(args) == 2 {
+		return errors.New("update was asked to change nothing")
+	}
+
+	_, err := c.run(ctx, db, args...)
+	return err
 }
 
-// Link refuses a cross-database link. Beads cannot express it, and faking it
-// with a text reference would create an invisible, unqueryable dependency.
-func (c *CLIClient) Link(_ context.Context, from, to domain.WorkRef, _ string) error {
+// Close closes work, and refuses to do so without evidence.
+//
+// "Close only with evidence" is a governance rule, not a nicety (plan section
+// 24.1): a bead closed without it asserts an outcome nobody can check.
+func (c *CLIClient) Close(ctx context.Context, ref domain.WorkRef, evidence string) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(evidence) == "" {
+		return errors.New("work may be closed only with evidence")
+	}
+	db := DatabaseRef{ID: ref.BeadsDatabaseID, CellID: ref.ExecutionCellID, Path: c.pathFor(ref.BeadsDatabaseID)}
+
+	_, err := c.run(ctx, db, "close", ref.BeadID, "--reason", evidence)
+	return err
+}
+
+// Link records a dependency inside one database.
+//
+// A cross-database link is refused rather than faked. Beads cannot express one,
+// and writing it as free text would create a dependency nothing can query and
+// no readiness calculation would honour (plan section 2.3).
+func (c *CLIClient) Link(ctx context.Context, from, to domain.WorkRef, relation string) error {
+	if err := from.Validate(); err != nil {
+		return err
+	}
+	if err := to.Validate(); err != nil {
+		return err
+	}
 	if from.BeadsDatabaseID != to.BeadsDatabaseID {
 		return errors.New("cross-database links belong in the control plane work_links table, not in Beads")
 	}
-	return ErrNotImplemented
+	db := DatabaseRef{ID: from.BeadsDatabaseID, CellID: from.ExecutionCellID, Path: c.pathFor(from.BeadsDatabaseID)}
+
+	// `bd dep add <blocked> <blocker>` — the blocked item depends on the
+	// blocker. Getting this the wrong way round silently inverts readiness,
+	// so the argument order is asserted by a contract test.
+	_, err := c.run(ctx, db, "dep", "add", from.BeadID, to.BeadID)
+	return err
 }
-func (c *CLIClient) Backup(context.Context, DatabaseRef) error { return ErrNotImplemented }
+
+// Backup runs the Beads native backup.
+//
+// The JSONL export is an additional recovery aid, never the primary backup:
+// it does not preserve Dolt history or state (plan section 15.3).
+func (c *CLIClient) Backup(ctx context.Context, db DatabaseRef) error {
+	_, err := c.run(ctx, db, "backup")
+	return err
+}
+
+// Version reports the bd version in use, for the compatibility gate.
+func (c *CLIClient) Version(ctx context.Context, db DatabaseRef) (string, error) {
+	out, err := c.run(ctx, db, "version")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0]), nil
+}
+
+// pathFor resolves a database's working directory.
+//
+// DatabasePaths is populated from the registry. A database with no recorded
+// path yields an empty string, and the resulting bd invocation fails loudly
+// rather than silently operating on whichever database is nearby.
+func (c *CLIClient) pathFor(databaseID string) string {
+	if c.DatabasePaths == nil {
+		return ""
+	}
+	return c.DatabasePaths[databaseID]
+}
