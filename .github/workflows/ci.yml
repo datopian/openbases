@@ -121,6 +121,9 @@ jobs:
       - name: cross-graph links and work-reference identity
         run: psql -v ON_ERROR_STOP=1 -f test/integration/hq_graph.sql
 
+      - name: pull request and CI projections
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/projections.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest
