@@ -1,11 +1,15 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/datopian/workgraph/internal/authn"
@@ -48,6 +52,58 @@ func TestV1RequiresAuthentication(t *testing.T) {
 		if rr.Code != http.StatusUnauthorized {
 			t.Errorf("%s returned %d; every /v1 route must require authentication", path, rr.Code)
 		}
+	}
+}
+
+// The GitHub webhook is the ONE documented exception: GitHub cannot complete a
+// Cloudflare Access challenge, so the endpoint authenticates itself with an
+// HMAC signature instead.
+//
+// It must still refuse an unsigned request. Reaching the handler is not the
+// same as being allowed in, and this test exists so the exception cannot
+// quietly widen into an unauthenticated hole.
+func TestWebhookBypassesAccessButStillAuthenticates(t *testing.T) {
+	h := routes(
+		config.ControlAPI{Environment: config.EnvLocal, GitHubWebhookSecret: "a-secret"},
+		nil, &authn.StaticAuthenticator{}, nil, quiet(),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/integrations/github/webhook", strings.NewReader(`{}`))
+	h.ServeHTTP(rr, req)
+
+	// 401 from signature verification, not from the Access middleware. Either
+	// way it is refused; what matters is that an unsigned request never
+	// succeeds.
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("an unsigned webhook must be refused, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// A correctly signed webhook is accepted without any Access token, which is the
+// whole point of the exception.
+func TestSignedWebhookIsAcceptedWithoutAccessToken(t *testing.T) {
+	const secret = "a-secret"
+	body := `{"action":"opened"}`
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	signature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	h := routes(
+		config.ControlAPI{Environment: config.EnvLocal, GitHubWebhookSecret: secret},
+		nil, &authn.StaticAuthenticator{}, nil, quiet(),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/integrations/github/webhook", strings.NewReader(body))
+	req.Header.Set("X-Hub-Signature-256", signature)
+	req.Header.Set("X-GitHub-Delivery", "delivery-1")
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("a correctly signed webhook must be accepted, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

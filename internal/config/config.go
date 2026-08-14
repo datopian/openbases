@@ -45,6 +45,11 @@ type ControlAPI struct {
 	// never trusts request headers alone (plan section 8.1).
 	AccessTeamDomain string
 	AccessAudience   string
+
+	// GitHubWebhookSecret authenticates inbound webhooks. GitHub cannot pass a
+	// Cloudflare Access challenge, so this shared secret is the only thing
+	// standing between the endpoint and anyone who learns its URL.
+	GitHubWebhookSecret string
 }
 
 // ErrMissing reports a required setting that was not supplied.
@@ -62,6 +67,8 @@ func LoadControlAPI() (ControlAPI, error) {
 
 		AccessTeamDomain: os.Getenv("WG_ACCESS_TEAM_DOMAIN"),
 		AccessAudience:   os.Getenv("WG_ACCESS_AUD"),
+
+		GitHubWebhookSecret: os.Getenv("WG_GITHUB_WEBHOOK_SECRET"),
 	}
 
 	var errs []error

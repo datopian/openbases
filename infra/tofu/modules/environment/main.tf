@@ -346,6 +346,40 @@ resource "cloudflare_zero_trust_access_application" "this" {
   ]
 }
 
+# GitHub cannot complete an Access challenge, so the webhook path is admitted
+# without one. This is NOT unauthenticated: the endpoint verifies an HMAC
+# signature over the payload with a constant-time comparison before parsing
+# anything, and refuses a delivery with no idempotency key.
+#
+# A path-scoped application with a bypass policy, so the exception is exactly
+# one route on one hostname rather than a hole in the application as a whole.
+resource "cloudflare_zero_trust_access_policy" "webhook_bypass" {
+  account_id = var.cloudflare_account_id
+  name       = "${local.name}-github-webhook-bypass"
+  decision   = "bypass"
+
+  include = [
+    {
+      everyone = {}
+    }
+  ]
+}
+
+resource "cloudflare_zero_trust_access_application" "github_webhook" {
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-github-webhook"
+  domain           = "${var.hostname}/v1/integrations/github/webhook"
+  type             = "self_hosted"
+  session_duration = "0s"
+
+  policies = [
+    {
+      id         = cloudflare_zero_trust_access_policy.webhook_bypass.id
+      precedence = 1
+    }
+  ]
+}
+
 resource "cloudflare_zero_trust_access_application" "ssh" {
   count = var.ssh_hostname != "" ? 1 : 0
 
