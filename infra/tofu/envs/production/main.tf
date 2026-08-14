@@ -15,6 +15,8 @@ module "environment" {
   ssh_hostname_execution = var.ssh_hostname_execution
 
   access_allowed_emails = var.access_allowed_emails
+
+  ai_monthly_budget = var.ai_monthly_budget
   admin_ssh_key_ids     = var.admin_ssh_key_ids
   admin_ssh_cidrs       = var.admin_ssh_cidrs
 }

@@ -53,3 +53,16 @@ output "ssh_hostname_execution" {
   description = "Hostname for SSH to the execution node."
   value       = var.with_execution_node ? var.ssh_hostname_execution : null
 }
+
+output "ai_gateway_ids" {
+  description = "AI Gateway identifiers by security domain."
+  value       = { for k, g in cloudflare_ai_gateway.cell : k => g.id }
+}
+
+output "ai_gateway_urls" {
+  description = "Anthropic-compatible endpoint per security domain, for ANTHROPIC_BASE_URL."
+  value = {
+    for k, g in cloudflare_ai_gateway.cell :
+    k => "https://gateway.ai.cloudflare.com/v1/${var.cloudflare_account_id}/${g.id}/anthropic"
+  }
+}

@@ -230,6 +230,45 @@ def check_account_level_settings() -> None:
             )
 
 
+def check_spend_limit_not_in_terraform() -> None:
+    """The spend limit must stay out of the Terraform resource.
+
+    The provider serialises the rule field as limit_type where the API requires
+    limitType, so declaring it makes every apply fail — and the create path
+    reports success while storing nothing, which is how a $100 ceiling came to
+    exist in state and not on the gateway.
+
+    It is applied and verified by scripts/ai_gateway_spend_limits.py instead.
+    This guard exists because re-adding the attribute looks like an obvious
+    improvement to anyone who has not hit the failure.
+    """
+    path = MODULE / "ai_gateway.tf"
+    if not path.exists():
+        return
+    text = path.read_text()
+
+    body = re.search(r'resource\s+"cloudflare_ai_gateway".*?\n\}', text, re.S)
+    if not body:
+        return
+    declared = re.search(r"^\s*spend_limits\s*=", body.group(0), re.M)
+    if declared:
+        problems.append(
+            "modules/environment/ai_gateway.tf declares spend_limits. The provider sends "
+            "limit_type where the API requires limitType, so the apply fails and a create "
+            "silently stores nothing. Use scripts/ai_gateway_spend_limits.py."
+        )
+    if "ignore_changes" not in body.group(0) or "spend_limits" not in body.group(0):
+        problems.append(
+            "modules/environment/ai_gateway.tf must ignore_changes on spend_limits, or a "
+            "successful apply will propose 'limit -> null' and silently remove the budget."
+        )
+    if "authentication = true" not in text:
+        problems.append(
+            "every AI Gateway must set authentication = true; without it the gateway URL "
+            "alone is enough to spend money, and that URL travels in environment variables."
+        )
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -239,6 +278,7 @@ def main() -> int:
         check_dns_records_are_declared,
         check_tfvars_hold_no_secrets,
         check_account_level_settings,
+        check_spend_limit_not_in_terraform,
     ):
         check()
 

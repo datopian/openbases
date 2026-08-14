@@ -47,3 +47,11 @@ admin_ssh_key_ids = ["117051669"]
 # plan diff. It was opened on 2026-08-13 to diagnose a failing cloud-init
 # bootstrap and closed the same session; see docs/runbooks/break-glass-log.md.
 admin_ssh_cidrs = []
+
+# Shared monthly agent spend ceiling, in US dollars (2026-08-15).
+#
+# Applied to each of the three gateways as a platform backstop, so no single
+# security domain can spend past the whole month's budget on its own. The actual
+# shared pool across domains is enforced in the control plane, which can sum
+# them; Cloudflare cannot express a pool spanning gateways.
+ai_monthly_budget = 100

@@ -61,3 +61,15 @@ variable "ssh_hostname_execution" {
   type        = string
   default     = ""
 }
+
+variable "ai_monthly_budget" {
+  type        = number
+  description = <<-EOT
+    Shared monthly agent spend ceiling in US dollars, applied to EACH gateway as
+    a platform backstop. Cloudflare enforces a limit per gateway and cannot
+    express one pool shared across three; the real shared pool is summed in the
+    control plane. Zero disables agent spend, which is the correct default: an
+    unset budget must fail closed.
+  EOT
+  default     = 0
+}
