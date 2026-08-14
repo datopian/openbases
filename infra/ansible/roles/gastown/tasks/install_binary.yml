@@ -1,0 +1,43 @@
+---
+# Download a pinned release artefact and verify its checksum before installing.
+# A mismatch aborts rather than warns — the same discipline as
+# scripts/bootstrap.sh, applied on the host.
+
+- name: "Check whether {{ tool.name }} {{ tool.version }} is already installed"
+  ansible.builtin.command: "/usr/local/bin/{{ tool.binary }} version"
+  register: installed
+  changed_when: false
+  failed_when: false
+
+- name: "Install {{ tool.name }} {{ tool.version }}"
+  when: tool.version | replace('v','') not in (installed.stdout | default(''))
+  block:
+    - name: "Download {{ tool.name }}"
+      ansible.builtin.get_url:
+        url: "{{ tool.url }}"
+        dest: "/tmp/{{ tool.name }}.tar.gz"
+        checksum: "sha256:{{ tool.sha256 }}"
+        mode: "0644"
+
+    - name: "Unpack {{ tool.name }}"
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ tool.name }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+
+    - name: "Locate the {{ tool.binary }} executable"
+      ansible.builtin.command: "find /tmp -type f -name {{ tool.binary }} -perm -u+x"
+      register: found
+      changed_when: false
+
+    - name: "Install {{ tool.binary }}"
+      ansible.builtin.copy:
+        src: "{{ found.stdout_lines[0] }}"
+        dest: "/usr/local/bin/{{ tool.binary }}"
+        mode: "0755"
+        remote_src: true
+
+    - name: "Clean up {{ tool.name }}"
+      ansible.builtin.file:
+        path: "/tmp/{{ tool.name }}.tar.gz"
+        state: absent

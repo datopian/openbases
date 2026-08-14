@@ -108,3 +108,57 @@
     state: present
     create: false
   notify: Reload nftables
+
+# Agent sessions must outlive the session that started them.
+#
+# Gas Town runs each agent in a tmux server owned by the cell user. Without
+# lingering, systemd-logind tears down a user's processes when their last login
+# session ends — so an agent dispatched over SSH is killed the moment the
+# dispatching connection closes, and unattended dispatch cannot work at all.
+#
+# Found the obvious way: the polecat session started, and the tmux server was
+# gone by the next command.
+- name: Allow cell processes to outlive the session that spawned them
+  ansible.builtin.command: "loginctl enable-linger wgcell_{{ item.name | replace('-', '_') }}"
+  args:
+    creates: "/var/lib/systemd/linger/wgcell_{{ item.name | replace('-', '_') }}"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ---------------------------------------------------------------------------
+# Model access (WP-E2)
+# ---------------------------------------------------------------------------
+
+- name: Create the cell credential directory
+  ansible.builtin.file:
+    path: "{{ cells_root }}/{{ item.name }}/.credentials"
+    state: directory
+    owner: "wgcell_{{ item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    mode: "0700"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# One credential file per cell, mode 0600.
+#
+# Be honest about what this buys. Cloudflare cannot scope an AI Gateway token to
+# a single gateway, so the same token reaches every gateway in the account and a
+# cell that steals another's token gains nothing it did not already have. What
+# per-cell files DO give is that a filesystem read in one cell does not hand
+# over another's credential, and each can be rotated on its own.
+#
+# The Anthropic key itself is never here: AI Gateway holds it and forwards.
+- name: Install the cell model credentials
+  ansible.builtin.template:
+    src: cell-model.env.j2
+    dest: "{{ cells_root }}/{{ item.name }}/.credentials/model.env"
+    owner: "wgcell_{{ item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    mode: "0600"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: ai_gateway_token | default("") | length > 0

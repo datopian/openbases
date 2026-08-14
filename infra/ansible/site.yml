@@ -28,6 +28,7 @@
   gather_facts: true
   roles:
     - execution_cell
+    - gastown
 
 - name: Verify compliance
   hosts: all
