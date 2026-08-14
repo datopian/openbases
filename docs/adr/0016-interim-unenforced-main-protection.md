@@ -1,4 +1,4 @@
-# ADR-0016: Interim — `main` protection is unenforceable, with compensating controls
+# ADR-0016: `main` protection is unenforceable, with compensating controls
 
 - **Status:** accepted
 - **Date:** 2026-08-10
@@ -28,8 +28,8 @@ enforcement for now.
 ## Decision
 
 Proceed with `main` unprotected, and treat the gap as an **explicit, recorded accepted risk** rather
-than an oversight. The WP-A1 acceptance criterion "direct pushes to `main` fail" remains **unmet**,
-and blocker Bead `wg-8yv.30` stays open until the plan is upgraded.
+than an oversight. The WP-A1 acceptance criterion "direct pushes to `main` fail" is **permanently
+unmet**, and the go-live evidence pack records it as a known limitation rather than claiming it.
 
 Three compensating controls apply in the meantime:
 
@@ -50,14 +50,24 @@ Three compensating controls apply in the meantime:
   ADR-0014 warns about: a self-improvement pull request could, in principle, be merged without the
   required human. The policy still forbids it and the detection workflow will surface it, but the
   mechanical block is absent.
-- This must be revisited before the pilot handles a restricted client project. A protected `main` is
-  a precondition for the production approval path, not a nicety.
-- If the plan is upgraded, apply protection and close `wg-8yv.30`; this ADR is then superseded.
+- The residual risk is permanent and worth restating plainly: the ADR-0014 guarantee that nothing
+  approves its own protected change has **no mechanical block behind it**. An actor with write
+  access can merge a self-improvement pull request without the required human. Policy forbids it,
+  and the push guard makes it visible after the fact rather than preventing it.
+- What has actually held the line so far is practice: every change has gone through a pull request,
+  and the agent has never self-merged. That habit is now the control, which means it has to survive
+  time pressure — the circumstance under which it is most likely to be abandoned.
+- Before the restricted client project holds real client material, this should be re-weighed against
+  what the engagement contract requires. A client may ask for enforced review, and "we have a
+  workflow that fails loudly" is a weaker answer than "the platform refuses it".
+- If the plan is ever upgraded, applying protection is a single API call; nothing here depends on it
+  staying this way.
 
 ## Alternatives considered
 
-**Upgrade to GitHub Team.** The correct fix, deferred on cost. The organisation reports 219 filled
-seats, so the decision needs a check of actually billable members.
+**Upgrade to GitHub Team.** The technically correct fix, declined on cost. The organisation reports
+219 filled seats, which makes per-seat pricing a material line item for a control that a small,
+disciplined team can approximate by convention.
 
 **Move the two repositories to a separately paid org or account.** Rejected for now: it splits them
 from the `datopian` organisation's identity, SSO, and team access for a control that the plan
