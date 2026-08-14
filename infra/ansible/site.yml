@@ -19,6 +19,7 @@
   gather_facts: true
   roles:
     - postgresql
+    - beads_hq
     - control_api
 
 - name: Configure execution cells

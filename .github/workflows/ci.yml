@@ -118,6 +118,9 @@ jobs:
       - name: first-login identity linking
         run: psql -v ON_ERROR_STOP=1 -f test/integration/identity_linking.sql
 
+      - name: cross-graph links and work-reference identity
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/hq_graph.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest
