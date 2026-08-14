@@ -21,6 +21,7 @@ import (
 	"github.com/datopian/workgraph/internal/authn"
 	"github.com/datopian/workgraph/internal/config"
 	"github.com/datopian/workgraph/internal/domain"
+	"github.com/datopian/workgraph/internal/githubapp"
 	"github.com/datopian/workgraph/internal/version"
 )
 
@@ -97,8 +98,10 @@ func main() {
 
 func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolver authn.Resolver, log *slog.Logger) http.Handler {
 	var store *domain.Store
+	var ghStore *githubapp.Store
 	if db != nil {
 		store = domain.NewStore(db)
+		ghStore = githubapp.NewStore(db)
 	}
 	mux := http.NewServeMux()
 
@@ -210,6 +213,53 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	})
 
 	mux.Handle("/v1/", authn.Middleware(auth, resolver, log)(authed))
+
+	// The GitHub webhook is deliberately OUTSIDE the authenticated mux.
+	//
+	// GitHub cannot complete a Cloudflare Access challenge, so this endpoint
+	// authenticates itself: every request is verified against the shared secret
+	// with a constant-time comparison before the payload is parsed. It is
+	// reachable by anyone who learns the URL, which is why the body size is
+	// bounded and nothing is decoded before the signature checks out.
+	// Registered on the ROOT mux, not the authenticated one. Go's ServeMux
+	// prefers the more specific pattern, so this wins over the "/v1/" handler
+	// and never reaches the authentication middleware.
+	//
+	// This is the single documented exception to "everything under /v1 requires
+	// an identity", and cmd/control-api asserts it is the only one — an
+	// exception that is tested is a decision; an untested one is a hole.
+	mux.HandleFunc("POST /v1/integrations/github/webhook", func(w http.ResponseWriter, r *http.Request) {
+		delivery, err := githubapp.VerifyWebhook(r, []byte(cfg.GitHubWebhookSecret))
+		if err != nil {
+			// One response for every rejection. Distinguishing a bad signature
+			// from a missing one tells a forger what to change.
+			log.Warn("webhook rejected", "error", err, "remote", r.Header.Get("Cf-Connecting-Ip"))
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+
+		if ghStore != nil {
+			switch err := ghStore.RecordDelivery(r.Context(), delivery); {
+			case errors.Is(err, githubapp.ErrDuplicateDelivery):
+				// A retry. Acknowledge so GitHub stops resending, but do not
+				// process it again.
+				log.Info("duplicate delivery ignored", "delivery", delivery.ID, "event", delivery.Event)
+				writeJSON(w, http.StatusOK, map[string]any{"status": "duplicate"})
+				return
+			case err != nil:
+				// Do NOT acknowledge: a 500 makes GitHub retry, which is what
+				// should happen when the receipt could not be stored.
+				log.Error("recording delivery", "delivery", delivery.ID, "error", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+				return
+			}
+		}
+
+		// Acknowledge quickly and process in the background (plan section 9.3).
+		// Projection into the domain model lands with the rest of WP-D1.
+		log.Info("webhook received", "delivery", delivery.ID, "event", delivery.Event, "bytes", len(delivery.Body))
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted"})
+	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
