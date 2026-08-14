@@ -61,10 +61,23 @@ func Middleware(a Authenticator, r Resolver, log *slog.Logger) func(http.Handler
 
 			if r != nil {
 				resolved, err := r.Resolve(req.Context(), id)
-				if err != nil {
-					log.Warn("identity has no application user",
-						"subject", id.Subject, "service", id.IsService, "error", err)
+				switch {
+				case errors.Is(err, ErrNoSuchUser):
+					// A legitimate refusal: authenticated, but not a Workgraph
+					// user. Expected for anyone in the Access allow-list who
+					// has no registry record.
+					log.Info("no application user for this identity",
+						"subject", id.Subject, "service", id.IsService)
 					unauthorized(w)
+					return
+				case err != nil:
+					// Anything else is a failure on our side. Reporting it as
+					// an authorisation outcome hides outages as access
+					// problems, which is how a database fault gets diagnosed
+					// as a permissions bug.
+					log.Error("resolving identity failed",
+						"subject", id.Subject, "error", err)
+					http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 					return
 				}
 				id = resolved
