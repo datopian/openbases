@@ -27,6 +27,21 @@ func (r *Resolver) Resolve(ctx context.Context, id authn.Identity) (authn.Identi
 	}
 
 	userID, _, err := r.store.UserBySubject(ctx, "cloudflare_access", id.Subject)
+	if err == nil {
+		id.UserID = userID
+		return id, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return authn.Identity{}, err
+	}
+
+	// First sight of this subject. Link it to an existing user, which is the
+	// only way an account can ever be usable: a Cloudflare Access subject is
+	// issued by the provider and cannot be seeded in advance.
+	//
+	// If no user record matches the address, the caller is refused. Being in
+	// the Access allow-list is not the same as being a Workgraph user.
+	userID, err = r.store.LinkIdentityByEmail(ctx, "cloudflare_access", id.Subject, id.Email)
 	if errors.Is(err, ErrNotFound) {
 		return authn.Identity{}, authn.ErrNoSuchUser
 	}
