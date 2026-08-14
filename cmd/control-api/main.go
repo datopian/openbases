@@ -20,6 +20,7 @@ import (
 
 	"github.com/datopian/workgraph/internal/authn"
 	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/workgraph/internal/domain"
 	"github.com/datopian/workgraph/internal/version"
 )
 
@@ -62,7 +63,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           routes(cfg, db, auth, log),
+		Handler:           routes(cfg, db, auth, domain.NewResolver(domain.NewStore(db)), log),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -94,7 +95,11 @@ func main() {
 	log.Info("stopped cleanly")
 }
 
-func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, log *slog.Logger) http.Handler {
+func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolver authn.Resolver, log *slog.Logger) http.Handler {
+	var store *domain.Store
+	if db != nil {
+		store = domain.NewStore(db)
+	}
 	mux := http.NewServeMux()
 
 	// Liveness answers "is the process running"; it must not depend on
@@ -154,6 +159,49 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, log *sl
 		})
 	})
 
+	// The registry. Every read runs inside a transaction carrying the caller's
+	// user ID, so row-level security decides what comes back — the handler does
+	// no filtering of its own, and cannot forget to.
+	authed.HandleFunc("GET /v1/projects", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if store == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		projects, err := store.ListProjects(r.Context(), id.UserID)
+		if err != nil {
+			log.Error("listing projects", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		if projects == nil {
+			projects = []domain.ProjectSummary{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
+	})
+
+	authed.HandleFunc("GET /v1/projects/{slug}", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if store == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		p, err := store.ProjectBySlug(r.Context(), id.UserID, r.PathValue("slug"))
+		if errors.Is(err, domain.ErrNotFound) {
+			// Deliberately the same response whether the project does not exist
+			// or the caller may not see it. Distinguishing them would confirm a
+			// restricted engagement exists, and its name alone is confidential.
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+			return
+		}
+		if err != nil {
+			log.Error("reading project", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+	})
+
 	authed.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{
 			"error": "not implemented",
@@ -161,7 +209,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, log *sl
 		})
 	})
 
-	mux.Handle("/v1/", authn.Middleware(auth, nil, log)(authed))
+	mux.Handle("/v1/", authn.Middleware(auth, resolver, log)(authed))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})

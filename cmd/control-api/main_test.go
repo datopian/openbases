@@ -15,7 +15,7 @@ import (
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func testRoutes(auth authn.Authenticator) http.Handler {
-	return routes(config.ControlAPI{Environment: config.EnvLocal}, nil, auth, quiet())
+	return routes(config.ControlAPI{Environment: config.EnvLocal}, nil, auth, nil, quiet())
 }
 
 func TestHealthLiveIsOpen(t *testing.T) {
