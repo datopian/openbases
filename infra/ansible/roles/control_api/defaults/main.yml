@@ -2,3 +2,11 @@
 control_api_port: 8080
 control_api_user: workgraph
 control_api_binary: /usr/local/bin/workgraph-control-api
+control_api_reconcile_binary: /usr/local/bin/workgraph-reconcile
+# The App private key on the control node. Deployed only when a local source is
+# given; reconciliation's resync half is skipped without it, while replay still
+# runs — recovering what we already received must not depend on reaching GitHub.
+control_api_github_key_path: /etc/workgraph/github-app.pem
+control_api_local_github_key: ""
+control_api_github_app_id: ""
+control_api_github_installation_id: ""

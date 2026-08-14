@@ -24,19 +24,16 @@ func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 // crashes is still known to have arrived — the alternative is silently
 // reprocessing it on every retry.
 func (s *Store) RecordDelivery(ctx context.Context, d *Delivery) error {
-	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO github_deliveries (delivery_id, event_type, payload)
-		VALUES ($1, $2, $3::jsonb)
-		ON CONFLICT (delivery_id) DO NOTHING`,
-		d.ID, d.Event, string(d.Body))
-	if err != nil {
+	// Through the system function: github_deliveries is protected because the
+	// payloads carry titles and branch names from every installed repository,
+	// restricted ones included, and a webhook has no user identity to check.
+	var recorded bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT system_record_delivery($1, $2, $3::jsonb)`,
+		d.ID, d.Event, string(d.Body)).Scan(&recorded); err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
+	if !recorded {
 		return ErrDuplicateDelivery
 	}
 	return nil
@@ -48,8 +45,6 @@ func (s *Store) RecordDelivery(ctx context.Context, d *Delivery) error {
 // after a crash: the event was accepted and is durable, but its effect on the
 // domain model may never have landed.
 func (s *Store) MarkProcessed(ctx context.Context, deliveryID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE github_deliveries SET processed_at = now() WHERE delivery_id = $1`,
-		deliveryID)
+	_, err := s.db.ExecContext(ctx, `SELECT system_mark_delivery_processed($1)`, deliveryID)
 	return err
 }

@@ -1,0 +1,34 @@
+[Unit]
+Description=Workgraph reconciliation
+Documentation=plan section 18, WP-D3
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ control_api_user }}
+Group={{ control_api_user }}
+EnvironmentFile=/etc/workgraph/control-api.env
+
+ExecStart={{ control_api_reconcile_binary }}
+
+# Same hardening as the API. Reconciliation holds the App private key and can
+# write projections, so it is not a lesser process for running on a timer.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target
