@@ -1,0 +1,56 @@
+---
+# Gas Town on the execution node (WP-E2).
+#
+# Deliberately NOT on the control node. Gas Town spawns agent processes, and
+# agents are untrusted code; the control node holds the domain database and the
+# company HQ graph (plan sections 1.3, 6.1).
+
+- name: Install the pinned orchestrator matrix
+  ansible.builtin.include_tasks: install_binary.yml
+  loop:
+    - name: dolt
+      version: "{{ dolt_version }}"
+      url: "https://github.com/dolthub/dolt/releases/download/{{ dolt_version }}/dolt-linux-amd64.tar.gz"
+      sha256: "{{ dolt_sha256_linux_amd64 }}"
+      binary: dolt
+    - name: bd
+      version: "{{ beads_version }}"
+      url: "https://github.com/gastownhall/beads/releases/download/{{ beads_version }}/beads_{{ beads_version | replace('v','') }}_linux_amd64.tar.gz"
+      sha256: "{{ beads_sha256_linux_amd64 }}"
+      binary: bd
+    - name: gt
+      version: "{{ gastown_version }}"
+      url: "https://github.com/gastownhall/gastown/releases/download/{{ gastown_version }}/gastown_{{ gastown_version | replace('v','') }}_linux_amd64.tar.gz"
+      sha256: "{{ gastown_sha256_linux_amd64 }}"
+      binary: gt
+  loop_control:
+    loop_var: tool
+    label: "{{ tool.name }} {{ tool.version }}"
+
+# Node is needed only to run the agent CLI. It is not a runtime for anything we
+# write, and nothing here should grow to depend on it.
+- name: Install Node for the agent CLI
+  ansible.builtin.apt:
+    name: [nodejs, npm, tmux, git]
+    state: present
+    update_cache: true
+
+# tmux is a hard dependency, not a convenience: Gas Town runs each agent in a
+# tmux session so a session survives the orchestrator restarting and can be
+# reattached for inspection.
+
+- name: Install the Claude Code CLI
+  community.general.npm:
+    name: "{{ claude_code_package }}"
+    global: true
+    state: present
+
+- name: Confirm the agent CLI answers
+  ansible.builtin.command: claude --version
+  register: claude_version
+  changed_when: false
+  failed_when: claude_version.rc != 0
+
+- name: Report the installed matrix
+  ansible.builtin.debug:
+    msg: "gt={{ gastown_version }} bd={{ beads_version }} dolt={{ dolt_version }} claude={{ claude_version.stdout }}"

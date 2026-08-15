@@ -1,0 +1,19 @@
+---
+# The pinned Gas Town / Beads / Dolt matrix (versions.lock, plan section 7.6).
+#
+# The matrix moves together. Gas Town 1.2.0 refuses to run against a newer
+# Beads, so a drifted binary here is a real incompatibility rather than an
+# untidy one.
+gastown_version: "v1.2.0"
+gastown_sha256_linux_amd64: "952e5375c451b9e56e1e7e8ade2348562c5f2e495cf01c7e430b5a55fe2f0e63"
+beads_version: "v1.0.4"
+beads_sha256_linux_amd64: "643e602e27f666c8726abff0f22001e2b5883988fa960204bde20a3129d448a5"
+dolt_version: "v2.0.7"
+dolt_sha256_linux_amd64: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc314539a3b9795a"
+
+# Gas Town spawns the Claude Code CLI: its start command is
+# `exec claude --dangerously-skip-permissions`. The agent harness is therefore a
+# dependency of the orchestrator, not an implementation detail of the model.
+claude_code_package: "@anthropic-ai/claude-code"
+
+cells_root: /srv/cells
