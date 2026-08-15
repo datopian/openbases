@@ -17,3 +17,12 @@ dolt_sha256_linux_amd64: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc3145
 claude_code_package: "@anthropic-ai/claude-code"
 
 cells_root: /srv/cells
+
+# Claude Code's first-run prompts. Key names read from the compiled CLI, not
+# guessed: an agent left sitting on the theme picker looks exactly like an agent
+# that failed to start.
+claude_first_run_keys:
+  theme: dark
+  hasCompletedOnboarding: true
+  hasTrustDialogAccepted: true
+  bypassPermissionsModeAccepted: true
