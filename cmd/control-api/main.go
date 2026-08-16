@@ -26,6 +26,7 @@ import (
 	"github.com/datopian/workgraph/internal/config"
 	"github.com/datopian/workgraph/internal/domain"
 	"github.com/datopian/workgraph/internal/githubapp"
+	"github.com/datopian/workgraph/internal/httplog"
 	"github.com/datopian/workgraph/internal/version"
 	"github.com/datopian/workgraph/internal/webui"
 )
@@ -75,7 +76,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           routes(cfg, db, auth, domain.NewResolver(domain.NewStore(db)), log),
+		Handler:           httplog.Middleware(log)(routes(cfg, db, auth, domain.NewResolver(domain.NewStore(db)), log)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
