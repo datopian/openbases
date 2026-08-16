@@ -235,3 +235,91 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# ---------------------------------------------------------------------------
+# The deterministic witness (ADR-0019)
+# ---------------------------------------------------------------------------
+#
+# Gas Town's Witness is a Claude Code session on a 300-second patrol cycle,
+# doing four jobs that are all mechanical. This replaces it with a program that
+# reads the same Gas Town outputs and runs the same Gas Town commands, and
+# reaches a person — not another model — for the cases that could lose work.
+#
+# The stock patrol is switched off by the gastown role. Both running at once
+# would be two things nuking the same sandboxes.
+
+- name: Install the witness binary
+  ansible.builtin.copy:
+    src: "{{ witness_local_binary }}"
+    dest: "{{ witness_binary }}"
+    owner: root
+    group: root
+    # Root-owned, like the reaper: a cell that can rewrite its own health
+    # monitor is not being monitored by it.
+    mode: "0755"
+  when: witness_local_binary | length > 0
+  notify: Restart the witness
+
+- name: Install the witness unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/wg-witness@.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (ADR-0019). One instance per cell: wg-witness@oss.
+      [Unit]
+      Description=Deterministic polecat health monitor for cell %i
+      After=network-online.target
+
+      [Service]
+      User=wgcell_%i
+      # HOME matters more than it looks: Dolt segfaults without one, and gt
+      # shells out to Dolt. A witness that crashes on start is a witness that
+      # is not watching.
+      Environment=HOME={{ cells_root }}/%i
+      Environment=PATH=/usr/local/bin:/usr/bin:/bin
+      # The cell's Access service token, so escalations can reach the control
+      # plane. Absent, the witness still runs and logs its findings to the
+      # journal rather than failing.
+      EnvironmentFile=-{{ cells_root }}/%i/.credentials/control-api.env
+      ExecStart={{ witness_binary }} \
+        -town {{ cells_root }}/%i/town \
+        -cell %i \
+        -interval {{ witness_interval }} \
+        -sweep {{ witness_sweep }} \
+        -stall-after {{ witness_stall_after }} \
+        -control-api ${WG_CONTROL_API}
+      Restart=always
+      RestartSec=30s
+      # It reads a town and runs gt. Nothing else on the node is its business.
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectSystem=strict
+      ProtectHome=false
+      ReadWritePaths={{ cells_root }}/%i
+
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - Reload systemd
+    - Restart the witness
+
+- name: Check whether the witness binary is present
+  ansible.builtin.stat:
+    path: "{{ witness_binary }}"
+  register: execution_cell_witness_stat
+
+- name: Enable the witness for each cell
+  ansible.builtin.systemd_service:
+    name: "wg-witness@{{ item.name }}.service"
+    enabled: true
+    state: started
+    daemon_reload: true
+  # Starting a unit whose ExecStart does not exist puts it into a restart loop
+  # that looks exactly like a crashing witness. Better to install the unit and
+  # leave it stopped until a binary is deployed.
+  when: execution_cell_witness_stat.stat.exists
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"

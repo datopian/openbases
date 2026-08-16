@@ -30,6 +30,7 @@ import (
 	"github.com/datopian/workgraph/internal/httplog"
 	"github.com/datopian/workgraph/internal/version"
 	"github.com/datopian/workgraph/internal/webui"
+	"github.com/datopian/workgraph/internal/witness"
 )
 
 func main() {
@@ -71,6 +72,11 @@ func main() {
 			// for the whole API.
 			PathAudiences: map[string]string{
 				"/v1/integrations/github/installation-token": cfg.CellAccessAudience,
+				// The witness reports from the same execution nodes with the
+				// same service token, but through its own Access application
+				// and so its own audience: minting a git credential and
+				// writing to inboxes are different powers.
+				"/v1/agent-health": cfg.CellHealthAccessAudience,
 			},
 		}
 	}
@@ -272,6 +278,57 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			"expires_at": tok.ExpiresAt,
 			"repository": repo,
 		})
+	})
+
+	// Agent health, reported by the deterministic witness on each execution
+	// node (cmd/witness). The pass is recorded whole — observations included —
+	// because the claim being made is that health monitoring needs no
+	// inference, and that is only checkable if the quiet decisions are counted
+	// alongside the loud ones.
+	authed.HandleFunc("POST /v1/agent-health", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+
+		// Service tokens only, for the same reason as the token endpoint: this
+		// writes to other people's inboxes, and a human browser session has no
+		// business doing that.
+		if !id.IsService {
+			log.Warn("agent health report refused for a human session", "subject", id.Subject)
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+
+		var report witness.Report
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&report); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		if strings.TrimSpace(report.Cell) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "cell is required"})
+			return
+		}
+		if len(report.Decisions) == 0 {
+			// An empty pass is a legitimate thing to report and not an error,
+			// but there is nothing to store.
+			writeJSON(w, http.StatusOK, witness.Outcome{})
+			return
+		}
+
+		out, err := witness.Ingest(r.Context(), db, report)
+		if err != nil {
+			log.Error("ingesting an agent health report",
+				"cell", report.Cell, "repository", report.Repository, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		if out.Unaddressed > 0 {
+			log.Error("agent health escalations reached nobody",
+				"cell", report.Cell, "repository", report.Repository,
+				"unaddressed", out.Unaddressed)
+		}
+		log.Info("recorded an agent health report",
+			"cell", report.Cell, "repository", report.Repository,
+			"recorded", out.Recorded, "escalated", out.Escalated, "notified", out.Notified)
+		writeJSON(w, http.StatusOK, out)
 	})
 
 	// The registry. Every read runs inside a transaction carrying the caller's

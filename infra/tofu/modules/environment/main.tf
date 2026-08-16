@@ -523,6 +523,27 @@ resource "cloudflare_zero_trust_access_application" "cell_token_mint" {
   }]
 }
 
+# The deterministic witness reports agent health from the same execution nodes
+# with the same token (ADR-0019).
+#
+# Its own application rather than a second path on the one above: a Zero Trust
+# application matches one domain, and widening the existing one to a prefix
+# would quietly extend the token's reach to every path underneath it. Two narrow
+# applications sharing one policy keeps the grant equal to the two endpoints
+# that were actually reviewed.
+resource "cloudflare_zero_trust_access_application" "cell_agent_health" {
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-cell-agent-health"
+  domain           = "${var.hostname}/v1/agent-health"
+  type             = "self_hosted"
+  session_duration = "0s"
+
+  policies = [{
+    id         = cloudflare_zero_trust_access_policy.cells_service.id
+    precedence = 1
+  }]
+}
+
 resource "cloudflare_zero_trust_access_policy" "cells_service" {
   account_id = var.cloudflare_account_id
   name       = "workgraph-${var.environment}-cells-service"

@@ -47,7 +47,16 @@ build: ## Build all binaries into ./bin (without the web interface; see release)
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/control-api ./cmd/control-api
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/worker      ./cmd/worker
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/agentd      ./cmd/agentd
-	@echo "built: $(BIN)/control-api $(BIN)/worker $(BIN)/agentd"
+	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/witness     ./cmd/witness
+	@echo "built: $(BIN)/control-api $(BIN)/worker $(BIN)/agentd $(BIN)/witness"
+
+build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
+	@# The nodes are linux/amd64 and development happens on macOS, so a binary
+	@# from `build` cannot be deployed. Ansible is pointed at this output.
+	@mkdir -p $(BIN)/linux-amd64
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+		-o $(BIN)/linux-amd64/witness ./cmd/witness
+	@echo "built: $(BIN)/linux-amd64/witness"
 
 verify-versions: ## Check installed gt/bd/dolt against versions.lock
 	@bash scripts/verify_versions.sh

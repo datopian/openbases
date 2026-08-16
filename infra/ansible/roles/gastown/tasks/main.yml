@@ -287,3 +287,76 @@
   loop: "{{ gastown_tier_now.results }}"
   loop_control:
     label: "{{ item.item.name }}"
+
+# ---------------------------------------------------------------------------
+# Patrol agents (plan section 4.7, ADR-0019)
+# ---------------------------------------------------------------------------
+#
+# `gt config set` refuses this key — the supported list is short and
+# disabled_patrols is not on it — so the town settings file is edited directly.
+# It is Gas Town's own documented town-settings schema, not an internal file:
+# the daemon reads disabled_patrols and logs "Witness patrol disabled in config,
+# skipping".
+#
+# Written with a script rather than a template because the file also carries
+# role_agents and role_effort, which `gt config cost-tier` owns. Templating the
+# whole thing would mean this role and gt fighting over the same file on every
+# apply.
+- name: Set the disabled Gas Town patrols
+  ansible.builtin.copy:
+    dest: /usr/local/bin/wg-set-disabled-patrols
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env python3
+      # Managed by Ansible. Merge disabled_patrols into a town's settings.
+      #
+      # Idempotent and non-destructive: every other key is left exactly as gt
+      # wrote it, and the file is only rewritten when the value actually
+      # differs, so a no-op apply does not churn the mtime.
+      import json, os, sys, tempfile
+
+      path, wanted = sys.argv[1], sorted(sys.argv[2:])
+      with open(path) as fh:
+          settings = json.load(fh)
+      if sorted(settings.get("disabled_patrols", [])) == wanted:
+          print("unchanged")
+          sys.exit(0)
+      settings["disabled_patrols"] = wanted
+      st = os.stat(path)
+      d = os.path.dirname(path)
+      fd, tmp = tempfile.mkstemp(dir=d)
+      with os.fdopen(fd, "w") as fh:
+          json.dump(settings, fh, indent=2)
+          fh.write("\n")
+      os.chown(tmp, st.st_uid, st.st_gid)
+      os.chmod(tmp, st.st_mode & 0o777)
+      os.replace(tmp, path)
+      print("changed")
+
+- name: Check whether each town has settings to edit
+  ansible.builtin.stat:
+    path: "{{ cells_root }}/{{ item.name }}/town/settings/config.json"
+  register: gastown_settings_stat
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Apply the disabled patrol list
+  ansible.builtin.command:
+    argv: >-
+      {{ ["/usr/local/bin/wg-set-disabled-patrols",
+          cells_root ~ "/" ~ item.item.name ~ "/town/settings/config.json"]
+         + gastown_disabled_patrols }}
+  register: gastown_patrols_set
+  # An exact match, not a substring: "unchanged" contains "changed", so the
+  # obvious `in` test reports every run as a change and idempotence can never
+  # be demonstrated.
+  changed_when: gastown_patrols_set.stdout is defined and gastown_patrols_set.stdout | trim == "changed"
+  # A cell with no town yet has nothing to configure. It gets the setting when
+  # its town is created, not by failing the play now.
+  when: item.stat.exists
+  loop: "{{ gastown_settings_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"

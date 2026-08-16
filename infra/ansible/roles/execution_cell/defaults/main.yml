@@ -13,3 +13,24 @@ proc_admin_gid: 4
 # taken under three minutes — while bounding the cost of a forgotten town to
 # roughly one patrol cycle rather than a day.
 agent_max_runtime_minutes: 45
+
+# The deterministic witness (cmd/witness, ADR-0019). It replaces Gas Town's
+# Witness patrol agent, which is disabled by the gastown role.
+#
+# Left empty, the binary is not deployed and the units are not installed, so a
+# run without a locally built binary changes nothing rather than removing a
+# working service. Build it with `make build-linux`, which cross-compiles for
+# the node: ./bin/linux-amd64/witness. A macOS binary from `make build` will
+# install without complaint and then fail to exec.
+witness_local_binary: ""
+witness_binary: /usr/local/bin/wg-witness
+# How often to look at the event channel. This is a readdir, not a model call,
+# so the interval is chosen for responsiveness rather than cost.
+witness_interval: 45s
+# A full pass even when no event has arrived, because not every transition
+# emits one — a session killed by the OOM killer leaves nothing behind.
+witness_sweep: 10m
+# How long a live session may stay silent before the case is called ambiguous
+# and handed to a person. Generous, because a polecat running a test suite is
+# routinely quiet for minutes and a false stall interrupts real work.
+witness_stall_after: 12m

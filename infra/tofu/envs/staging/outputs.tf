@@ -29,3 +29,11 @@ output "ssh_hostname_execution" {
 output "r2_buckets" {
   value = module.environment.r2_buckets
 }
+
+output "cell_token_mint_aud" {
+  value = module.environment.cell_token_mint_aud
+}
+
+output "cell_agent_health_aud" {
+  value = module.environment.cell_agent_health_aud
+}

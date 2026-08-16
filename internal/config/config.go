@@ -50,6 +50,15 @@ type ControlAPI struct {
 	// git-credential endpoint. Accepted ONLY on that path.
 	CellAccessAudience string
 
+	// CellHealthAccessAudience is the AUD of the Access application that fronts
+	// the agent-health endpoint (ADR-0019).
+	//
+	// A second value rather than a reuse of the one above, because the two
+	// endpoints grant different powers to the same token: one mints a git
+	// credential, the other writes into people's inboxes. Binding each to its
+	// own audience keeps a token minted for one from working on the other.
+	CellHealthAccessAudience string
+
 	// GitHubWebhookSecret authenticates inbound webhooks. GitHub cannot pass a
 	// Cloudflare Access challenge, so this shared secret is the only thing
 	// standing between the endpoint and anyone who learns its URL.
@@ -79,7 +88,8 @@ func LoadControlAPI() (ControlAPI, error) {
 		AccessTeamDomain: os.Getenv("WG_ACCESS_TEAM_DOMAIN"),
 		AccessAudience:   os.Getenv("WG_ACCESS_AUD"),
 
-		CellAccessAudience: os.Getenv("WG_CELL_ACCESS_AUD"),
+		CellAccessAudience:       os.Getenv("WG_CELL_ACCESS_AUD"),
+		CellHealthAccessAudience: os.Getenv("WG_CELL_HEALTH_ACCESS_AUD"),
 
 		GitHubWebhookSecret: os.Getenv("WG_GITHUB_WEBHOOK_SECRET"),
 

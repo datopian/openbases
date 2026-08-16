@@ -7,3 +7,15 @@
   ansible.builtin.systemd:
     name: nftables
     state: reloaded
+
+- name: Restart the witness
+  ansible.builtin.systemd_service:
+    name: "wg-witness@{{ item.name }}.service"
+    state: restarted
+    daemon_reload: true
+  # Only restart what is actually installed; a handler is not the place to
+  # discover that the binary was never deployed.
+  when: witness_local_binary | length > 0
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
