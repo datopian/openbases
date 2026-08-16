@@ -42,7 +42,7 @@ vet: ## Run go vet
 test: ## Run unit tests with the race detector
 	@$(GO) test -race ./...
 
-build: web-build ## Build all binaries into ./bin
+build: ## Build all binaries into ./bin (without the web interface; see release)
 	@mkdir -p $(BIN)
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/control-api ./cmd/control-api
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/worker      ./cmd/worker
@@ -89,3 +89,17 @@ web-build: ## Type-check, build, and embed the web application
 
 web-dev: ## Run the web dev server
 	@cd apps/web && npm run dev
+
+.PHONY: release
+release: web-build ## Build the deployable control API with the web interface embedded
+	@# The only target that produces a binary suitable for deployment.
+	@#
+	@# `build` deliberately does NOT depend on web-build: that would make every
+	@# Go build require Node and npm install, which broke the Go CI job — it has
+	@# a Go toolchain and no node_modules, and has no reason to need them.
+	@#
+	@# The risk that separation reintroduces is a binary deployed without its
+	@# interface. That is covered two ways: the API logs "no web interface
+	@# embedded" at warning level on startup, and deployment uses this target.
+	@CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/control-api ./cmd/control-api
+	@echo "built with the web interface: $(BIN)/control-api"
