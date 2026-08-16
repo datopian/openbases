@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-08-17
-- **Bead:** wg-0ft
+- **Bead:** wg-1th
 - **Plan reference:** §4.7, §7.6, §13.1
 - **Relates to:** [ADR-0005](0005-gastown-behind-an-adapter.md), [ADR-0018](0018-tiered-model-routing.md)
 
