@@ -181,3 +181,57 @@
     label: "{{ item.name }}"
   no_log: true
   when: ai_gateway_token | default("") | length > 0
+
+# ---------------------------------------------------------------------------
+# Idle agent backstop
+# ---------------------------------------------------------------------------
+
+- name: Install the idle agent reaper
+  ansible.builtin.template:
+    src: reap-idle-agents.sh.j2
+    dest: /usr/local/bin/wg-reap-idle-agents
+    owner: root
+    group: root
+    # Root-owned and not writable by any cell: an agent that can rewrite the
+    # thing that kills it is not being limited by it.
+    mode: "0755"
+
+- name: Install the reaper timer units
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: wg-reap-idle-agents.service
+      content: |
+        [Unit]
+        Description=Kill agent processes older than the runtime ceiling
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/wg-reap-idle-agents
+    - name: wg-reap-idle-agents.timer
+      content: |
+        [Unit]
+        Description=Periodically reap long-running agent processes
+
+        [Timer]
+        # Every ten minutes. Frequent enough that a forgotten town costs one
+        # cycle rather than a day, cheap enough to be unnoticeable.
+        OnBootSec=5min
+        OnUnitActiveSec=10min
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Enable the reaper timer
+  ansible.builtin.systemd_service:
+    name: wg-reap-idle-agents.timer
+    enabled: true
+    state: started
+    daemon_reload: true

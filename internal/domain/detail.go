@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/datopian/workgraph/internal/authz"
@@ -61,7 +62,13 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 		return ProjectDetail{}, err
 	}
 
-	detail := ProjectDetail{ProjectSummary: summary}
+	// Both slices start empty rather than nil, for the same reason: a client
+	// that receives null where it expects a list has no good option.
+	detail := ProjectDetail{
+		ProjectSummary: summary,
+		Repositories:   []RepositoryStatus{},
+		Signals:        []Signal{},
+	}
 
 	err = authz.WithUser(ctx, s.db, userID, func(tx *sql.Tx) error {
 		// Repositories and their projections. Row-level security decides which
@@ -94,7 +101,7 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 			}
 			rs, seen := byRepo[full]
 			if !seen {
-				rs = &RepositoryStatus{FullName: full}
+				rs = &RepositoryStatus{FullName: full, PullRequests: []PullRequestView{}}
 				byRepo[full] = rs
 				order = append(order, full)
 			}
@@ -136,7 +143,7 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 // deriveSignals turns the raw rows into statements a non-technical reader can
 // act on, each carrying the evidence it came from.
 func deriveSignals(d ProjectDetail) []Signal {
-	var signals []Signal
+	signals := []Signal{}
 
 	// Integration coverage. A project whose repositories have never reported
 	// is not healthy and not unhealthy; it is unobserved, and saying so is more
@@ -228,4 +235,31 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// MarshalJSON guarantees the list fields are arrays, never null.
+//
+// The guarantee belongs on the type rather than on each construction site. A
+// nil slice marshals to JSON null; the browser calls .map on it and throws,
+// which unmounts the page and leaves a blank screen with no message. Relying on
+// every code path to remember to initialise the slices is exactly the kind of
+// discipline that holds until the one path that does not — and the failing path
+// here is the EMPTY case, which seeded local data never reaches, so it reaches
+// production first.
+func (d ProjectDetail) MarshalJSON() ([]byte, error) {
+	// A local alias, so the custom marshaller does not recurse into itself.
+	type detail ProjectDetail
+	out := detail(d)
+	if out.Repositories == nil {
+		out.Repositories = []RepositoryStatus{}
+	}
+	if out.Signals == nil {
+		out.Signals = []Signal{}
+	}
+	for i := range out.Repositories {
+		if out.Repositories[i].PullRequests == nil {
+			out.Repositories[i].PullRequests = []PullRequestView{}
+		}
+	}
+	return json.Marshal(out)
 }

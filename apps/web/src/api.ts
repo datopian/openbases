@@ -84,10 +84,27 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * Coerce a value that should be a list into one.
+ *
+ * The API guarantees arrays, but the page must not depend on that being true
+ * forever. A single `null` where a list was expected throws "x.map is not a
+ * function", React unmounts the tree, and the reader gets a blank white page —
+ * a total loss of interface caused by one empty collection. Degrading to an
+ * empty list turns that into a page that renders and says there is nothing
+ * here, which is both truthful and recoverable.
+ */
+export function asList<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
 export const api = {
   version: () => get<VersionInfo>("/version"),
   me: () => get<Identity>("/v1/me"),
-  projects: () => get<ProjectSummary[]>("/v1/projects"),
+  // Normalised at the boundary. A null body would otherwise leave the caller
+  // unable to distinguish "still loading" from "nothing here", and the page
+  // spins on Loading forever — which is quieter than a crash and just as wrong.
+  projects: async () => asList(await get<ProjectSummary[] | null>("/v1/projects")),
   projectDetail: (slug: string) =>
     get<ProjectDetail & { repositories: RepositoryStatus[] }>(
       `/v1/projects/${encodeURIComponent(slug)}/detail`,
@@ -121,3 +138,4 @@ export function isStale(iso: string | null, hours = 24): boolean {
   const then = new Date(iso).getTime();
   return Number.isNaN(then) || Date.now() - then > hours * 3600_000;
 }
+

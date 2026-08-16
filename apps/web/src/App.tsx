@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   age,
   api,
+  asList,
   isStale,
   type Identity,
   type ProjectDetail,
@@ -104,7 +105,7 @@ function Repositories({ repos }: { repos: RepositoryStatus[] }) {
   return (
     <>
       {repos.map((r) => {
-        const prs = r.pull_requests ?? [];
+        const prs = asList(r.pull_requests);
         return (
           <div key={r.full_name} style={css.card}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
@@ -182,10 +183,10 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
           </p>
 
           <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Status</h2>
-          {detail.signals?.map((s) => <SignalCard key={s.name} signal={s} />)}
+          {asList(detail.signals).map((s) => <SignalCard key={s.name} signal={s} />)}
 
           <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Repositories</h2>
-          <Repositories repos={detail.repositories ?? []} />
+          <Repositories repos={asList(detail.repositories)} />
         </>
       )}
     </>
@@ -205,7 +206,8 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
 
   if (error) return <p style={{ color: "#a33" }}>Could not load projects: {error}</p>;
   if (!projects) return <p style={css.muted}>Loading…</p>;
-  if (projects.length === 0) {
+  const rows = asList(projects);
+  if (rows.length === 0) {
     // Empty because of permissions is a different thing from empty because
     // nothing exists, and the reader cannot tell from a blank table.
     return (
@@ -229,7 +231,7 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
         </tr>
       </thead>
       <tbody>
-        {projects.map((p) => (
+        {rows.map((p) => (
           <tr key={p.slug}>
             <td style={css.td}>
               <a

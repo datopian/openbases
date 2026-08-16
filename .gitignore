@@ -69,3 +69,4 @@ infra/tofu/**/.terraform/
 # in CI while building fine locally.
 internal/webui/dist/*
 !internal/webui/dist/.gitkeep
+.gstack/

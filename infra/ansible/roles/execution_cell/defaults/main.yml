@@ -5,3 +5,11 @@ cells_root: /srv/cells
 # The group that keeps full /proc visibility under hidepid. adm (4) on Debian
 # and Ubuntu, which root and administrative tooling belong to.
 proc_admin_gid: 4
+
+# Ceiling on how long any agent process may live, enforced by a timer as a
+# backstop to the dispatch script's own teardown.
+#
+# 45 minutes is generous for the work these cells do — a completed task has
+# taken under three minutes — while bounding the cost of a forgotten town to
+# roughly one patrol cycle rather than a day.
+agent_max_runtime_minutes: 45

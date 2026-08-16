@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Kill agent processes older than a ceiling, whatever started them.
+#
+# This is a BACKSTOP, not the mechanism. The mechanism is
+# scripts/dispatch_bead.sh, which tears the town down in a trap. This exists
+# because that only works when a script ran and completed its trap — an ssh
+# session killed by a timeout, a crashed harness, or someone running gt sling by
+# hand all leave patrol agents polling indefinitely.
+#
+# The cost of not having it is measured: patrol roles made 1,616 requests and
+# 365,671 output tokens in a day of testing, $13.13 of a $20.92 bill — more than
+# the work they were supervising.
+#
+# It kills by AGE, not by idleness. Distinguishing a working agent from a
+# polling one needs orchestrator state this script deliberately does not depend
+# on; an age ceiling needs nothing and cannot be wrong about what it is seeing.
+# A genuinely long task is the case this would interrupt, so the ceiling is
+# generous and the kill is logged loudly.
+set -uo pipefail
+
+MAX_MINUTES={{ agent_max_runtime_minutes }}
+killed=0
+
+for user in {% for c in execution_cells %}wgcell_{{ c.name | replace('-', '_') }} {% endfor %}; do
+  id "$user" >/dev/null 2>&1 || continue
+
+  # etimes is elapsed seconds, which sorts and compares without parsing a
+  # [[dd-]hh:]mm:ss string — that format is the usual source of an off-by-a-day
+  # bug in scripts like this.
+  while read -r pid etimes cmd; do
+    [ -z "${pid:-}" ] && continue
+    [ "${etimes:-0}" -lt $((MAX_MINUTES * 60)) ] && continue
+    logger -t wg-reap "killing $user pid $pid after $((etimes / 60))m: ${cmd:0:80}"
+    kill -9 "$pid" 2>/dev/null && killed=$((killed + 1))
+  done < <(ps -u "$user" -o pid=,etimes=,args= 2>/dev/null | grep -E "claude|gt daemon" | grep -v grep)
+done
+
+if [ "$killed" -gt 0 ]; then
+  logger -t wg-reap "reaped $killed agent process(es) over ${MAX_MINUTES}m"
+fi
