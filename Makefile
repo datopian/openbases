@@ -81,6 +81,10 @@ web-build: ## Type-check, build, and embed the web application
 	@# binary starts cleanly, serves the API, and has no UI — which looks fine
 	@# in logs and is only discovered by opening a browser.
 	@rm -rf internal/webui/dist && cp -R apps/web/dist internal/webui/dist
+	@# Restore the tracked placeholder. go:embed needs at least one file, and
+	@# the rm above deletes it — a clean checkout then fails to compile with
+	@# "no matching files found" while a working tree with build output is fine.
+	@touch internal/webui/dist/.gitkeep
 	@echo "embedded: $$(ls internal/webui/dist | tr '\n' ' ')"
 
 web-dev: ## Run the web dev server
