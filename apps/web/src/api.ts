@@ -94,6 +94,28 @@ export interface Refusal {
   remediation?: string;
 }
 
+export interface Evidence {
+  kind: string;
+  ref: string;
+  note?: string;
+}
+
+/** A single sentence with its provenance. */
+export interface Claim {
+  statement: string;
+  /** observed | calculated | inferred */
+  kind: string;
+  basis?: string;
+  evidence: Evidence[] | null;
+  observed_at?: string | null;
+}
+
+export interface Answer {
+  question: string;
+  claims: Claim[] | null;
+  scope: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -158,6 +180,10 @@ export const api = {
 
   // The unwrapped response, so a caller can report what actually arrived.
   projectsRaw: () => get<unknown>("/v1/projects"),
+
+  questions: async () =>
+    asList((await get<{ questions: string[] | null }>("/v1/ask"))?.questions),
+  ask: (q: string) => get<Answer>(`/v1/ask?q=${encodeURIComponent(q)}`),
 
   projects: async () => asList(await get<ProjectSummary[] | null>("/v1/projects")),
   projectDetail: (slug: string) =>

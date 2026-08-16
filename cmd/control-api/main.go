@@ -23,6 +23,7 @@ import (
 	"github.com/datopian/workgraph/internal/approvals"
 	"github.com/datopian/workgraph/internal/attention"
 	"github.com/datopian/workgraph/internal/authn"
+	"github.com/datopian/workgraph/internal/chiefofstaff"
 	"github.com/datopian/workgraph/internal/config"
 	"github.com/datopian/workgraph/internal/domain"
 	"github.com/datopian/workgraph/internal/githubapp"
@@ -122,9 +123,11 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	// registry, and the endpoints that need the App refuse individually. A
 	// process that will not start without every integration configured is one
 	// that cannot be brought up during an incident.
+	var cos *chiefofstaff.Store
 	var inbox *attention.Store
 	var decisions *approvals.Store
 	if db != nil {
+		cos = chiefofstaff.NewStore(db)
 		inbox = attention.NewStore(db)
 		decisions = approvals.NewStore(db)
 	}
@@ -312,6 +315,35 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 		writeJSON(w, http.StatusOK, p)
+	})
+
+	// The chief-of-staff questions.
+	//
+	// The supported questions are listed by the API rather than hardcoded in the
+	// interface, so an unsupported one is refused in the same place for every
+	// client — including a future model-backed one.
+	authed.HandleFunc("GET /v1/ask", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if cos == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		question := r.URL.Query().Get("q")
+		if question == "" {
+			writeJSON(w, http.StatusOK, map[string]any{"questions": chiefofstaff.Questions})
+			return
+		}
+		answer, err := cos.Ask(r.Context(), id.UserID, question)
+		if err != nil {
+			// An unsupported question is a client error, and the reply names
+			// what IS answerable rather than inventing something.
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":     err.Error(),
+				"questions": chiefofstaff.Questions,
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, answer)
 	})
 
 	// The attention inbox.
