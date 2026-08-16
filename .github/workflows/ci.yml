@@ -127,6 +127,9 @@ jobs:
       - name: projection visibility and the system path
         run: psql -v ON_ERROR_STOP=1 -f test/integration/reconciliation.sql
 
+      - name: approvals, digest binding and who may decide
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/approvals.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest
