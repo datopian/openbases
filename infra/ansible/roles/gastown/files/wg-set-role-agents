@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Own the role-to-model map for a Gas Town, declaratively.
+
+`gt config cost-tier budget` writes role_agents and role_effort from a preset,
+and the preset is right for every role but one. The Mayor is the exception: Gas
+Town starts it unconditionally as the cross-rig chief of staff, a job Workgraph
+does itself (WP-F3), so here it supervises nothing — and the preset puts it on
+Sonnet. Measured with the town up 75 seconds and nothing dispatched, five
+claude-sonnet-5 requests, $0.2151. Roughly $10 an hour to do nothing (wg-15m).
+
+Its model is the only lever that applies: `disabled_patrols` does not affect it
+because it is not a patrol, and `gt mayor stop` holds for about three minutes
+before the daemon heartbeat restarts it. Both verified on gt v1.2.0.
+
+The obvious implementation — let the tier write the map, then patch one entry —
+does not work, and fails in a way worth recording. Once any entry differs from
+the preset, `gt config cost-tier` reports "custom (manual role_agents
+configuration)" rather than "budget". An Ansible task that re-applies the tier
+whenever it is not "budget" then fires on every run, resets the Mayor, and the
+patch sets it back: two changes per run forever, with the end state decided by
+task ordering.
+
+So there is one owner. This script writes both maps in full, the tier is used
+only to seed a brand-new town, and the values live in the role's defaults where
+they can be reviewed.
+
+Usage:
+  wg-set-role-agents <town-settings.json> agent.<role>=<profile> effort.<role>=<level> ...
+"""
+import json
+import os
+import sys
+import tempfile
+
+VALID_EFFORT = {"low", "medium", "high"}
+
+
+def main() -> int:
+    if len(sys.argv) < 3:
+        print("usage: wg-set-role-agents <settings.json> agent.<role>=<profile> "
+              "effort.<role>=<level> ...", file=sys.stderr)
+        return 2
+    path = sys.argv[1]
+
+    want_agents, want_effort = {}, {}
+    for pair in sys.argv[2:]:
+        key, _, value = pair.partition("=")
+        kind, _, role = key.partition(".")
+        if not value or not role or kind not in ("agent", "effort"):
+            print(f"not an agent.<role>= or effort.<role>= pair: {pair!r}", file=sys.stderr)
+            return 2
+        if kind == "agent":
+            want_agents[role] = value
+        else:
+            if value not in VALID_EFFORT:
+                print(f"effort {value!r} for {role} is not one of {sorted(VALID_EFFORT)}",
+                      file=sys.stderr)
+                return 2
+            want_effort[role] = value
+
+    try:
+        with open(path) as fh:
+            settings = json.load(fh)
+    except (OSError, ValueError) as err:
+        print(f"cannot read {path}: {err}", file=sys.stderr)
+        return 1
+
+    defined = settings.get("agents") or {}
+    for role, profile in sorted(want_agents.items()):
+        # A role pointed at a profile the town does not define is a role that
+        # will not start. Refuse rather than write it and find out later.
+        if profile not in defined:
+            print(f"agent profile {profile!r} for role {role!r} is not defined in this town "
+                  f"(have: {', '.join(sorted(defined)) or 'none'})", file=sys.stderr)
+            return 1
+
+    changed = []
+    if want_agents and settings.get("role_agents") != want_agents:
+        settings["role_agents"] = want_agents
+        changed.append("role_agents")
+    if want_effort and settings.get("role_effort") != want_effort:
+        settings["role_effort"] = want_effort
+        changed.append("role_effort")
+
+    if not changed:
+        print("unchanged")
+        return 0
+
+    st = os.stat(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+    with os.fdopen(fd, "w") as fh:
+        json.dump(settings, fh, indent=2)
+        fh.write("\n")
+    os.chown(tmp, st.st_uid, st.st_gid)
+    os.chmod(tmp, st.st_mode & 0o777)
+    os.replace(tmp, path)
+
+    print("changed " + ",".join(changed))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
