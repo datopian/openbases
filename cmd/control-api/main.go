@@ -327,7 +327,11 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 			return
 		}
-		writeJSON(w, http.StatusOK, items)
+		// Enveloped, matching /v1/projects. Two conventions in one API is a
+		// trap for every future client: this exact mismatch — an envelope on
+		// one endpoint and a bare array on another — is what made the projects
+		// table render empty while the server was returning all three.
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 	})
 
 	// Selective descent: branches with a few candidates each, and a reason when
@@ -344,7 +348,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 			return
 		}
-		writeJSON(w, http.StatusOK, branches)
+		writeJSON(w, http.StatusOK, map[string]any{"branches": branches})
 	})
 
 	// Decide an approval.

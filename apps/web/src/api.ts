@@ -135,8 +135,10 @@ export const api = {
   // Normalised at the boundary. A null body would otherwise leave the caller
   // unable to distinguish "still loading" from "nothing here", and the page
   // spins on Loading forever — which is quieter than a crash and just as wrong.
-  inbox: async () => asList(await get<AttentionItem[] | null>("/v1/inbox")),
-  branches: async () => asList(await get<Branch[] | null>("/v1/inbox/branches")),
+  inbox: async () =>
+    asList((await get<{ items: AttentionItem[] | null }>("/v1/inbox"))?.items),
+  branches: async () =>
+    asList((await get<{ branches: Branch[] | null }>("/v1/inbox/branches"))?.branches),
 
   decide: async (id: string, approve: boolean, reason: string, seenDigest: string) => {
     const res = await fetch(`/v1/approvals/${encodeURIComponent(id)}/decide`, {
@@ -153,6 +155,9 @@ export const api = {
     }
     return body;
   },
+
+  // The unwrapped response, so a caller can report what actually arrived.
+  projectsRaw: () => get<unknown>("/v1/projects"),
 
   projects: async () => asList(await get<ProjectSummary[] | null>("/v1/projects")),
   projectDetail: (slug: string) =>

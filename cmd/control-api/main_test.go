@@ -289,3 +289,66 @@ func TestInboxRequiresAnApplicationUser(t *testing.T) {
 		}
 	}
 }
+
+// Collection endpoints must return an ENVELOPE, not a bare array.
+//
+// This test exists because the convention was violated silently and cost real
+// time: /v1/projects returns {"projects": [...]}, the interface assumed a bare
+// array, and the stub used while building the interface encoded the SAME wrong
+// assumption — so every test agreed with the client instead of with the server,
+// and the page rendered empty while the server was returning three projects.
+//
+// Asserting the shape against the real handlers is the only version of this
+// test that would have caught it.
+func TestCollectionEndpointsAreEnveloped(t *testing.T) {
+	h := testRoutes(&authn.StaticAuthenticator{Identity: authn.Identity{
+		Subject: "person@datopian.com",
+		Email:   "person@datopian.com",
+		UserID:  "11111111-1111-1111-1111-111111111111",
+	}})
+
+	asserted := 0
+	for _, tc := range []struct{ path, key string }{
+		{"/v1/projects", "projects"},
+		{"/v1/inbox", "items"},
+		{"/v1/inbox/branches", "branches"},
+	} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest("GET", tc.path, nil))
+
+		// With no database these answer 403 and there is no shape to check.
+		if rr.Code != http.StatusOK {
+			continue
+		}
+		asserted++
+
+		body := strings.TrimSpace(rr.Body.String())
+		if strings.HasPrefix(body, "[") {
+			t.Errorf("%s returned a bare array; collections must be enveloped as {%q: [...]}",
+				tc.path, tc.key)
+			continue
+		}
+		var envelope map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+			t.Errorf("%s: response is not a JSON object: %v", tc.path, err)
+			continue
+		}
+		if _, ok := envelope[tc.key]; !ok {
+			keys := make([]string, 0, len(envelope))
+			for k := range envelope {
+				keys = append(keys, k)
+			}
+			t.Errorf("%s: expected key %q, got %v", tc.path, tc.key, keys)
+		}
+	}
+
+	// Refuse to pass having checked nothing.
+	//
+	// Without a database every endpoint above answers 403, every assertion is
+	// skipped, and the test reports success while verifying no shape at all —
+	// which is exactly the failure mode that let the bare-array assumption
+	// survive in the first place. A skip must be visible as a skip.
+	if asserted == 0 {
+		t.Skip("no database: every collection endpoint answered 403, so no shape was checked")
+	}
+}
