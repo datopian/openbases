@@ -20,6 +20,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/datopian/workgraph/internal/approvals"
+	"github.com/datopian/workgraph/internal/attention"
 	"github.com/datopian/workgraph/internal/authn"
 	"github.com/datopian/workgraph/internal/config"
 	"github.com/datopian/workgraph/internal/domain"
@@ -119,6 +121,13 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	// registry, and the endpoints that need the App refuse individually. A
 	// process that will not start without every integration configured is one
 	// that cannot be brought up during an incident.
+	var inbox *attention.Store
+	var decisions *approvals.Store
+	if db != nil {
+		inbox = attention.NewStore(db)
+		decisions = approvals.NewStore(db)
+	}
+
 	var gh *githubapp.Client
 	if cfg.GitHubAppID != "" && cfg.GitHubInstallationID != "" && cfg.GitHubPrivateKeyPath != "" {
 		key, err := githubapp.LoadPrivateKey(cfg.GitHubPrivateKeyPath)
@@ -302,6 +311,82 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 		writeJSON(w, http.StatusOK, p)
+	})
+
+	// The attention inbox.
+	authed.HandleFunc("GET /v1/inbox", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if inbox == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		items, err := inbox.Inbox(r.Context(), id.UserID)
+		if err != nil {
+			log.Error("reading the inbox", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	})
+
+	// Selective descent: branches with a few candidates each, and a reason when
+	// a branch has none.
+	authed.HandleFunc("GET /v1/inbox/branches", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if inbox == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		branches, err := inbox.Descend(r.Context(), id.UserID)
+		if err != nil {
+			log.Error("descending the inbox", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, branches)
+	})
+
+	// Decide an approval.
+	//
+	// Refusals carry the policy that stopped the caller. The status is 403 for
+	// every policy refusal, so probing this endpoint reveals nothing about
+	// which rule applies to a request the caller cannot see.
+	authed.HandleFunc("POST /v1/approvals/{id}/decide", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if decisions == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		var body struct {
+			Approve    bool   `json:"approve"`
+			Reason     string `json:"reason"`
+			SeenDigest string `json:"seen_digest"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+
+		err := decisions.Decide(r.Context(), approvals.Decision{
+			RequestID:  r.PathValue("id"),
+			UserID:     id.UserID,
+			Approve:    body.Approve,
+			Reason:     body.Reason,
+			SeenDigest: body.SeenDigest,
+		})
+		var refusal *approvals.Refusal
+		if errors.As(err, &refusal) {
+			log.Info("approval refused", "policy", refusal.Policy,
+				"request", r.PathValue("id"), "subject", id.Subject)
+			writeJSON(w, http.StatusForbidden, refusal)
+			return
+		}
+		if err != nil {
+			log.Error("deciding an approval", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "recorded"})
 	})
 
 	// The project page. Returns the summary, its repositories with projected

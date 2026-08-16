@@ -243,3 +243,49 @@ func TestInstallationTokenWithoutAnAppConfigured(t *testing.T) {
 		t.Fatalf("expected 503 when the App is not configured, got %d", rr.Code)
 	}
 }
+
+// An unauthorised caller must not be able to decide an approval.
+//
+// This is one of WP-F2's acceptance criteria, and it is asserted at the HTTP
+// boundary as well as in the database because that is where a mistake would
+// actually be made: a handler that forgets to pass the caller's identity would
+// still pass every database test.
+func TestApprovalDecisionRequiresAnApplicationUser(t *testing.T) {
+	// Authenticated at the edge, but with no application user — the state a
+	// service token or an unlinked identity is in.
+	h := testRoutes(&authn.StaticAuthenticator{Identity: authn.Identity{
+		Subject: "workgraph-automation", IsService: true,
+	}})
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST",
+		"/v1/approvals/11111111-1111-1111-1111-111111111111/decide",
+		strings.NewReader(`{"approve":true}`)))
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 without an application user, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestApprovalDecisionRequiresAuthentication(t *testing.T) {
+	rr := httptest.NewRecorder()
+	testRoutes(&authn.StaticAuthenticator{}).ServeHTTP(rr, httptest.NewRequest("POST",
+		"/v1/approvals/x/decide", strings.NewReader(`{"approve":true}`)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}
+
+// The inbox must never be served without an application user, because the rows
+// it returns are scoped by that identity.
+func TestInboxRequiresAnApplicationUser(t *testing.T) {
+	for _, path := range []string{"/v1/inbox", "/v1/inbox/branches"} {
+		rr := httptest.NewRecorder()
+		testRoutes(&authn.StaticAuthenticator{Identity: authn.Identity{
+			Subject: "workgraph-automation", IsService: true,
+		}}).ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("%s returned %d without an application user", path, rr.Code)
+		}
+	}
+}
