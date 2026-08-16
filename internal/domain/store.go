@@ -152,13 +152,22 @@ type ProjectSummary struct {
 	Repositories int    `json:"repositories"`
 }
 
+// EmptyProjectList is the value a project listing takes when nothing is
+// visible. It exists so the empty case is a named, testable thing rather than a
+// nil slice someone has to remember to initialise.
+func EmptyProjectList() []ProjectSummary { return []ProjectSummary{} }
+
 // ListProjects returns the projects this user may see.
 //
 // There is no "all projects" query and no administrative bypass here. An
 // organisation admin sees more because their grant satisfies the RLS policy,
 // not because the application skips the filter for them.
 func (s *Store) ListProjects(ctx context.Context, userID string) ([]ProjectSummary, error) {
-	var out []ProjectSummary
+	// Initialised, not nil. A nil slice marshals to JSON null, the browser calls
+	// .map on it, and the whole page unmounts to a blank screen — and it only
+	// happens when the list is EMPTY, which is precisely the case that seeded
+	// local data never produces.
+	out := EmptyProjectList()
 
 	err := authz.WithUser(ctx, s.db, userID, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
