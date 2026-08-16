@@ -9,6 +9,7 @@ import {
   type ProjectDetail,
   type ProjectSummary,
   type RepositoryStatus,
+  type VersionInfo,
   type Signal,
 } from "./api";
 
@@ -197,11 +198,21 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
 function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What the API actually handed back, described in one string.
+  //
+  // "No projects are visible to you" and "the response was not the shape this
+  // code expects" look identical on screen, and telling them apart otherwise
+  // costs a round trip through the browser console with whoever is looking at
+  // it. The empty state says which it is.
+  const [received, setReceived] = useState<string>("");
 
   useEffect(() => {
     api
-      .projects()
-      .then(setProjects)
+      .projectsRaw()
+      .then((raw) => {
+        setReceived(describe(raw));
+        setProjects(asList((raw as { projects?: ProjectSummary[] })?.projects));
+      })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
@@ -215,6 +226,8 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
       <p style={css.muted}>
         No projects are visible to you. That may be because none exist yet, or because you are not a
         member of any.
+        <br />
+        <span style={{ fontSize: "0.75rem" }}>received: {received || "nothing"}</span>
       </p>
     );
   }
@@ -271,13 +284,39 @@ function onInbox(): boolean {
   return window.location.hash === "#/inbox";
 }
 
+/**
+ * A visible build stamp.
+ *
+ * "The page is empty" and "your browser is running last week's JavaScript" look
+ * identical from the outside, and settling which one it is otherwise costs a
+ * round trip through DevTools with the person at the screen. The bundle's own
+ * URL is the one thing that cannot be stale relative to the code reading it.
+ */
+/** A one-line description of an unknown value, for the empty state. */
+function describe(v: unknown): string {
+  if (v === null) return "null";
+  if (v === undefined) return "undefined";
+  if (Array.isArray(v)) return `array(${v.length})`;
+  if (typeof v === "object") return `object{${Object.keys(v as object).slice(0, 5).join(",")}}`;
+  return `${typeof v}`;
+}
+
+function buildStamp(): string {
+  const script = document.querySelector<HTMLScriptElement>('script[src*="/assets/"]');
+  const src = script?.src ?? "";
+  const m = /index-([A-Za-z0-9_-]+)\.js/.exec(src);
+  return m?.[1] ?? "unknown";
+}
+
 export function App() {
   const [me, setMe] = useState<Identity | null>(null);
+  const [version, setVersion] = useState<VersionInfo | null>(null);
   const [slug, setSlug] = useState<string | null>(() => slugFromHash());
   const [inbox, setInbox] = useState<boolean>(() => onInbox());
 
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
+    api.version().then(setVersion).catch(() => setVersion(null));
   }, []);
 
   useEffect(() => {
@@ -331,6 +370,18 @@ export function App() {
           <Portfolio onOpen={open} />
         </>
       )}
+      <footer
+        style={{
+          ...css.muted,
+          fontSize: "0.75rem",
+          marginTop: "3rem",
+          paddingTop: "0.75rem",
+          borderTop: "1px solid #eee",
+        }}
+      >
+        interface {buildStamp()}
+        {version ? ` · api ${version.version} (${version.commit.slice(0, 8)}) · ${version.env}` : ""}
+      </footer>
     </main>
   );
 }
