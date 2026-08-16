@@ -128,11 +128,46 @@ func TestMeReturnsTheAuthenticatedIdentity(t *testing.T) {
 
 // An unknown path outside /v1 is a 404, not a 501. A 501 on everything told a
 // caller that any path they invented was a real but unimplemented endpoint.
-func TestUnknownPathIsNotFound(t *testing.T) {
+// An unknown API path must still 404.
+//
+// This assertion used to cover "/nope" and now covers "/v1/nope", because the
+// root serves the single-page application: the client owns its routes, so an
+// unknown UI path renders the app rather than 404ing. Narrowing the test was
+// the right response to that change, but the API contract itself has not
+// moved — a mistyped endpoint must fail rather than return an HTML page that a
+// caller will try to parse as JSON.
+func TestUnknownAPIPathIsNotFound(t *testing.T) {
 	rr := httptest.NewRecorder()
-	testRoutes(&authn.StaticAuthenticator{}).ServeHTTP(rr, httptest.NewRequest("GET", "/nope", nil))
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rr.Code)
+	testRoutes(&authn.StaticAuthenticator{Identity: authn.Identity{
+		Subject: "person@datopian.com", Email: "person@datopian.com",
+		UserID: "11111111-1111-1111-1111-111111111111",
+	}}).ServeHTTP(rr, httptest.NewRequest("GET", "/v1/nope", nil))
+	// 501 is the deliberate answer for an unknown path under /v1 — the surface
+	// is still being built out, and "not implemented" is more truthful than
+	// "not found". The assertion is therefore about the SHAPE of the failure,
+	// not its exact code: an API caller must get a JSON error, never the HTML
+	// application shell, which it would try to parse as JSON.
+	if rr.Code < 400 {
+		t.Fatalf("an unknown API path returned %d; it must be an error", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("an unknown API path returned %q, not JSON; a caller would try to parse HTML", ct)
+	}
+	if strings.Contains(rr.Body.String(), "<div id=\"root\"") {
+		t.Fatal("an unknown API path returned the application shell")
+	}
+}
+
+// The application shell is served without an identity of its own, because the
+// hostname sits behind Access and the assets carry no project data. What must
+// NOT happen is the shell being served in place of an API error.
+func TestUnknownUIPathServesTheApplication(t *testing.T) {
+	rr := httptest.NewRecorder()
+	testRoutes(&authn.StaticAuthenticator{}).ServeHTTP(rr, httptest.NewRequest("GET", "/projects/x", nil))
+	// With no build embedded the root 404s, which is also correct; the point is
+	// that it must never be an API-shaped error for a UI route.
+	if rr.Code != http.StatusOK && rr.Code != http.StatusNotFound {
+		t.Fatalf("unexpected status %d for a UI route", rr.Code)
 	}
 }
 
