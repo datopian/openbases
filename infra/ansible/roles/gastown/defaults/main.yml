@@ -31,3 +31,19 @@ claude_first_run_keys:
 # path is substituted per cell at apply time.
 gastown_git_credential_settings:
   - "credential.useHttpPath true"
+
+# Model tier for agent roles (gt config cost-tier).
+#
+#   standard  every role on Opus — the default, and what produced a $23 bill
+#             for one small task
+#   economy   patrol roles on Sonnet/Haiku, workers on Opus
+#   budget    patrol roles on Haiku, workers on Sonnet
+#
+# budget, because the spend was never in the work. 372 requests produced 181,667
+# output tokens, and almost all of it came from Mayor, Deacon, witness and
+# refinery polling continuously — one completed task took under three minutes.
+# Paying Opus rates for health checks is the whole problem.
+#
+# The tier also lowers reasoning effort for patrol roles, which matters more than
+# the model choice: output was 89% of tokens and effectively all of the cost.
+gastown_cost_tier: budget

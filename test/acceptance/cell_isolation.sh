@@ -118,6 +118,33 @@ else
   fail "bubblewrap is not installed; spawn confinement is unavailable"
 fi
 
+# 8. Seeing another cell's processes.
+#
+# Gas Town passes credentials as tmux -e arguments, so a process command line
+# contains the cell's gateway token. Without hidepid every cell can read every
+# other cell's, which defeats per-cell credential separation entirely — and the
+# earlier version of this file checked the filesystem and the network but never
+# process visibility, so it passed while this was wide open.
+# Start a probe owned by the OTHER cell and note its PID.
+#
+# Searching by a marker string does not work: the searching shell's own command
+# line contains the marker, so it matches itself and the assertion fails while
+# the system is correct. Ask about one specific PID instead.
+probe_pid=$(su -s /bin/bash -c 'nohup sleep 30 >/dev/null 2>&1 & echo $!' "$B" 2>/dev/null | tail -1)
+
+if [ -z "${probe_pid:-}" ]; then
+  fail "could not start a probe process as the restricted cell"
+else
+  sleep 1
+  visible=$(as_a "cat /proc/$probe_pid/cmdline 2>&1; ls -d /proc/$probe_pid 2>&1")
+  kill "$probe_pid" 2>/dev/null
+  if printf '%s' "$visible" | grep -qiE "no such file|permission denied|cannot access"; then
+    pass "cannot see another cell's process (its command line carries the token)"
+  else
+    fail "READ another cell's process at /proc/$probe_pid: $visible"
+  fi
+fi
+
 echo
 if [ "$failures" -gt 0 ]; then
   echo "cell isolation FAILED: $failures assertion(s)"
