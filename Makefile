@@ -42,7 +42,7 @@ vet: ## Run go vet
 test: ## Run unit tests with the race detector
 	@$(GO) test -race ./...
 
-build: ## Build all binaries into ./bin
+build: ## Build all binaries into ./bin (without the web interface; see release)
 	@mkdir -p $(BIN)
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/control-api ./cmd/control-api
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/worker      ./cmd/worker
@@ -75,8 +75,31 @@ clean: ## Remove build output
 web-install: ## Install web dependencies from the lockfile
 	@cd apps/web && npm ci
 
-web-build: ## Type-check and build the web application
+web-build: ## Type-check, build, and embed the web application
 	@cd apps/web && npm run build
+	@# Copy the build into the Go binary's embed directory. Without this the
+	@# binary starts cleanly, serves the API, and has no UI — which looks fine
+	@# in logs and is only discovered by opening a browser.
+	@rm -rf internal/webui/dist && cp -R apps/web/dist internal/webui/dist
+	@# Restore the tracked placeholder. go:embed needs at least one file, and
+	@# the rm above deletes it — a clean checkout then fails to compile with
+	@# "no matching files found" while a working tree with build output is fine.
+	@touch internal/webui/dist/.gitkeep
+	@echo "embedded: $$(ls internal/webui/dist | tr '\n' ' ')"
 
 web-dev: ## Run the web dev server
 	@cd apps/web && npm run dev
+
+.PHONY: release
+release: web-build ## Build the deployable control API with the web interface embedded
+	@# The only target that produces a binary suitable for deployment.
+	@#
+	@# `build` deliberately does NOT depend on web-build: that would make every
+	@# Go build require Node and npm install, which broke the Go CI job — it has
+	@# a Go toolchain and no node_modules, and has no reason to need them.
+	@#
+	@# The risk that separation reintroduces is a binary deployed without its
+	@# interface. That is covered two ways: the API logs "no web interface
+	@# embedded" at warning level on startup, and deployment uses this target.
+	@CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/control-api ./cmd/control-api
+	@echo "built with the web interface: $(BIN)/control-api"
