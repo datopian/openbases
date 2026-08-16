@@ -63,6 +63,37 @@ export interface ProjectDetail extends ProjectSummary {
   signals: Signal[];
 }
 
+export interface AttentionItem {
+  id: string;
+  rule: string;
+  score: number;
+  explanation: Record<string, unknown>;
+  status: string;
+  project?: string;
+  project_slug?: string;
+  approval_request_id?: string;
+  created_at: string;
+  snoozed_until?: string | null;
+}
+
+export interface Branch {
+  project_slug: string;
+  project_name: string;
+  candidates: AttentionItem[] | null;
+  /** candidates | blocked | nothing_ready | none_visible */
+  outcome: string;
+  reason?: string;
+  remaining: number;
+}
+
+export interface Refusal {
+  code: string;
+  policy: string;
+  message: string;
+  allowed_actor?: string;
+  remediation?: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -104,6 +135,25 @@ export const api = {
   // Normalised at the boundary. A null body would otherwise leave the caller
   // unable to distinguish "still loading" from "nothing here", and the page
   // spins on Loading forever — which is quieter than a crash and just as wrong.
+  inbox: async () => asList(await get<AttentionItem[] | null>("/v1/inbox")),
+  branches: async () => asList(await get<Branch[] | null>("/v1/inbox/branches")),
+
+  decide: async (id: string, approve: boolean, reason: string, seenDigest: string) => {
+    const res = await fetch(`/v1/approvals/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ approve, reason, seen_digest: seenDigest }),
+    });
+    const body: unknown = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // A refusal is data, not a failure to display. It names the policy and
+      // what to do, and the interface must show that rather than "forbidden".
+      throw Object.assign(new ApiError(res.status, "refused"), { refusal: body as Refusal });
+    }
+    return body;
+  },
+
   projects: async () => asList(await get<ProjectSummary[] | null>("/v1/projects")),
   projectDetail: (slug: string) =>
     get<ProjectDetail & { repositories: RepositoryStatus[] }>(

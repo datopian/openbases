@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Inbox } from "./Inbox";
 import {
   age,
   api,
@@ -266,16 +267,24 @@ function slugFromHash(): string | null {
   return raw ? decodeURIComponent(raw) : null;
 }
 
+function onInbox(): boolean {
+  return window.location.hash === "#/inbox";
+}
+
 export function App() {
   const [me, setMe] = useState<Identity | null>(null);
   const [slug, setSlug] = useState<string | null>(() => slugFromHash());
+  const [inbox, setInbox] = useState<boolean>(() => onInbox());
 
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
   }, []);
 
   useEffect(() => {
-    const onHash = () => setSlug(slugFromHash());
+    const onHash = () => {
+      setSlug(slugFromHash());
+      setInbox(onInbox());
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -287,6 +296,7 @@ export function App() {
   const back = () => {
     window.location.hash = "";
     setSlug(null);
+    setInbox(false);
   };
 
   return (
@@ -295,12 +305,24 @@ export function App() {
         <a href="#" style={{ ...css.link, fontSize: "1rem" }} onClick={(e) => { e.preventDefault(); back(); }}>
           Datopian Workgraph
         </a>
-        <span style={{ ...css.muted, fontSize: "0.85rem" }}>
-          {me ? me.email || me.subject : "not signed in"}
+        <span style={{ fontSize: "0.85rem" }}>
+          <a
+            href="#/inbox"
+            style={{ ...css.link, marginRight: "1rem" }}
+            onClick={(e) => {
+              e.preventDefault();
+              window.location.hash = "#/inbox";
+              setInbox(true);
+              setSlug(null);
+            }}
+          >
+            Needs you
+          </a>
+          <span style={css.muted}>{me ? me.email || me.subject : "not signed in"}</span>
         </span>
       </header>
 
-      {slug ? <ProjectPage slug={slug} onBack={back} /> : (
+      {inbox ? <Inbox /> : slug ? <ProjectPage slug={slug} onBack={back} /> : (
         <>
           <h1 style={{ marginBottom: "0.15rem" }}>Projects</h1>
           <p style={{ ...css.muted, marginTop: 0, marginBottom: "1.5rem" }}>
