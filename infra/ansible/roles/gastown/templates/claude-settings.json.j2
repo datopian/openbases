@@ -1,0 +1,10 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://gateway.ai.cloudflare.com/v1/{{ cloudflare_account_id }}/{{ ai_gateway_prefix }}-{{ item.trust_domain | regex_replace('^client-.*$', 'client') }}/anthropic",
+
+    "ANTHROPIC_AUTH_TOKEN": "{{ ai_gateway_token }}",
+    "ANTHROPIC_CUSTOM_HEADERS": "cf-aig-authorization: Bearer {{ ai_gateway_token }}",
+
+    "DISABLE_AUTOUPDATER": "1"
+  }
+}

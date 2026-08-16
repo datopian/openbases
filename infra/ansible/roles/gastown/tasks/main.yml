@@ -54,3 +54,116 @@
 - name: Report the installed matrix
   ansible.builtin.debug:
     msg: "gt={{ gastown_version }} bd={{ beads_version }} dolt={{ dolt_version }} claude={{ claude_version.stdout }}"
+
+# ---------------------------------------------------------------------------
+# Agent first-run state
+# ---------------------------------------------------------------------------
+#
+# Claude Code asks three interactive questions on first run: pick a theme,
+# trust this folder, and confirm bypass-permissions mode. In a tmux session
+# with no human attached, the agent sits on the theme picker forever.
+#
+# This is exactly what happened, and it looked like something else entirely.
+# `gt sling` reported the work hooked and the session started, the bead stayed
+# open, and a dispatched agent appeared to have died — when in fact it was
+# alive and waiting at a menu. Capturing the pane is what showed it.
+#
+# `claude -p` skips onboarding, which is why a direct probe answered correctly
+# and hid the problem.
+#
+# The keys are taken from the binary rather than guessed:
+#   hasCompletedOnboarding, hasTrustDialogAccepted, bypassPermissionsModeAccepted
+- name: Pre-accept the agent CLI first-run prompts
+  ansible.builtin.copy:
+    dest: "{{ cells_root }}/{{ item.name }}/.claude.json"
+    owner: "wgcell_{{ item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    mode: "0600"
+    # force: false so an existing file is never clobbered. The agent writes its
+    # own state here, and overwriting it on every run would discard session
+    # history and re-trigger migrations.
+    force: false
+    content: |
+      {
+        "theme": "dark",
+        "hasCompletedOnboarding": true,
+        "hasTrustDialogAccepted": true,
+        "bypassPermissionsModeAccepted": true
+      }
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# An existing config predates the task above, which will not clobber it, so the
+# keys are merged in. Done with slurp and combine rather than an inline script:
+# a folded YAML scalar silently prefixed the python with a space and produced
+# an IndentationError, and the module version is both clearer and idempotent by
+# content comparison.
+- name: Read any existing agent config
+  ansible.builtin.slurp:
+    src: "{{ cells_root }}/{{ item.name }}/.claude.json"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: claude_cfg_raw
+
+- name: Merge the first-run keys into the agent config
+  ansible.builtin.copy:
+    dest: "{{ cells_root }}/{{ item.item.name }}/.claude.json"
+    owner: "wgcell_{{ item.item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.item.name | replace('-', '_') }}"
+    mode: "0600"
+    content: "{{ (item.content | b64decode | from_json) | combine(claude_first_run_keys) | to_nice_json }}\n"
+  loop: "{{ claude_cfg_raw.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+# Credentials in the agent's settings file, not only in the environment.
+#
+# Gas Town starts agents inside a long-lived tmux server, and a tmux session
+# inherits the SERVER's environment rather than the environment of whoever ran
+# the dispatch. The server here was started before the credentials existed, so
+# the agent came up with none and reported "Not logged in" — while the very same
+# credentials worked from a shell, which is what made it look like an auth
+# problem rather than an inheritance one.
+#
+# settings.json is read from disk on every start, so it does not depend on which
+# process started the server or when.
+#
+# ANTHROPIC_AUTH_TOKEN rather than ANTHROPIC_API_KEY, and the difference is not
+# cosmetic. A key supplied through ANTHROPIC_API_KEY is treated as a CUSTOM key
+# that a human must approve once, recorded in customApiKeyResponses; until then
+# an interactive session reports "Not logged in" while a `claude -p` run with
+# exactly the same variables succeeds, because print mode never prompts. That
+# discrepancy is what made this look like an environment problem when the
+# variables were demonstrably present in the process.
+#
+# ANTHROPIC_AUTH_TOKEN is the bearer-token path intended for a gateway or proxy.
+# It needs no approval, and nothing has to track the key's suffix across a
+# rotation.
+# The agent creates this on first run, so it exists only in a cell that has
+# already run one. Creating it here means a fresh cell is configured before its
+# first dispatch rather than after it.
+- name: Create the agent settings directory
+  ansible.builtin.file:
+    path: "{{ cells_root }}/{{ item.name }}/.claude"
+    state: directory
+    owner: "wgcell_{{ item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    mode: "0700"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install the agent settings with model credentials
+  ansible.builtin.template:
+    src: claude-settings.json.j2
+    dest: "{{ cells_root }}/{{ item.name }}/.claude/settings.json"
+    owner: "wgcell_{{ item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    mode: "0600"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: ai_gateway_token | default("") | length > 0
