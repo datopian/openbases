@@ -42,7 +42,7 @@ vet: ## Run go vet
 test: ## Run unit tests with the race detector
 	@$(GO) test -race ./...
 
-build: ## Build all binaries into ./bin
+build: web-build ## Build all binaries into ./bin
 	@mkdir -p $(BIN)
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/control-api ./cmd/control-api
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/worker      ./cmd/worker
@@ -75,8 +75,13 @@ clean: ## Remove build output
 web-install: ## Install web dependencies from the lockfile
 	@cd apps/web && npm ci
 
-web-build: ## Type-check and build the web application
+web-build: ## Type-check, build, and embed the web application
 	@cd apps/web && npm run build
+	@# Copy the build into the Go binary's embed directory. Without this the
+	@# binary starts cleanly, serves the API, and has no UI — which looks fine
+	@# in logs and is only discovered by opening a browser.
+	@rm -rf internal/webui/dist && cp -R apps/web/dist internal/webui/dist
+	@echo "embedded: $$(ls internal/webui/dist | tr '\n' ' ')"
 
 web-dev: ## Run the web dev server
 	@cd apps/web && npm run dev

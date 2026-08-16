@@ -25,6 +25,7 @@ import (
 	"github.com/datopian/workgraph/internal/domain"
 	"github.com/datopian/workgraph/internal/githubapp"
 	"github.com/datopian/workgraph/internal/version"
+	"github.com/datopian/workgraph/internal/webui"
 )
 
 func main() {
@@ -303,6 +304,29 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, p)
 	})
 
+	// The project page. Returns the summary, its repositories with projected
+	// pull requests, and derived signals that each carry their evidence.
+	authed.HandleFunc("GET /v1/projects/{slug}/detail", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if store == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		d, err := store.ProjectDetailBySlug(r.Context(), id.UserID, r.PathValue("slug"))
+		if errors.Is(err, domain.ErrNotFound) {
+			// Same response whether it does not exist or the caller may not see
+			// it, for the same reason as the summary endpoint.
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+			return
+		}
+		if err != nil {
+			log.Error("reading project detail", "slug", r.PathValue("slug"), "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, d)
+	})
+
 	authed.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{
 			"error": "not implemented",
@@ -404,9 +428,25 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		}()
 	})
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
-	})
+	// The single-page application, when one is embedded.
+	//
+	// Static assets carry no project data — everything the page shows comes
+	// from /v1, which authenticates every request — and the hostname itself
+	// sits behind Cloudflare Access, so a person loading the page has already
+	// proven who they are.
+	if ui := webui.Handler(); ui != nil {
+		mux.Handle("/", ui)
+		log.Info("serving the web interface")
+	} else {
+		// No build embedded. The API still serves /v1, deliberately: an
+		// operator working an incident must not be blocked by a missing
+		// frontend bundle.
+		log.Warn("no web interface embedded; serving the API only")
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+		})
+	}
+
 	return mux
 }
 
