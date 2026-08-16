@@ -133,6 +133,9 @@ jobs:
       - name: chief-of-staff scoping
         run: psql -v ON_ERROR_STOP=1 -f test/integration/chiefofstaff.sql
 
+      - name: agent health escalation and deduplication
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/agent_health.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest

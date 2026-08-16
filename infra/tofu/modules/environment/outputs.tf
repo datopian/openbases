@@ -66,3 +66,16 @@ output "ai_gateway_urls" {
     k => "https://gateway.ai.cloudflare.com/v1/${var.cloudflare_account_id}/${g.id}/anthropic"
   }
 }
+
+# The audiences the control API must accept, so that wiring the service does not
+# depend on reading them out of the dashboard. Not secrets: an AUD identifies an
+# application, it does not grant anything.
+output "cell_token_mint_aud" {
+  description = "AUD of the Access application fronting the git-credential endpoint."
+  value       = cloudflare_zero_trust_access_application.cell_token_mint.aud
+}
+
+output "cell_agent_health_aud" {
+  description = "AUD of the Access application fronting the agent-health endpoint (ADR-0019)."
+  value       = cloudflare_zero_trust_access_application.cell_agent_health.aud
+}

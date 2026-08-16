@@ -47,3 +47,34 @@ gastown_git_credential_settings:
 # The tier also lowers reasoning effort for patrol roles, which matters more than
 # the model choice: output was 89% of tokens and effectively all of the cost.
 gastown_cost_tier: budget
+
+# Gas Town patrols to switch off, written to the town's settings/config.json as
+# "disabled_patrols" (plan section 4.7, ADR-0019).
+#
+# A patrol is a persistent Claude Code session driven by a prose formula on a
+# 300-second cycle. It runs for as long as the town is up, whether or not any
+# work is happening, and on one day of testing the patrol roles made 1,616
+# requests and 365,671 output tokens — more than the work they were watching.
+#
+#   witness   replaced by cmd/witness, which makes the same decisions from
+#             `gt polecat list --json` in Go and escalates to the attention
+#             inbox. Gas Town kills a leftover session when the patrol is off,
+#             so the two cannot both run.
+#   handler   not used by this deployment at all.
+#
+# Deliberately NOT disabled:
+#
+#   refinery  already event-driven upstream — the daemon logs "No pending
+#             refinery events and no session running, skipping spawn" and
+#             starts nothing. It costs only when there is a merge to process,
+#             which is the behaviour we are trying to achieve everywhere else.
+#   deacon    the town-level watchdog. Disabling it is plausible but untested,
+#             and a change that removes the last supervisor deserves its own
+#             evidence rather than being bundled in.
+#
+# Verified against gt v1.2.0: the daemon logs "Witness patrol disabled in
+# config, skipping". "mayor" is accepted into the list but has no effect — the
+# Mayor is not a patrol and the daemon starts it regardless (wg-8yv.51).
+gastown_disabled_patrols:
+  - witness
+  - handler
