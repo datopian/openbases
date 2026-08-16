@@ -283,7 +283,12 @@
     # attribute 'rc'" on the client cell, which has no town.
     - item.rc is defined
     - item.rc == 0
-    - "'Cost tier: ' ~ gastown_cost_tier not in (item.stdout | default(''))"
+    # Seeding only. Once the role map below owns the values, gt reports the tier
+    # as "custom", and re-applying the preset on that basis would reset the
+    # Mayor on every run while the next task set it back — two changes forever,
+    # with the winner decided by task order. Observed, not theorised.
+    - "'not configured' in (item.stdout | default('')) or
+       'unknown' in (item.stdout | default('')) | lower"
   loop: "{{ gastown_tier_now.results }}"
   loop_control:
     label: "{{ item.item.name }}"
@@ -302,38 +307,13 @@
 # role_agents and role_effort, which `gt config cost-tier` owns. Templating the
 # whole thing would mean this role and gt fighting over the same file on every
 # apply.
-- name: Set the disabled Gas Town patrols
+- name: Install the patrol switch
   ansible.builtin.copy:
-    dest: /usr/local/bin/wg-set-disabled-patrols
+    src: wg-set-patrols
+    dest: /usr/local/bin/wg-set-patrols
     owner: root
     group: root
     mode: "0755"
-    content: |
-      #!/usr/bin/env python3
-      # Managed by Ansible. Merge disabled_patrols into a town's settings.
-      #
-      # Idempotent and non-destructive: every other key is left exactly as gt
-      # wrote it, and the file is only rewritten when the value actually
-      # differs, so a no-op apply does not churn the mtime.
-      import json, os, sys, tempfile
-
-      path, wanted = sys.argv[1], sorted(sys.argv[2:])
-      with open(path) as fh:
-          settings = json.load(fh)
-      if sorted(settings.get("disabled_patrols", [])) == wanted:
-          print("unchanged")
-          sys.exit(0)
-      settings["disabled_patrols"] = wanted
-      st = os.stat(path)
-      d = os.path.dirname(path)
-      fd, tmp = tempfile.mkstemp(dir=d)
-      with os.fdopen(fd, "w") as fh:
-          json.dump(settings, fh, indent=2)
-          fh.write("\n")
-      os.chown(tmp, st.st_uid, st.st_gid)
-      os.chmod(tmp, st.st_mode & 0o777)
-      os.replace(tmp, path)
-      print("changed")
 
 - name: Check whether each town has settings to edit
   ansible.builtin.stat:
@@ -346,14 +326,18 @@
 - name: Apply the disabled patrol list
   ansible.builtin.command:
     argv: >-
-      {{ ["/usr/local/bin/wg-set-disabled-patrols",
-          cells_root ~ "/" ~ item.item.name ~ "/town/settings/config.json"]
+      {{ ["/usr/local/bin/wg-set-patrols",
+          cells_root ~ "/" ~ item.item.name ~ "/town"]
          + gastown_disabled_patrols }}
   register: gastown_patrols_set
   # An exact match, not a substring: "unchanged" contains "changed", so the
   # obvious `in` test reports every run as a change and idempotence can never
   # be demonstrated.
-  changed_when: gastown_patrols_set.stdout is defined and gastown_patrols_set.stdout | trim == "changed"
+  # startswith, not equality: the script names what it changed. An exact
+  # substring test would be wrong the other way — "unchanged" contains
+  # "changed", which is how this reported a change on every run once already.
+  changed_when: gastown_patrols_set.stdout is defined and
+                gastown_patrols_set.stdout.startswith("changed")
   # A cell with no town yet has nothing to configure. It gets the setting when
   # its town is created, not by failing the play now.
   when: item.stat.exists
@@ -398,3 +382,36 @@
   # The gateway token is an argument, so the command line would otherwise be
   # echoed into the play output and the journal.
   no_log: true
+
+- name: Install the role agent override
+  ansible.builtin.copy:
+    src: wg-set-role-agents
+    dest: /usr/local/bin/wg-set-role-agents
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Own the role-to-model map
+  ansible.builtin.command:
+    argv: >-
+      {{ ["/usr/local/bin/wg-set-role-agents",
+          cells_root ~ "/" ~ item.item.name ~ "/town/settings/config.json"]
+         + (gastown_role_agents | dict2items
+            | map(attribute='key') | map('regex_replace', '^', 'agent.') | list
+            | zip(gastown_role_agents | dict2items | map(attribute='value') | list)
+            | map('join', '=') | list)
+         + (gastown_role_effort | dict2items
+            | map(attribute='key') | map('regex_replace', '^', 'effort.') | list
+            | zip(gastown_role_effort | dict2items | map(attribute='value') | list)
+            | map('join', '=') | list) }}
+  register: gastown_role_agents_set
+  changed_when: gastown_role_agents_set.stdout is defined and
+                gastown_role_agents_set.stdout.startswith("changed")
+  # Runs after the tier so that a freshly seeded town is corrected in the same
+  # pass. A cell with no town has nothing to configure.
+  when:
+    - item.stat.exists
+    - gastown_role_agents | length > 0
+  loop: "{{ gastown_settings_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"

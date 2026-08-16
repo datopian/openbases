@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Switch Gas Town patrols off, in both of the places that decide it.
+
+Gas Town has two patrol control surfaces and they can disagree:
+
+  <town>/settings/config.json   "disabled_patrols": ["witness", ...]
+  <town>/mayor/daemon.json      "patrols": {"witness": {"enabled": true, ...}}
+
+The town setting is the one the daemon acts on — it logs "Witness patrol
+disabled in config, skipping" — but daemon.json is the file that reads like the
+patrol configuration, because it is the one with the intervals in it. Setting
+only the first leaves daemon.json saying `"enabled": true` for a patrol that
+does not run, which is exactly the sort of split-brain that costs someone an
+afternoon.
+
+So both move together. Enablement in daemon.json is managed declaratively for
+every patrol key present: a name in the disabled list is switched off, and every
+other patrol is switched on. That means a patrol turned off by hand on the box
+is turned back on by the next apply, which is the intended behaviour for
+Ansible-managed configuration — the repository decides, not the host.
+
+Intervals and every other field are left exactly as Gas Town wrote them.
+
+Usage: wg-set-patrols <town-dir> [disabled-patrol ...]
+"""
+import json
+import os
+import sys
+import tempfile
+
+
+def load(path):
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def save(path, data):
+    """Replace atomically, preserving owner and mode.
+
+    Through a temporary file because a truncated settings.json is not a
+    configuration error Gas Town recovers from — it refuses to start.
+    """
+    st = os.stat(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+    with os.fdopen(fd, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.chown(tmp, st.st_uid, st.st_gid)
+    os.chmod(tmp, st.st_mode & 0o777)
+    os.replace(tmp, path)
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("usage: wg-set-patrols <town-dir> [disabled-patrol ...]", file=sys.stderr)
+        return 2
+    town = sys.argv[1]
+    disabled = sorted(set(sys.argv[2:]))
+    changed = []
+
+    # 1. The town setting the daemon actually acts on.
+    settings_path = os.path.join(town, "settings", "config.json")
+    settings = load(settings_path)
+    if settings is None:
+        print(f"cannot read {settings_path}", file=sys.stderr)
+        return 1
+    if sorted(settings.get("disabled_patrols") or []) != disabled:
+        settings["disabled_patrols"] = disabled
+        save(settings_path, settings)
+        changed.append("town-settings")
+
+    # 2. The patrol config, so it does not describe a world that is not running.
+    daemon_path = os.path.join(town, "mayor", "daemon.json")
+    daemon = load(daemon_path)
+    if daemon is not None:
+        patrols = daemon.get("patrols")
+        if isinstance(patrols, dict):
+            touched = []
+            for name, cfg in patrols.items():
+                if not isinstance(cfg, dict):
+                    continue
+                want = name not in disabled
+                if cfg.get("enabled") != want:
+                    cfg["enabled"] = want
+                    touched.append(f"{name}={'on' if want else 'off'}")
+            if touched:
+                save(daemon_path, daemon)
+                changed.append("daemon:" + ",".join(sorted(touched)))
+
+    print("changed " + " ".join(changed) if changed else "unchanged")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

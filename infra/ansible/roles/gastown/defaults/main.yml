@@ -78,3 +78,41 @@ gastown_cost_tier: budget
 gastown_disabled_patrols:
   - witness
   - handler
+
+
+# The role-to-model map, owned here rather than by `gt config cost-tier`.
+#
+# The tier preset seeds a brand-new town and is otherwise not re-applied,
+# because two owners of one map fight: once any entry differs from the preset,
+# `gt config cost-tier` reports "custom" rather than "budget", so a task that
+# re-applies the tier whenever it is not "budget" fires on every run and undoes
+# the difference. That was observed, not theorised.
+#
+# These values ARE the budget tier, with one deliberate change: the Mayor moves
+# from Sonnet to Haiku. Gas Town starts it unconditionally as the cross-rig
+# chief of staff, a job Workgraph does itself (WP-F3), so here it supervises
+# nothing — and it was measured at $0.2151 for 75 seconds of an idle town,
+# roughly $10 an hour (wg-15m). Its model is the only lever that applies:
+# disabled_patrols does not affect it, and `gt mayor stop` holds for about three
+# minutes before the daemon heartbeat restarts it.
+gastown_role_agents:
+  boot: claude-haiku
+  crew: claude-sonnet
+  deacon: claude-haiku
+  dog: claude-haiku
+  mayor: claude-haiku
+  polecat: claude-sonnet
+  refinery: claude-haiku
+  witness: claude-haiku
+
+# Reasoning effort per role. This matters more than the model choice did: output
+# was 89% of tokens and effectively all of the cost in the first bill.
+gastown_role_effort:
+  boot: low
+  crew: medium
+  deacon: low
+  dog: low
+  mayor: low
+  polecat: medium
+  refinery: low
+  witness: low
