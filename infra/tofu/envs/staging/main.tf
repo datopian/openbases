@@ -21,6 +21,7 @@ module "environment" {
   access_allowed_emails = var.access_allowed_emails
 
   ai_monthly_budget = var.ai_monthly_budget
+  ai_budget_shares  = var.ai_budget_shares
   admin_ssh_key_ids = var.admin_ssh_key_ids
   admin_ssh_cidrs   = var.admin_ssh_cidrs
 }
