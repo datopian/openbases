@@ -183,16 +183,45 @@ variable "ai_gateway_requests_per_minute" {
 variable "ai_monthly_budget" {
   type        = number
   description = <<-EOT
-    The shared monthly spend ceiling, in US dollars, applied to EACH gateway as a
-    backstop. Cloudflare enforces a limit per gateway and cannot express one pool
-    shared across three; the real shared pool is enforced in the control plane,
-    which can sum them. Zero disables agent spend entirely, which is the correct
-    value until a figure has been agreed.
+    The shared monthly spend POOL, in US dollars, across all security domains.
+
+    It is divided between the gateways by ai_budget_shares rather than applied
+    whole to each. Cloudflare enforces a limit per gateway and cannot express
+    one pool spanning three, so writing the full figure to each made the real
+    ceiling three times the agreed one.
+
+    Zero disables agent spend entirely, which is the correct value until a
+    figure has been agreed.
   EOT
   default     = 0
 
   validation {
     condition     = var.ai_monthly_budget >= 0
     error_message = "A negative budget would be silently treated as no limit."
+  }
+}
+
+variable "ai_budget_shares" {
+  type        = map(number)
+  description = <<-EOT
+    How the shared monthly pool is divided between security domains, keyed by
+    the gateway suffix (oss, internal, client). Must sum to 1.
+
+    Cloudflare enforces a spend limit per gateway and cannot express one pool
+    spanning three, and it exposes no spend endpoint to sum them with. Dividing
+    the pool makes the arithmetic the enforcement: three limits whose shares add
+    to 1 cannot together exceed the budget. Writing the whole figure to each
+    gateway instead — the previous behaviour — made the real ceiling three times
+    the agreed one.
+
+    The cost is that a domain can be refused while the pool still has room.
+    Applied by scripts/ai_gateway_spend_limits.py, not by this configuration:
+    the provider serialises the rule field in a shape the API rejects.
+  EOT
+  default     = {}
+
+  validation {
+    condition     = length(var.ai_budget_shares) == 0 || abs(sum(values(var.ai_budget_shares)) - 1) < 0.000001
+    error_message = "ai_budget_shares must sum to 1, so the per-gateway limits add up to the pool."
   }
 }

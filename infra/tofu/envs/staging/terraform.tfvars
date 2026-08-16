@@ -50,8 +50,31 @@ admin_ssh_cidrs = []
 
 # Shared monthly agent spend ceiling, in US dollars (2026-08-15).
 #
-# Applied to each of the three gateways as a platform backstop, so no single
-# security domain can spend past the whole month's budget on its own. The actual
-# shared pool across domains is enforced in the control plane, which can sum
-# them; Cloudflare cannot express a pool spanning gateways.
+# This is the POOL, and it is now the real total. Cloudflare cannot express a
+# limit spanning gateways, and applying the whole figure to each of the three
+# separately made the effective ceiling $300 — three times what was agreed, for
+# a control everyone believed was in force.
+#
+# So the pool is divided, and the shares below sum to 1. Cloudflare's own spend
+# accounting then enforces the total, with no code of ours in the path: three
+# limits that add up to the budget cannot together exceed it.
+#
+# The cost is that a domain can be refused while the pool still has room. The
+# shares are weighted towards where the work actually is rather than split
+# evenly, and reallocating them is a tfvars edit plus a run of
+# scripts/ai_gateway_spend_limits.py. Making that automatic — reading spend and
+# moving headroom between domains — is wg-o7t, and it needs a trustworthy spend
+# figure first: the API exposes no spend endpoint, and the per-request cost in
+# the logs is visibly wrong on small requests.
 ai_monthly_budget = 100
+
+# How the pool is divided between security domains. Must sum to 1.
+#
+# oss carries the pilot and every agent dispatch so far; internal and client
+# have run nothing yet and are held at a floor rather than zero so that a first
+# request fails on something other than the budget.
+ai_budget_shares = {
+  oss      = 0.7
+  internal = 0.2
+  client   = 0.1
+}

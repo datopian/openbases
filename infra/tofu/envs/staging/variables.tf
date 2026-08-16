@@ -73,3 +73,9 @@ variable "ai_monthly_budget" {
   EOT
   default     = 0
 }
+
+variable "ai_budget_shares" {
+  type        = map(number)
+  description = "How the shared monthly pool is divided between security domains. Must sum to 1."
+  default     = {}
+}

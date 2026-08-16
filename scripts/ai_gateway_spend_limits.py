@@ -11,6 +11,21 @@ So this script exists, and it verifies rather than trusts: it writes the limit,
 reads it back, and exits non-zero if what came back is not what was asked for.
 A budget believed to be in force but absent is worse than no budget at all,
 because nobody goes looking for a control they think they already have.
+
+It also DIVIDES the pool rather than repeating it. The agreed figure is a single
+shared ceiling across security domains, and writing the whole of it to each of
+the three gateways made the real ceiling three times that — a budget believed to
+be $100 that was in fact $300, which is the same failure in a different costume.
+
+Cloudflare cannot express a limit spanning gateways and exposes no spend
+endpoint to sum them with, so the enforcement is arithmetic: three limits whose
+shares add to 1 cannot together exceed the pool, and Cloudflare's own accounting
+does the rest with none of our code in the path.
+
+The cost of that is real and worth stating: a domain can be refused while the
+pool still has room. Moving headroom between domains automatically is wg-o7t,
+and it is blocked on a trustworthy spend figure — the per-request cost in the
+logs is visibly wrong on small requests.
 """
 import json
 import os
@@ -38,19 +53,44 @@ def call(method: str, path: str, token: str, body: dict | None = None) -> dict:
         return json.load(e)
 
 
-def budget_from_tfvars(environment: str) -> float:
-    """Read the agreed figure from the committed tfvars.
+def budget_from_tfvars(environment: str) -> tuple[float, dict[str, float]]:
+    """Read the agreed pool and its division from the committed tfvars.
 
-    Deliberately not a flag with a default: a budget passed on a command line is
-    a budget that differs between whoever last ran the command, and the value in
+    Deliberately not flags with defaults: a budget passed on a command line is a
+    budget that differs between whoever last ran the command, and the value in
     Git is the one that was agreed.
+
+    Returns (pool, shares). The shares must sum to 1, because the whole point is
+    that the per-gateway limits add up to the pool — Cloudflare cannot express a
+    limit spanning gateways, so the sum IS the enforcement.
     """
     path = f"infra/tofu/envs/{environment}/terraform.tfvars"
     text = open(path).read()
+
     m = re.search(r"^\s*ai_monthly_budget\s*=\s*([0-9.]+)", text, re.M)
     if not m:
         sys.exit(f"{path} does not set ai_monthly_budget")
-    return float(m.group(1))
+    pool = float(m.group(1))
+
+    block = re.search(r"^\s*ai_budget_shares\s*=\s*\{(.*?)\}", text, re.M | re.S)
+    if not block:
+        sys.exit(f"{path} does not set ai_budget_shares; the pool cannot be divided")
+    shares = {
+        k: float(v)
+        for k, v in re.findall(r"([a-z_]+)\s*=\s*([0-9.]+)", block.group(1))
+    }
+    if not shares:
+        sys.exit(f"{path}: ai_budget_shares is empty")
+
+    total = sum(shares.values())
+    # Checked rather than normalised. Shares that do not sum to 1 mean somebody
+    # edited one and not the others, and silently rescaling them would apply a
+    # budget nobody wrote down — which is the exact failure this script exists
+    # to prevent.
+    if abs(total - 1.0) > 1e-6:
+        sys.exit(f"{path}: ai_budget_shares sum to {total:g}, not 1. "
+                 "The per-gateway limits must add up to the pool.")
+    return pool, shares
 
 
 def main() -> int:
@@ -61,7 +101,7 @@ def main() -> int:
     if not token or not account:
         sys.exit("CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set")
 
-    budget = budget_from_tfvars(environment)
+    pool, shares = budget_from_tfvars(environment)
     prefix = f"workgraph-{environment}-"
 
     listing = call("GET", f"/accounts/{account}/ai-gateway/gateways", token)
@@ -72,9 +112,19 @@ def main() -> int:
     if not gateways:
         sys.exit(f"no gateways named {prefix}*; run tofu apply first")
 
+    # Every gateway must have a share, and every share a gateway. A domain with
+    # no share would be written a limit of zero and refuse everything; a share
+    # with no gateway means part of the pool is allocated to nothing, and the
+    # sum no longer describes the real ceiling.
+    found = {g["id"][len(prefix):] for g in gateways}
+    if found != set(shares):
+        sys.exit(f"gateways {sorted(found)} do not match shares {sorted(shares)}")
+
     failures = []
     for g in gateways:
         gid = g["id"]
+        domain = gid[len(prefix):]
+        budget = round(pool * shares[domain], 2)
 
         # PUT is a full replace, so every managed field is resent. Omitting one
         # would silently reset it to a default — which is how a rate limit or
@@ -125,7 +175,8 @@ def main() -> int:
             failures.append(f"{gid}: authentication is off; the URL alone could spend")
             continue
 
-        print(f"  {gid}: ${actual:g} per 30 days, verified")
+        print(f"  {gid}: ${actual:g} per 30 days "
+              f"({shares[domain]:.0%} of the ${pool:g} pool), verified")
 
     if failures:
         print("\nspend limit verification FAILED:", file=sys.stderr)
@@ -133,7 +184,12 @@ def main() -> int:
             print(f"  - {f}", file=sys.stderr)
         return 1
 
-    print(f"all {len(gateways)} gateway(s) carry the ${budget:g} ceiling")
+    # The sum, not the last loop variable. The previous wording reported
+    # "all 3 gateways carry the $20 ceiling" once the pool was divided —
+    # whichever gateway happened to be last — which is exactly the kind of
+    # confidently wrong summary this script exists to avoid.
+    print(f"{len(gateways)} gateway(s) divide a ${pool:g} pool: "
+          + ", ".join(f"{d} ${round(pool * s, 2):g}" for d, s in sorted(shares.items())))
     return 0
 
 
