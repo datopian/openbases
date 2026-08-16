@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Tag every agent role's requests so the bill can be read by role.
+
+The first real bill was $23 and unreadable. AI Gateway logs the model, and
+several roles share a model, so "what did the patrol cost versus the work" had
+no answer — it had to be inferred from request counts and timing. Cost you
+cannot attribute is cost you cannot act on, and acting on it is the point of
+plan section 4.7.
+
+AI Gateway accepts `cf-aig-metadata`: a JSON header that lands on the log entry,
+can be filtered in the dashboard, and can scope a spend limit. Claude Code sends
+it if it is in ANTHROPIC_CUSTOM_HEADERS — verified by catching a real request,
+because that variable holds ONE string and whether the CLI splits it into
+several headers is not something to assume. It does, on newlines, and both
+headers arrive intact.
+
+The env block goes in each role's own settings.json, the file Gas Town creates
+and passes to Claude Code with --settings. Two things make that the right place:
+Gas Town leaves an env block it did not write alone, verified across a daemon
+start and a teardown; and a settings env value overrides the process
+environment, so this wins over whatever the tmux session inherited.
+
+Usage: wg-set-agent-metadata <town-dir> <cell> <gateway-token> [--check]
+"""
+import json
+import os
+import sys
+import tempfile
+
+# Roles are derived from the path rather than configured, so a rig added later
+# is picked up without anyone remembering to extend a list.
+ROLE_DIRS = {"polecats": "polecat", "witness": "witness", "refinery": "refinery", "crew": "crew"}
+
+
+def role_for(rel_dir: str):
+    """Return (role, rig) for a .claude directory, or None if it is not a role."""
+    parts = [p for p in rel_dir.split(os.sep) if p and p not in (".", ".claude")]
+    if not parts:
+        # The town root's own settings, which belong to no single role.
+        return None
+    if parts[0] == "mayor" and len(parts) == 1:
+        return "mayor", ""
+    if parts[0] == "deacon":
+        # Dogs are named individually: they do different work and cost
+        # differently, and "dog" as one bucket would hide that.
+        if len(parts) >= 3 and parts[1] == "dogs":
+            return f"dog:{parts[2]}", ""
+        return ("deacon", "") if len(parts) == 1 else None
+    if len(parts) == 2 and parts[1] in ROLE_DIRS:
+        return ROLE_DIRS[parts[1]], parts[0]
+    return None
+
+
+def main() -> int:
+    if len(sys.argv) < 4:
+        print("usage: wg-set-agent-metadata <town-dir> <cell> <gateway-token> [--check]",
+              file=sys.stderr)
+        return 2
+    town, cell, token = sys.argv[1], sys.argv[2], sys.argv[3]
+    check = "--check" in sys.argv[4:]
+
+    changed = []
+    for dirpath, _dirnames, filenames in os.walk(town):
+        segments = dirpath.split(os.sep)
+        # Claude Code's own per-project state and Gas Town's runtime scratch are
+        # not configuration we manage.
+        if "projects" in segments or ".runtime" in segments:
+            continue
+        if "settings.json" not in filenames or os.path.basename(dirpath) != ".claude":
+            continue
+
+        what = role_for(os.path.relpath(dirpath, town))
+        if what is None:
+            continue
+        role, rig = what
+
+        path = os.path.join(dirpath, "settings.json")
+        try:
+            with open(path) as fh:
+                settings = json.load(fh)
+        except (OSError, ValueError) as err:
+            # A settings file we cannot read is Gas Town's to fix. Rewriting it
+            # from scratch here would silently drop whatever it held.
+            print(f"skip (unreadable, {err.__class__.__name__}): {path}", file=sys.stderr)
+            continue
+
+        # Five entries is the AI Gateway maximum and extras are dropped
+        # silently, so this stays well under it.
+        metadata = {"role": role, "cell": cell}
+        if rig:
+            metadata["rig"] = rig
+
+        # The authorization header is re-stated deliberately. This value
+        # REPLACES the one the cell-level settings supply rather than adding to
+        # it, and dropping it turns every request into a 401 that reads like a
+        # bad token rather than a bad merge.
+        headers = (
+            f"cf-aig-authorization: Bearer {token}\n"
+            f"cf-aig-metadata: {json.dumps(metadata, separators=(',', ':'))}"
+        )
+
+        env = settings.get("env") or {}
+        if env.get("ANTHROPIC_CUSTOM_HEADERS") == headers:
+            continue
+
+        changed.append(f"{role}@{rig}" if rig else role)
+        if check:
+            continue
+
+        env["ANTHROPIC_CUSTOM_HEADERS"] = headers
+        settings["env"] = env
+
+        # Written through a temporary file so an interrupted run cannot leave a
+        # truncated settings.json, which Gas Town would then refuse to parse.
+        st = os.stat(path)
+        fd, tmp = tempfile.mkstemp(dir=dirpath)
+        with os.fdopen(fd, "w") as fh:
+            json.dump(settings, fh, indent=2)
+            fh.write("\n")
+        os.chown(tmp, st.st_uid, st.st_gid)
+        os.chmod(tmp, st.st_mode & 0o777)
+        os.replace(tmp, path)
+
+    print("changed " + ",".join(sorted(changed)) if changed else "unchanged")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -360,3 +360,41 @@
   loop: "{{ gastown_settings_stat.results }}"
   loop_control:
     label: "{{ item.item.name }}"
+
+# ---------------------------------------------------------------------------
+# Per-role cost attribution (plan section 4.7)
+# ---------------------------------------------------------------------------
+#
+# Without this the bill says only which model was used, and roles share models,
+# so "what did the patrol cost versus the work" cannot be answered from the
+# logs. cf-aig-metadata puts role, cell and rig on every request.
+
+- name: Install the agent metadata tagger
+  ansible.builtin.copy:
+    src: wg-set-agent-metadata
+    dest: /usr/local/bin/wg-set-agent-metadata
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Tag each agent role's requests with its identity
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/wg-set-agent-metadata
+      - "{{ cells_root }}/{{ item.item.name }}/town"
+      - "{{ item.item.name }}"
+      - "{{ ai_gateway_token }}"
+  register: gastown_metadata_set
+  # Exact match, not a substring: "unchanged" contains "changed", and the
+  # obvious `in` test makes every run report a change.
+  changed_when: gastown_metadata_set.stdout is defined and
+                gastown_metadata_set.stdout.startswith("changed")
+  when:
+    - item.stat.exists
+    - ai_gateway_token | default("") | length > 0
+  loop: "{{ gastown_settings_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  # The gateway token is an argument, so the command line would otherwise be
+  # echoed into the play output and the journal.
+  no_log: true
