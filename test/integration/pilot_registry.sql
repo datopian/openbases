@@ -22,8 +22,22 @@ BEGIN
   SELECT count(*) INTO n FROM projects WHERE primary_owner_id = backup_owner_id;
   IF n <> 0 THEN RAISE EXCEPTION '% project(s) have the same primary and backup owner', n; END IF;
 
+  -- Twelve: the eleven pilot repositories from 0009 plus the agent sandbox
+  -- added by 0016. The sandbox is registered rather than special-cased because
+  -- the witness routes escalations through this table, and a repository absent
+  -- from it produces findings that reach nobody (ADR-0019).
   SELECT count(*) INTO n FROM project_repositories;
-  IF n <> 11 THEN RAISE EXCEPTION 'expected 11 repositories, found %', n; END IF;
+  IF n <> 12 THEN RAISE EXCEPTION 'expected 12 repositories, found %', n; END IF;
+
+  -- Named explicitly, because a bare count passes just as happily if the wrong
+  -- repository was added.
+  IF NOT EXISTS (
+      SELECT 1 FROM project_repositories r
+        JOIN projects p ON p.id = r.project_id
+       WHERE r.owner = 'datopian' AND r.name = 'workgraph-agent-sandbox'
+         AND p.slug = 'portaljs-oss') THEN
+    RAISE EXCEPTION 'the agent sandbox repository is not registered to portaljs-oss';
+  END IF;
 
   -- Owners must be members: the RLS policy checks membership, not ownership,
   -- so an owner who is not a member cannot read their own project.
