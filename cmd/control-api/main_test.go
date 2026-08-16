@@ -135,3 +135,76 @@ func TestUnknownPathIsNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", rr.Code)
 	}
 }
+
+// The token endpoint hands out a git credential, so who may call it is the
+// whole security property.
+//
+// A human's browser session must not be able to mint one. Access sessions are
+// long-lived and live in a browser; turning one into a git credential for a
+// restricted client repository is precisely the escalation this refuses.
+func TestInstallationTokenRefusesHumanSessions(t *testing.T) {
+	h := testRoutes(&authn.StaticAuthenticator{Identity: authn.Identity{
+		Subject: "person@datopian.com",
+		Email:   "person@datopian.com",
+		UserID:  "11111111-1111-1111-1111-111111111111",
+		// Deliberately not a service caller.
+		IsService: false,
+	}})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/integrations/github/installation-token",
+		strings.NewReader(`{"repository":"workgraph-agent-sandbox"}`))
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("a human session must be refused, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// An unauthenticated caller must not reach the handler at all.
+func TestInstallationTokenRequiresAuthentication(t *testing.T) {
+	h := testRoutes(&authn.StaticAuthenticator{})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/integrations/github/installation-token",
+		strings.NewReader(`{"repository":"x"}`)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}
+
+// An empty or owner-prefixed repository must be refused.
+//
+// An empty value would otherwise mint an UNSCOPED token covering every
+// installed repository — the exact outcome this endpoint exists to prevent, and
+// a mistake that would look like a harmless omission at the call site.
+func TestInstallationTokenRefusesAnUnscopedRequest(t *testing.T) {
+	service := &authn.StaticAuthenticator{Identity: authn.Identity{
+		Subject: "workgraph-automation", IsService: true,
+	}}
+
+	for _, body := range []string{
+		`{}`,
+		`{"repository":""}`,
+		`{"repository":"   "}`,
+		`{"repository":"datopian/workgraph-agent-sandbox"}`,
+	} {
+		rr := httptest.NewRecorder()
+		testRoutes(service).ServeHTTP(rr, httptest.NewRequest(
+			"POST", "/v1/integrations/github/installation-token", strings.NewReader(body)))
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("body %s: expected 400, got %d (%s)", body, rr.Code, strings.TrimSpace(rr.Body.String()))
+		}
+	}
+}
+
+// With no App configured the endpoint refuses rather than pretending.
+func TestInstallationTokenWithoutAnAppConfigured(t *testing.T) {
+	rr := httptest.NewRecorder()
+	testRoutes(&authn.StaticAuthenticator{Identity: authn.Identity{
+		Subject: "workgraph-automation", IsService: true,
+	}}).ServeHTTP(rr, httptest.NewRequest("POST", "/v1/integrations/github/installation-token",
+		strings.NewReader(`{"repository":"workgraph-agent-sandbox"}`)))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when the App is not configured, got %d", rr.Code)
+	}
+}

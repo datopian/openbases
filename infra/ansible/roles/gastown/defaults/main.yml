@@ -26,3 +26,8 @@ claude_first_run_keys:
   hasCompletedOnboarding: true
   hasTrustDialogAccepted: true
   bypassPermissionsModeAccepted: true
+
+# Git settings each cell needs for the credential helper to work. The helper
+# path is substituted per cell at apply time.
+gastown_git_credential_settings:
+  - "credential.useHttpPath true"

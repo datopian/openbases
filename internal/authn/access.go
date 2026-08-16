@@ -31,6 +31,16 @@ type AccessValidator struct {
 	// web application.
 	Audience string
 
+	// PathAudiences maps a request path to an ADDITIONAL audience accepted only
+	// for that path.
+	//
+	// Cells authenticate through their own Access application, which has its own
+	// AUD, and that token must not become a general-purpose API credential — the
+	// point of checking the audience at all is that a token minted for one
+	// application does not validate against another. Binding the extra audience
+	// to its path keeps that property instead of quietly widening it.
+	PathAudiences map[string]string
+
 	// HTTPClient fetches the signing keys. Injectable for tests.
 	HTTPClient *http.Client
 
@@ -105,25 +115,40 @@ func (v *AccessValidator) Authenticate(ctx context.Context, r *http.Request) (Id
 	// a validly-signed token minted for another application.
 	if err := std.ValidateWithLeeway(jwt.Expected{
 		Issuer:      "https://" + v.TeamDomain,
-		AnyAudience: jwt.Audience{v.Audience},
+		AnyAudience: v.audiencesFor(r.URL.Path),
 		Time:        now,
 	}, 0); err != nil {
 		return Identity{}, fmt.Errorf("%w: %v", ErrUnauthenticated, err)
 	}
 
-	if std.Subject == "" {
-		return Identity{}, fmt.Errorf("%w: token has no subject", ErrUnauthenticated)
-	}
-
 	// A service token authenticates a machine, not a person. It is returned
-	// with no email so that a caller cannot mistake it for a user, and so
-	// audit records attribute it to the token rather than to nobody.
+	// with no email so that a caller cannot mistake it for a user, and so audit
+	// records attribute it to the token rather than to nobody.
+	//
+	// Cloudflare issues these with an EMPTY sub and the token's name in
+	// common_name, so the subject check below cannot come first: it rejected
+	// every service token with "token has no subject" while the token was
+	// perfectly valid. The common name is used as the subject instead, which is
+	// also what makes the audit trail name the token.
 	if claims.Type == "non_identity" || (claims.Email == "" && claims.CommonName != "") {
+		if claims.CommonName == "" {
+			return Identity{}, fmt.Errorf("%w: service token has no common name", ErrUnauthenticated)
+		}
+		subject := std.Subject
+		if subject == "" {
+			subject = claims.CommonName
+		}
 		return Identity{
-			Subject:     std.Subject,
+			Subject:     subject,
 			ServiceName: claims.CommonName,
 			IsService:   true,
 		}, nil
+	}
+
+	// A user token must carry a subject; without one there is nobody to
+	// attribute the request to.
+	if std.Subject == "" {
+		return Identity{}, fmt.Errorf("%w: token has no subject", ErrUnauthenticated)
 	}
 
 	if claims.Email == "" {
@@ -210,3 +235,17 @@ func (v *AccessValidator) keySet(ctx context.Context, force bool) (*jose.JSONWeb
 }
 
 var _ Authenticator = (*AccessValidator)(nil)
+
+// audiencesFor returns the audiences acceptable for a request path.
+//
+// The application audience is always included; a path-bound one is added only
+// for its own path. Matching is exact rather than by prefix, because a prefix
+// match on "/v1/integrations/github/installation-token" would also accept
+// anything appended to it.
+func (v *AccessValidator) audiencesFor(path string) jwt.Audience {
+	auds := jwt.Audience{v.Audience}
+	if extra, ok := v.PathAudiences[path]; ok && extra != "" {
+		auds = append(auds, extra)
+	}
+	return auds
+}

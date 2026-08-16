@@ -46,10 +46,21 @@ type ControlAPI struct {
 	AccessTeamDomain string
 	AccessAudience   string
 
+	// CellAccessAudience is the AUD of the Access application that fronts the
+	// git-credential endpoint. Accepted ONLY on that path.
+	CellAccessAudience string
+
 	// GitHubWebhookSecret authenticates inbound webhooks. GitHub cannot pass a
 	// Cloudflare Access challenge, so this shared secret is the only thing
 	// standing between the endpoint and anyone who learns its URL.
 	GitHubWebhookSecret string
+
+	// The GitHub App itself, used to mint short-lived git credentials for
+	// execution cells. Held only on the control node: the key can mint tokens
+	// for every installed repository, so an execution node must never see it.
+	GitHubAppID          string
+	GitHubInstallationID string
+	GitHubPrivateKeyPath string
 }
 
 // ErrMissing reports a required setting that was not supplied.
@@ -68,7 +79,13 @@ func LoadControlAPI() (ControlAPI, error) {
 		AccessTeamDomain: os.Getenv("WG_ACCESS_TEAM_DOMAIN"),
 		AccessAudience:   os.Getenv("WG_ACCESS_AUD"),
 
+		CellAccessAudience: os.Getenv("WG_CELL_ACCESS_AUD"),
+
 		GitHubWebhookSecret: os.Getenv("WG_GITHUB_WEBHOOK_SECRET"),
+
+		GitHubAppID:          os.Getenv("WG_GITHUB_APP_ID"),
+		GitHubInstallationID: os.Getenv("WG_GITHUB_INSTALLATION_ID"),
+		GitHubPrivateKeyPath: os.Getenv("WG_GITHUB_PRIVATE_KEY_PATH"),
 	}
 
 	var errs []error
