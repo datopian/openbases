@@ -156,6 +156,21 @@ jobs:
           git config --global user.name "CI"
           go test -run TestContract ./internal/beads/ -v
 
+      # The gate a version bump must pass (versions.lock: requires_fixture).
+      #
+      # It proves the three pinned binaries work TOGETHER — the failure it
+      # exists to catch is a bump that leaves each tool fine alone and the
+      # combination broken. It runs offline against a local bare repository, so
+      # it needs no network and no credentials, and it deliberately does not
+      # dispatch an agent: that costs money on every push, and a CI job that
+      # spends money is one somebody disables.
+      - name: Gas Town / Beads / Dolt compatibility fixture
+        run: |
+          export PATH="$PWD/.toolchain/bin:$PATH"
+          git config --global user.email "ci@datopian.com"
+          git config --global user.name "CI"
+          bash test/contract/compatibility/fixture.sh
+
   infrastructure:
     name: infrastructure
     runs-on: ubuntu-latest
