@@ -62,5 +62,10 @@ infra/tofu/**/.terraform/
 # The embedded web build is a build artefact, produced by `make web-build`.
 # Committing it would mean the binary's UI depends on whoever last remembered
 # to rebuild it.
-internal/webui/dist/
+# Ignore the CONTENTS, not the directory. Excluding "dist/" itself makes the
+# negation below impossible — git will not re-include a file whose parent
+# directory is excluded — so .gitkeep was never committed, the directory did not
+# exist in a fresh checkout, and go:embed failed with "no matching files found"
+# in CI while building fine locally.
+internal/webui/dist/*
 !internal/webui/dist/.gitkeep
