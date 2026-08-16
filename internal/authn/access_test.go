@@ -277,3 +277,98 @@ func TestGarbageTokenIsRejected(t *testing.T) {
 		}
 	}
 }
+
+// An audience bound to a path must be accepted there and NOWHERE else.
+//
+// This is the property that keeps the cell token from becoming a general API
+// credential: the cell's Access application has its own AUD, and if that AUD
+// validated everywhere, a token that exists only to fetch a git credential
+// could read every project's work with no human identity attached.
+func TestPathBoundAudienceIsNotAcceptedElsewhere(t *testing.T) {
+	v := &AccessValidator{
+		TeamDomain: "datopian.cloudflareaccess.com",
+		Audience:   "app-aud",
+		PathAudiences: map[string]string{
+			"/v1/integrations/github/installation-token": "cell-aud",
+		},
+	}
+
+	onPath := v.audiencesFor("/v1/integrations/github/installation-token")
+	if len(onPath) != 2 || onPath[0] != "app-aud" || onPath[1] != "cell-aud" {
+		t.Fatalf("the bound path must accept both audiences, got %v", onPath)
+	}
+
+	for _, path := range []string{
+		"/v1/projects",
+		"/v1/me",
+		// A prefix of the bound path, and an extension of it. Matching by
+		// prefix would accept both, which is why matching is exact.
+		"/v1/integrations/github",
+		"/v1/integrations/github/installation-token/../projects",
+		"/v1/integrations/github/installation-token/extra",
+	} {
+		got := v.audiencesFor(path)
+		if len(got) != 1 || got[0] != "app-aud" {
+			t.Errorf("%s: the cell audience leaked outside its path: %v", path, got)
+		}
+	}
+}
+
+// With no path audiences configured, behaviour is unchanged.
+func TestAudiencesWithoutPathBindings(t *testing.T) {
+	v := &AccessValidator{Audience: "app-aud"}
+	got := v.audiencesFor("/v1/integrations/github/installation-token")
+	if len(got) != 1 || got[0] != "app-aud" {
+		t.Fatalf("expected only the application audience, got %v", got)
+	}
+}
+
+// Cloudflare issues service-token JWTs with an EMPTY sub and the token's name
+// in common_name.
+//
+// Requiring a subject before the service-token branch rejected every one of
+// them with "token has no subject" while the token was entirely valid — and the
+// message pointed at the wrong thing, which is what made it slow to find.
+func TestServiceTokenWithNoSubjectIsAccepted(t *testing.T) {
+	h := newHarness(t)
+
+	claims := h.validClaims()
+	delete(claims, "sub")
+	delete(claims, "email")
+	claims["type"] = "non_identity"
+	claims["common_name"] = "workgraph-staging-cells"
+
+	id, err := h.validator.Authenticate(context.Background(),
+		h.request(h.sign(t, h.key, jose.RS256, claims)))
+	if err != nil {
+		t.Fatalf("a valid service token was refused: %v", err)
+	}
+	if !id.IsService {
+		t.Error("not marked as a service caller")
+	}
+	if id.ServiceName != "workgraph-staging-cells" {
+		t.Errorf("service name lost: %q", id.ServiceName)
+	}
+	// The subject falls back to the common name so the audit trail names the
+	// token rather than being blank.
+	if id.Subject != "workgraph-staging-cells" {
+		t.Errorf("subject should fall back to the common name, got %q", id.Subject)
+	}
+	if id.Email != "" {
+		t.Error("a service token must carry no email; a caller could mistake it for a user")
+	}
+}
+
+// A user token still requires a subject.
+func TestUserTokenStillRequiresASubject(t *testing.T) {
+	h := newHarness(t)
+
+	claims := h.validClaims()
+	delete(claims, "sub")
+	claims["email"] = "person@datopian.com"
+
+	if _, err := h.validator.Authenticate(context.Background(),
+		h.request(h.sign(t, h.key, jose.RS256, claims))); err == nil {
+		t.Fatal("a user token with no subject must be refused")
+	}
+}

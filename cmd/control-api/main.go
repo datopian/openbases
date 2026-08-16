@@ -9,10 +9,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,6 +61,12 @@ func main() {
 		auth = &authn.AccessValidator{
 			TeamDomain: cfg.AccessTeamDomain,
 			Audience:   cfg.AccessAudience,
+			// The cell application's audience, accepted only on the path it
+			// fronts. Without the binding this would be a service credential
+			// for the whole API.
+			PathAudiences: map[string]string{
+				"/v1/integrations/github/installation-token": cfg.CellAccessAudience,
+			},
 		}
 	}
 
@@ -102,6 +110,28 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	if db != nil {
 		store = domain.NewStore(db)
 		ghStore = githubapp.NewStore(db)
+	}
+
+	// The GitHub App client, held only here on the control node.
+	//
+	// Absent credentials are not fatal: the API still serves identity and the
+	// registry, and the endpoints that need the App refuse individually. A
+	// process that will not start without every integration configured is one
+	// that cannot be brought up during an incident.
+	var gh *githubapp.Client
+	if cfg.GitHubAppID != "" && cfg.GitHubInstallationID != "" && cfg.GitHubPrivateKeyPath != "" {
+		key, err := githubapp.LoadPrivateKey(cfg.GitHubPrivateKeyPath)
+		if err != nil {
+			// Logged loudly rather than ignored: a wrong file mode here is a
+			// security finding, not a missing feature.
+			log.Error("loading the GitHub App key", "path", cfg.GitHubPrivateKeyPath, "error", err)
+		} else {
+			gh = &githubapp.Client{
+				AppID:          cfg.GitHubAppID,
+				InstallationID: cfg.GitHubInstallationID,
+				PrivateKeyPEM:  key,
+			}
+		}
 	}
 	mux := http.NewServeMux()
 
@@ -159,6 +189,74 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			"email":      id.Email,
 			"user_id":    id.UserID,
 			"is_service": id.IsService,
+		})
+	})
+
+	// Mint a git credential for an execution cell.
+	//
+	// The App private key stays on the control node. It can mint tokens for
+	// every installed repository — including the restricted client one — so
+	// putting it on an execution node, where untrusted agent code runs, would
+	// make a single cell compromise into a compromise of every repository.
+	//
+	// Instead a cell asks for a token scoped to the ONE repository it is working
+	// on, and receives one that expires within the hour (plan section 9.2).
+	authed.HandleFunc("POST /v1/integrations/github/installation-token", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+
+		// Service tokens only. A human's browser session has no business
+		// minting a git credential, and refusing here means a stolen human
+		// session cannot be turned into one.
+		if !id.IsService {
+			log.Warn("token mint refused for a human session", "subject", id.Subject)
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		var body struct {
+			Repository string `json:"repository"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+
+		// A repository must be named. Minting an unscoped token here would hand
+		// a cell access to every installed repository, which is the exact
+		// outcome this endpoint exists to prevent — so the empty case is
+		// refused rather than treated as "all".
+		repo := strings.TrimSpace(body.Repository)
+		if repo == "" || strings.ContainsAny(repo, "/ \t") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "name exactly one repository, without an owner prefix"})
+			return
+		}
+
+		// Configuration is checked AFTER the request is validated. A malformed
+		// request is malformed whether or not the App happens to be wired up,
+		// and answering 503 to it sends the caller looking at the wrong thing.
+		if gh == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "github app is not configured"})
+			return
+		}
+
+		tok, err := gh.InstallationToken(r.Context(), repo)
+		if err != nil {
+			// The reason is logged, not returned: a caller learning the
+			// difference between "not installed" and "App misconfigured" is
+			// being told about repositories it cannot see.
+			log.Error("minting an installation token", "repository", repo, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "could not mint a token"})
+			return
+		}
+
+		log.Info("minted a scoped installation token",
+			"repository", repo, "subject", id.Subject, "expires", tok.ExpiresAt)
+
+		// The token is the response body and nothing else is logged about it.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"token":      tok.Token,
+			"expires_at": tok.ExpiresAt,
+			"repository": repo,
 		})
 	})
 

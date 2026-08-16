@@ -167,3 +167,79 @@
     label: "{{ item.name }}"
   no_log: true
   when: ai_gateway_token | default("") | length > 0
+
+# ---------------------------------------------------------------------------
+# Git credentials for agents (WP-E3)
+# ---------------------------------------------------------------------------
+
+- name: Install the cell's control-plane credentials
+  ansible.builtin.template:
+    src: control-api.env.j2
+    dest: "{{ cells_root }}/{{ item.name }}/.credentials/control-api.env"
+    owner: "wgcell_{{ item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    mode: "0600"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: access_service_client_secret | default("") | length > 0
+
+- name: Create the cell bin directory
+  ansible.builtin.file:
+    path: "{{ cells_root }}/{{ item.name }}/bin"
+    state: directory
+    owner: root
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    mode: "0750"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install the git credential helper
+  ansible.builtin.template:
+    src: git-credential-workgraph.j2
+    dest: "{{ cells_root }}/{{ item.name }}/bin/git-credential-workgraph"
+    owner: root
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    # Owned by root, executable by the cell, NOT writable by it. An agent that
+    # can rewrite its own credential helper can make it print anything it likes
+    # to any host it likes.
+    mode: "0750"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# credential.useHttpPath is REQUIRED, not a refinement.
+#
+# By default git sends a credential helper only the protocol and host, never the
+# repository path — so the helper cannot know which repository is being accessed
+# and has nothing to scope a token to. It returns nothing, git falls back to
+# prompting, and a non-interactive clone fails with "could not read Username",
+# which reads like a missing credential rather than a missing path.
+#
+# With it set, the helper receives owner/repo and asks the control plane for a
+# token scoped to that repository alone.
+- name: Point git at the credential helper
+  ansible.builtin.command:
+    cmd: "git config --global credential.helper {{ cells_root }}/{{ item.name }}/bin/git-credential-workgraph"
+  become: true
+  become_user: "wgcell_{{ item.name | replace('-', '_') }}"
+  environment:
+    HOME: "{{ cells_root }}/{{ item.name }}"
+  changed_when: false
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Send the repository path to the credential helper
+  ansible.builtin.command:
+    cmd: "git config --global {{ item.1 }}"
+  become: true
+  become_user: "wgcell_{{ item.0.name | replace('-', '_') }}"
+  environment:
+    HOME: "{{ cells_root }}/{{ item.0.name }}"
+  changed_when: false
+  loop: "{{ execution_cells | product(gastown_git_credential_settings) | list }}"
+  loop_control:
+    label: "{{ item.0.name }}: {{ item.1 }}"

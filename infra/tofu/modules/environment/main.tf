@@ -487,3 +487,50 @@ resource "cloudflare_zero_trust_access_policy" "ssh_service" {
     }
   }]
 }
+
+# ---------------------------------------------------------------------------
+# Execution cells calling the control API (WP-E3)
+# ---------------------------------------------------------------------------
+
+# A service token for execution cells, separate from the automation one.
+#
+# Separate because the blast radii differ. The automation token opens SSH
+# sessions to nodes; this one only asks the control plane for a git credential.
+# Sharing one token would mean a compromised cell could open a shell on the
+# control node, which is the opposite of what cells are for.
+resource "cloudflare_zero_trust_access_service_token" "cells" {
+  account_id = var.cloudflare_account_id
+  name       = "workgraph-${var.environment}-cells"
+  duration   = "8760h"
+}
+
+# The token is accepted on exactly ONE path.
+#
+# Scoped like the webhook exception rather than added to the application policy,
+# because a service token allowed on the whole API could read every project's
+# work with no human identity attached — and row-level security would have
+# nothing to filter on.
+resource "cloudflare_zero_trust_access_application" "cell_token_mint" {
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-cell-token-mint"
+  domain           = "${var.hostname}/v1/integrations/github/installation-token"
+  type             = "self_hosted"
+  session_duration = "0s"
+
+  policies = [{
+    id         = cloudflare_zero_trust_access_policy.cells_service.id
+    precedence = 1
+  }]
+}
+
+resource "cloudflare_zero_trust_access_policy" "cells_service" {
+  account_id = var.cloudflare_account_id
+  name       = "workgraph-${var.environment}-cells-service"
+  decision   = "non_identity"
+
+  include = [{
+    service_token = {
+      token_id = cloudflare_zero_trust_access_service_token.cells.id
+    }
+  }]
+}
