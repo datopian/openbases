@@ -109,6 +109,25 @@
     create: false
   notify: Reload nftables
 
+# Hide other users' processes from each other.
+#
+# Without hidepid, every cell user can read every process's command line out of
+# /proc — and Gas Town passes credentials as tmux -e arguments, so an agent's
+# command line literally contains its gateway token. Confirmed on staging: the
+# restricted client cell read a process belonging to the open-source cell.
+#
+# gid is the adm group so that root and administrative tooling keep full
+# visibility; hidepid=2 additionally hides the existence of the processes rather
+# than only their details, because a process list alone discloses which cells
+# are running and what they are working on.
+- name: Hide other users processes in /proc
+  ansible.posix.mount:
+    path: /proc
+    src: proc
+    fstype: proc
+    opts: "rw,nosuid,nodev,noexec,relatime,hidepid=2,gid={{ proc_admin_gid }}"
+    state: mounted
+
 # Agent sessions must outlive the session that started them.
 #
 # Gas Town runs each agent in a tmux server owned by the cell user. Without

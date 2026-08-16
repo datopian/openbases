@@ -243,3 +243,47 @@
   loop: "{{ execution_cells | product(gastown_git_credential_settings) | list }}"
   loop_control:
     label: "{{ item.0.name }}: {{ item.1 }}"
+
+# ---------------------------------------------------------------------------
+# Model tiering
+# ---------------------------------------------------------------------------
+
+# Applied per town, and idempotent: gt reports the tier it is already on, so
+# this only writes when the tier differs. Declared here rather than left as a
+# one-off command, because a town rebuilt from scratch would otherwise come back
+# on the all-Opus default and quietly cost an order of magnitude more.
+- name: Read the current cost tier
+  ansible.builtin.command: gt config cost-tier
+  args:
+    chdir: "{{ cells_root }}/{{ item.name }}/town"
+  become: true
+  become_user: "wgcell_{{ item.name | replace('-', '_') }}"
+  environment:
+    HOME: "{{ cells_root }}/{{ item.name }}"
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+  register: gastown_tier_now
+  changed_when: false
+  failed_when: false
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Set the cost tier
+  ansible.builtin.command: "gt config cost-tier {{ gastown_cost_tier }}"
+  args:
+    chdir: "{{ cells_root }}/{{ item.item.name }}/town"
+  become: true
+  become_user: "wgcell_{{ item.item.name | replace('-', '_') }}"
+  environment:
+    HOME: "{{ cells_root }}/{{ item.item.name }}"
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+  when:
+    # A cell with no town yet is skipped, and a skipped task result carries no
+    # rc at all — checking rc first raised "object of type 'dict' has no
+    # attribute 'rc'" on the client cell, which has no town.
+    - item.rc is defined
+    - item.rc == 0
+    - "'Cost tier: ' ~ gastown_cost_tier not in (item.stdout | default(''))"
+  loop: "{{ gastown_tier_now.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"

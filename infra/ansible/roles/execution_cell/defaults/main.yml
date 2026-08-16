@@ -1,3 +1,7 @@
 ---
 execution_cells: []
 cells_root: /srv/cells
+
+# The group that keeps full /proc visibility under hidepid. adm (4) on Debian
+# and Ubuntu, which root and administrative tooling belong to.
+proc_admin_gid: 4
