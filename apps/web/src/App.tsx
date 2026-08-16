@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Ask } from "./Ask";
 import { Inbox } from "./Inbox";
 import {
   age,
@@ -284,6 +285,10 @@ function onInbox(): boolean {
   return window.location.hash === "#/inbox";
 }
 
+function onAsk(): boolean {
+  return window.location.hash === "#/ask";
+}
+
 /**
  * A visible build stamp.
  *
@@ -313,6 +318,7 @@ export function App() {
   const [version, setVersion] = useState<VersionInfo | null>(null);
   const [slug, setSlug] = useState<string | null>(() => slugFromHash());
   const [inbox, setInbox] = useState<boolean>(() => onInbox());
+  const [ask, setAsk] = useState<boolean>(() => onAsk());
 
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
@@ -323,6 +329,7 @@ export function App() {
     const onHash = () => {
       setSlug(slugFromHash());
       setInbox(onInbox());
+      setAsk(onAsk());
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -336,6 +343,7 @@ export function App() {
     window.location.hash = "";
     setSlug(null);
     setInbox(false);
+    setAsk(false);
   };
 
   return (
@@ -357,11 +365,24 @@ export function App() {
           >
             Needs you
           </a>
+          <a
+            href="#/ask"
+            style={{ ...css.link, marginRight: "1rem" }}
+            onClick={(e) => {
+              e.preventDefault();
+              window.location.hash = "#/ask";
+              setAsk(true);
+              setInbox(false);
+              setSlug(null);
+            }}
+          >
+            Ask
+          </a>
           <span style={css.muted}>{me ? me.email || me.subject : "not signed in"}</span>
         </span>
       </header>
 
-      {inbox ? <Inbox /> : slug ? <ProjectPage slug={slug} onBack={back} /> : (
+      {ask ? <Ask /> : inbox ? <Inbox /> : slug ? <ProjectPage slug={slug} onBack={back} /> : (
         <>
           <h1 style={{ marginBottom: "0.15rem" }}>Projects</h1>
           <p style={{ ...css.muted, marginTop: 0, marginBottom: "1.5rem" }}>

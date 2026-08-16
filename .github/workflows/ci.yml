@@ -130,6 +130,9 @@ jobs:
       - name: approvals, digest binding and who may decide
         run: psql -v ON_ERROR_STOP=1 -f test/integration/approvals.sql
 
+      - name: chief-of-staff scoping
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/chiefofstaff.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest
