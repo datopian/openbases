@@ -1,0 +1,56 @@
+# gitleaks configuration.
+#
+# This file exists to hold ONE narrow exception. Read the justification before
+# adding a second: an allowlist is where real findings go to die, and the value
+# of the scan is entirely in nobody having learned to ignore it.
+
+[extend]
+# Start from the maintained rule set rather than replacing it.
+useDefault = true
+
+[[allowlists]]
+description = """
+Cloudflare Access application AUD tags.
+
+An AUD identifies an Access application; it does not grant access to one. It is
+the audience claim a token must carry, and the control API checks it precisely
+so that a token minted for one application cannot be replayed against another.
+Knowing the audience does not produce a token signed by Cloudflare for it.
+
+It is 64 hex characters under a key whose name reads like a credential, which is
+why generic-api-key matches. The same values are already Terraform outputs
+(cell_token_mint_aud, cell_agent_health_aud) because they are configuration, and
+they appear in the control API's environment file.
+
+Encrypting them would be wrong twice: it would claim a protection the value does
+not need, and it would move a line out of the reviewable half of the secrets
+file for no gain.
+
+Scoped by both key pattern and path so it cannot suppress a finding elsewhere.
+Verified by comparing the finding set with and without this file on an identical
+tree: without it, exactly one finding — the AUD at line 15; with it, none.
+Nothing else changes state.
+"""
+regexTarget = "line"
+regexes = ['''access_aud_[a-z]+:\s*[0-9a-f]{64}''']
+paths = ['''infra/secrets/.*\.enc\.yaml$''']
+
+# A caution for whoever next changes this file, learned by getting it wrong
+# several times in a row.
+#
+# Establish what gitleaks actually detects BEFORE concluding anything about an
+# allowlist. Plenty of obvious test credentials are not detected at all, so
+# planting one and seeing a clean scan proves nothing:
+#
+#   AKIAIOSFODNN7EXAMPLE  AWS's own documented example key, allowlisted upstream
+#   cfat_...              there is no Cloudflare API token rule
+#   a bare 64-hex value   not matched unless the KEY NAME also looks credential-like
+#
+# Each of those was planted here and read as "the allowlist is too broad", when
+# the scanner had simply never seen them. The only reliable method is a
+# with/without comparison of the finding set on an identical tree.
+#
+# That gap is also why scripts/check_secrets_encrypted.py exists and does not
+# defer to gitleaks: it matches on value SHAPE — cfat_, gh[pousr]_, sk-, AIza,
+# GOCSPX-, PEM headers — inside infra/secrets whether or not gitleaks has a rule
+# for that provider.

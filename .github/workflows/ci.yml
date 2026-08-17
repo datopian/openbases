@@ -211,6 +211,11 @@ jobs:
       - name: infrastructure invariants
         run: python3 scripts/check_infra.py
 
+      # SOPS encrypts by key NAME, which makes the naming a security boundary.
+      # Needs no key material: it reads ciphertext markers, never decrypts.
+      - name: encrypted secrets
+        run: python3 scripts/check_secrets_encrypted.py
+
   security:
     name: security
     runs-on: ubuntu-latest
