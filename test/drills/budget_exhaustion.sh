@@ -31,7 +31,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 GATEWAY="${WG_DRILL_GATEWAY:-workgraph-staging-oss}"
-DRILL_POOL="${WG_DRILL_POOL:-1}"
+# The smallest share is 10%, and the API rejects a limit that rounds to zero,
+# so the pool floor is $0.10. That puts oss at $0.07 — about 40 calls at the
+# larger max_tokens the spend loop uses.
+DRILL_POOL="${WG_DRILL_POOL:-0.10}"
 WATCH_SECONDS="${WG_DRILL_WATCH:-300}"
 EXEC_HOST="${WG_EXEC_HOST:-ssh-exec-staging.openbases.com}"
 SSH=(ssh -o ProxyCommand="cloudflared access ssh --hostname %h"
@@ -67,8 +70,8 @@ probe() {
     "https://gateway.ai.cloudflare.com/v1/${CLOUDFLARE_ACCOUNT_ID}/${GATEWAY}/anthropic/v1/messages" \
     -H "cf-aig-authorization: Bearer ${WG_AI_GATEWAY_TOKEN}" \
     -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" \
-    -d '{"model":"claude-haiku-4-5-20251001","max_tokens":4,
-         "messages":[{"role":"user","content":"ok"}]}'
+    -d '{"model":"claude-haiku-4-5-20251001","max_tokens":900,
+         "messages":[{"role":"user","content":"Explain HTTP caching in detail."}]}'
 }
 
 say "1. baseline: the gateway currently accepts a request"
@@ -83,13 +86,24 @@ say "2. moving the ceiling below what this window has already spent"
 python3 scripts/ai_gateway_spend_limits.py staging "--pool=${DRILL_POOL}" || exit 1
 sleep 10
 
-say "3. confirming the gateway now refuses"
-during=$(probe)
-echo "   HTTP $during"
-head -c 200 /tmp/wg-drill-body.json; echo
+say "3. spending up to the ceiling, then confirming the gateway refuses"
+# The counter starts from zero whenever the rule is written — writing a rule
+# assigns a new rule id and the spend counter is keyed to it (wg-18a). So the
+# drill cannot rely on the window's history; it has to spend the ceiling itself.
+# Haiku is about $0.00052 a call, so a $0.01 ceiling falls after roughly 20.
+during=""
+for i in $(seq 1 "${WG_DRILL_SPEND_MAX:-120}"); do
+  during=$(probe)
+  if [ "$during" != "200" ]; then
+    echo "   refused at request #$i with HTTP $during"
+    head -c 220 /tmp/wg-drill-body.json; echo
+    break
+  fi
+  sleep 1
+done
 if [ "$during" = "200" ]; then
-  echo "   the gateway still accepts requests; the drill cannot proceed." >&2
-  echo "   Either the window's spend is below \$${DRILL_POOL}, or the limit did not apply." >&2
+  echo "   the gateway still accepts requests after ${WG_DRILL_SPEND_MAX:-60} of them;" >&2
+  echo "   the ceiling is too high for this drill, or the limit did not apply." >&2
   exit 1
 fi
 

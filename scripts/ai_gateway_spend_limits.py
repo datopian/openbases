@@ -148,11 +148,45 @@ def main() -> int:
     if found != set(shares):
         sys.exit(f"gateways {sorted(found)} do not match shares {sorted(shares)}")
 
+    # A share that rounds to zero is rejected by the API ("Number must be
+    # greater than 0"), and the run then half-applies: some gateways written,
+    # some refused, which is a worse state than not starting. Caught up front.
+    too_small = {d: round(pool * s, 2) for d, s in shares.items() if round(pool * s, 2) <= 0}
+    if too_small:
+        sys.exit(f"a ${pool:g} pool rounds these shares to zero: {sorted(too_small)}. "
+                 f"The smallest share is {min(shares.values()):.0%}, so the pool must be "
+                 f"at least ${0.01 / min(shares.values()):.2f}.")
+
     failures = []
+    unchanged = []
     for g in gateways:
         gid = g["id"]
         domain = gid[len(prefix):]
         budget = round(pool * shares[domain], 2)
+
+        # Do not rewrite a rule that is already correct.
+        #
+        # This is not a tidiness optimisation, it is the whole budget. Writing
+        # the rule assigns it a NEW rule id, and the spend counter is keyed to
+        # the rule id, so every write silently restarts the month from zero.
+        #
+        # Demonstrated: a gateway refusing every request at its ceiling served
+        # five in a row immediately after an IDENTICAL rule was re-PUT, with the
+        # id changing from 057c6bf0 to 6297e059. Since this script ran on every
+        # apply, the 30-day pool had never once accumulated over 30 days.
+        existing = (g.get("spend_limits") or {}).get("rules") or []
+        if (len(existing) == 1
+                and (g.get("spend_limits") or {}).get("enabled")
+                and existing[0].get("enabled")
+                and existing[0].get("limitType") == "cost"
+                and float(existing[0].get("limit", -1)) == budget
+                and int(existing[0].get("window", -1)) == WINDOW_SECONDS
+                and existing[0].get("technique") == "sliding"):
+            print(f"  {gid}: ${budget:g} per 30 days "
+                  f"({shares[domain]:.0%} of the ${pool:g} pool), already correct "
+                  f"(rule {existing[0].get('id')}, counter preserved)")
+            unchanged.append(gid)
+            continue
 
         # PUT is a full replace, so every managed field is resent. Omitting one
         # would silently reset it to a default — which is how a rate limit or
@@ -170,6 +204,16 @@ def main() -> int:
             "spend_limits": {
                 "enabled": True,
                 # camelCase. The snake_case the provider sends is rejected.
+                # No rule id. Reusing the existing one was tried and is
+                # actively dangerous: the enforcement layer kept the OLD limit
+                # against the reused id while the API reported the new one. A
+                # gateway sat refusing every request with "cost limit 0.01"
+                # while its stored configuration said 70.
+                #
+                # Omitting the id mints a fresh rule, which does reset the
+                # counter — but a deliberate budget change resetting the month
+                # is defensible, and the skip above means an unchanged
+                # re-apply never gets here.
                 "rules": [{
                     "enabled": True,
                     "limitType": "cost",
@@ -216,6 +260,9 @@ def main() -> int:
     # "all 3 gateways carry the $20 ceiling" once the pool was divided —
     # whichever gateway happened to be last — which is exactly the kind of
     # confidently wrong summary this script exists to avoid.
+    if len(unchanged) == len(gateways):
+        print(f"all {len(gateways)} gateway(s) already correct; nothing rewritten, "
+              f"so no spend counter was reset")
     print(f"{len(gateways)} gateway(s) divide a ${pool:g} pool: "
           + ", ".join(f"{d} ${round(pool * s, 2):g}" for d, s in sorted(shares.items())))
     return 0
