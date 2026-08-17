@@ -59,11 +59,10 @@ def check(path: pathlib.Path) -> None:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
 
-        # Indented continuation of a block scalar (the PEM). Its key was already
-        # checked when the block opened.
+        # Indented lines are either a block scalar's body (the PEM) or the
+        # inside of the sops metadata mapping. Neither carries a top-level key
+        # of its own, and the block's key was checked when the block opened.
         if line.startswith((" ", "\t")):
-            if in_block:
-                continue
             continue
 
         in_block = line.rstrip().endswith("|") or line.rstrip().endswith("|-")
@@ -74,8 +73,13 @@ def check(path: pathlib.Path) -> None:
         key = key.strip()
         value = value.strip()
 
+        # The sops metadata mapping is not secret material, but scanning must
+        # NOT stop here. SOPS writes that block last, so an earlier version of
+        # this check — which broke on it — was blind to anything appended to the
+        # file afterwards. A planted token sitting after the block went
+        # unreported. Skip the key, keep scanning.
         if key == "sops":
-            break  # the metadata block is not secret material
+            continue
 
         if CREDENTIAL_NAME.match(key):
             if in_block or CIPHERTEXT not in value:
