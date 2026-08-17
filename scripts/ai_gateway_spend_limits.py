@@ -94,7 +94,9 @@ def budget_from_tfvars(environment: str) -> tuple[float, dict[str, float]]:
 
 
 def main() -> int:
-    environment = sys.argv[1] if len(sys.argv) > 1 else "staging"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = [a for a in sys.argv[1:] if a.startswith("--")]
+    environment = args[0] if args else "staging"
 
     token = os.environ.get("CLOUDFLARE_API_TOKEN")
     account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
@@ -102,6 +104,32 @@ def main() -> int:
         sys.exit("CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set")
 
     pool, shares = budget_from_tfvars(environment)
+
+    # A deliberate, temporary override for the budget-exhaustion drill (wg-01h).
+    #
+    # Verifying that running out of money does not produce a retry storm means
+    # actually running out of money, and the only safe way to arrange that is to
+    # move the ceiling below what has already been spent. It goes through this
+    # script rather than a hand-rolled PUT because the API rejects PATCH on
+    # spend_limits — silently, with success:false — and a PUT is a full replace
+    # that wipes any field it omits, which is how a rate limit or the
+    # authentication requirement would disappear while attention was on the
+    # budget.
+    #
+    # Restoring is simply running this script again with no flag.
+    override = next((f for f in flags if f.startswith("--pool=")), None)
+    if override:
+        if environment != "staging":
+            sys.exit("--pool is a drill control and is refused outside staging")
+        try:
+            pool = float(override.split("=", 1)[1])
+        except ValueError:
+            sys.exit(f"--pool needs a number, got {override!r}")
+        if pool < 0:
+            sys.exit("a negative pool would be silently treated as no limit")
+        print(f"OVERRIDE: using a ${pool:g} pool instead of the agreed figure. "
+              f"Re-run without --pool to restore.", file=sys.stderr)
+
     prefix = f"workgraph-{environment}-"
 
     listing = call("GET", f"/accounts/{account}/ai-gateway/gateways", token)
