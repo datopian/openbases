@@ -64,7 +64,7 @@ func main() {
 
 	t := witness.Town{Root: *town, GT: *gtPath, Timeout: 2 * time.Minute}
 	c := &controlAPI{
-		base:   *endpoint,
+		base: *endpoint,
 		// The names the cell's credential file actually uses. Reading
 		// WG_SERVICE_TOKEN_* instead was a real defect: the service ran, made
 		// its decisions correctly, logged its escalations to the journal — and
