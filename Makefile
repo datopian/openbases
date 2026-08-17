@@ -29,7 +29,7 @@ dev: ## Run the local stack (API, worker, web, PostgreSQL, fixture Beads)
 ## Quality gates — `make check` is what CI runs
 ## ---------------------------------------------------------------------------
 
-check: fmt vet test verify-versions sql-check infra-check ## Run every gate CI runs
+check: fmt vet test verify-versions sql-check infra-check secrets-check ## Run every gate CI runs
 
 fmt: ## Fail if Go source is not gofmt-clean
 	@out="$$(gofmt -l ./cmd ./internal)"; \
@@ -66,6 +66,9 @@ sql-check: ## Basic structural checks on migrations
 
 live-zones: ## Smoke-check the Datopian production zones sharing this Cloudflare account
 	@bash scripts/check_live_zones.sh
+
+secrets-check: ## Fail if a credential in infra/secrets is not encrypted
+	@python3 scripts/check_secrets_encrypted.py
 
 infra-check: ## Structural guards on the infrastructure security posture
 	@python3 scripts/check_infra.py

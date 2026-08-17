@@ -1,0 +1,22 @@
+# How SOPS encrypts this repository's secrets (plan §11.4, WP-B3).
+#
+# age rather than a cloud KMS, deliberately. A KMS key would live in the same
+# Cloudflare or Google account the secrets grant access to, so losing that
+# account loses both the secrets and the means to decrypt them. An age key is
+# independent of every provider it protects.
+#
+# The recipient below is a PUBLIC key. It encrypts; it cannot decrypt. Committing
+# it is the point — anyone can add a secret, only a holder of the private key can
+# read one.
+#
+# encrypted_regex keeps structure readable in review. A diff that shows
+# `github_app_id` changed from one number to another is reviewable; a diff where
+# every line is ciphertext is not, and unreviewable diffs get approved unread.
+# Anything whose NAME does not match the pattern is stored in clear, so the
+# pattern is the security boundary and adding a key to these files means
+# choosing which side of it the value sits on.
+
+creation_rules:
+  - path_regex: infra/secrets/.*\.enc\.yaml$
+    encrypted_regex: "^(.*_token|.*_secret|.*_password|.*_passphrase|.*_key|.*_credential)$"
+    age: age12lv6dvkvevth3gkl4g0jpw7kxqs4slkl6vk8vp8675hpq2mmw9cq3cc9c4
