@@ -65,9 +65,27 @@ func main() {
 	t := witness.Town{Root: *town, GT: *gtPath, Timeout: 2 * time.Minute}
 	c := &controlAPI{
 		base:   *endpoint,
-		token:  os.Getenv("WG_SERVICE_TOKEN_ID"),
-		secret: os.Getenv("WG_SERVICE_TOKEN_SECRET"),
+		// The names the cell's credential file actually uses. Reading
+		// WG_SERVICE_TOKEN_* instead was a real defect: the service ran, made
+		// its decisions correctly, logged its escalations to the journal — and
+		// never reached the inbox, reporting only "the token is not set" in a
+		// line nobody was watching. It passed a manual test because the test
+		// exported the names the code wanted.
+		token:  os.Getenv("WG_ACCESS_CLIENT_ID"),
+		secret: os.Getenv("WG_ACCESS_CLIENT_SECRET"),
 		client: &http.Client{Timeout: 30 * time.Second},
+	}
+
+	// Refuse to start half-configured. A witness told where the control plane
+	// is but given no credential for it runs perfectly, decides correctly, and
+	// escalates to a journal nobody reads — which is indistinguishable from a
+	// healthy witness with nothing to report. That happened.
+	if *endpoint != "" && (c.token == "" || c.secret == "") {
+		log.Error("a control API was given but its credentials are missing",
+			"control_api", *endpoint,
+			"needs", "WG_ACCESS_CLIENT_ID and WG_ACCESS_CLIENT_SECRET",
+			"source", "the cell's .credentials/control-api.env")
+		os.Exit(2)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -262,7 +280,8 @@ func (c *controlAPI) report(ctx context.Context, r witness.Report) (witness.Outc
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.token == "" || c.secret == "" {
-		return out, errors.New("WG_SERVICE_TOKEN_ID and WG_SERVICE_TOKEN_SECRET are not set")
+		return out, errors.New("WG_ACCESS_CLIENT_ID and WG_ACCESS_CLIENT_SECRET are not set; " +
+			"the cell's .credentials/control-api.env supplies them")
 	}
 	// The cell's Cloudflare Access service token. Same credential the agents
 	// use to mint git tokens, and bound by Access to this path.

@@ -160,6 +160,28 @@ else
   fail "the tally changed between identical passes: '$tally1' then '$tally2'"
 fi
 
+# ---------------------------------------------------------------------------
+# 7. The escalation path actually reaches the control plane
+# ---------------------------------------------------------------------------
+#
+# The service ran for hours deciding correctly and reporting nothing, because
+# it read WG_SERVICE_TOKEN_* while the cell supplies WG_ACCESS_CLIENT_*. It
+# looked exactly like a healthy witness with nothing to say. Checked here
+# because a findings pipeline that reaches nobody is the failure this whole
+# component exists to avoid.
+if systemctl is-active --quiet wg-witness@oss.service; then
+  pass "the witness service is running"
+  recent=$(journalctl -u wg-witness@oss.service -n 200 --no-pager -o cat 2>/dev/null)
+  if printf '%s' "$recent" | grep -q "could not report to the control plane"; then
+    fail "the witness cannot reach the control plane; escalations stop at the journal"
+    printf '%s' "$recent" | grep "could not report" | tail -1 | sed 's/^/        /'
+  else
+    pass "no control-plane reporting failures in the recent journal"
+  fi
+else
+  fail "wg-witness@oss.service is not running"
+fi
+
 echo
 if [ "$failures" -eq 0 ]; then
   echo "Deterministic witness: all checks passed."
