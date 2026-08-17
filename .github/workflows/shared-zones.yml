@@ -1,0 +1,52 @@
+name: shared-zones
+
+# Watch the Datopian production zones that share this Cloudflare account.
+#
+# On 2026-08-12 an account-level Zero Trust setting returned 403 across these
+# zones, and a human noticed before any monitoring did (wg-8yv.47,
+# docs/incidents/2026-08-12-deny-unmatched-requests.md). Workgraph does not own
+# this account; roughly fifty production zones on it have nothing to do with
+# this project, and they are the ones with the most to lose from a mistake here.
+#
+# This is a smoke check, not monitoring: it says "still serving", not "correct".
+# Continuous observability is WP-I1 (wg-8yv.26). This exists so that the gap
+# between the mistake and someone noticing is bounded in the meantime.
+
+on:
+  schedule:
+    # Every 30 minutes, best effort — GitHub does not guarantee schedule
+    # punctuality and will skip runs under load. Bounding detection to roughly
+    # half an hour is the point; exactness is not.
+    - cron: "*/30 * * * *"
+  # Any change under infra/tofu/account is account-scoped by definition, so it
+  # is checked on the way in as well as on the clock.
+  pull_request:
+    paths:
+      - "infra/tofu/account/**"
+      - "scripts/check_live_zones.sh"
+  push:
+    branches: [main]
+    paths:
+      - "infra/tofu/account/**"
+      - "scripts/check_live_zones.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-zones
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: shared production zones still serving
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No credentials. These are public hostnames, and the check is a plain
+      # HTTP fetch — which is exactly what a visitor experiences, and what the
+      # incident broke.
+      - name: check
+        run: bash scripts/check_live_zones.sh
