@@ -10,3 +10,4 @@ control_api_github_key_path: /etc/workgraph/github-app.pem
 control_api_local_github_key: ""
 control_api_github_app_id: ""
 control_api_github_installation_id: ""
+control_api_local_reconcile_binary: ""

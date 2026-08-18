@@ -9,6 +9,25 @@ Type=simple
 User={{ control_api_user }}
 Group={{ control_api_user }}
 EnvironmentFile=/etc/workgraph/control-api.env
+
+# Secrets arrive as credentials, not environment variables (WP-B3).
+#
+# systemd copies each file below into a per-service tmpfs at
+# $CREDENTIALS_DIRECTORY, mode 0400, owned by this service's user, and unmounts
+# it when the unit stops. An environment variable is worse in three concrete
+# ways: it is readable from /proc/<pid>/environ by anything running as root, it
+# is inherited by every child process so a shell-out leaks it, and
+# `systemctl show -p Environment` prints it in full.
+#
+# The env file above still exists and still carries non-secret configuration —
+# listen address, audiences, app and installation ids. Those are not credentials
+# and there is no reason to hide them from a shell-out.
+LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+LoadCredential=github_webhook_secret:/etc/workgraph/credentials/github_webhook_secret
+{% if control_api_local_github_key | default('') | length > 0 %}
+LoadCredential=github_app_private_key:{{ control_api_github_key_path }}
+{% endif %}
+
 ExecStart={{ control_api_binary }}
 Restart=on-failure
 RestartSec=5s
