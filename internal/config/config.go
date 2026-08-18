@@ -8,7 +8,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -82,7 +84,7 @@ func LoadControlAPI() (ControlAPI, error) {
 	c := ControlAPI{
 		Environment:  Environment(getenv("WG_ENV", string(EnvLocal))),
 		ListenAddr:   getenv("WG_LISTEN_ADDR", "127.0.0.1:8080"),
-		DatabaseURL:  os.Getenv("WG_DATABASE_URL"),
+		DatabaseURL:  databaseURL(),
 		ShutdownWait: getdur("WG_SHUTDOWN_WAIT", 15*time.Second),
 
 		AccessTeamDomain: os.Getenv("WG_ACCESS_TEAM_DOMAIN"),
@@ -91,7 +93,7 @@ func LoadControlAPI() (ControlAPI, error) {
 		CellAccessAudience:       os.Getenv("WG_CELL_ACCESS_AUD"),
 		CellHealthAccessAudience: os.Getenv("WG_CELL_HEALTH_ACCESS_AUD"),
 
-		GitHubWebhookSecret: os.Getenv("WG_GITHUB_WEBHOOK_SECRET"),
+		GitHubWebhookSecret: credential("github_webhook_secret", "WG_GITHUB_WEBHOOK_SECRET"),
 
 		GitHubAppID:          os.Getenv("WG_GITHUB_APP_ID"),
 		GitHubInstallationID: os.Getenv("WG_GITHUB_INSTALLATION_ID"),
@@ -141,4 +143,95 @@ func getdur(key string, def time.Duration) time.Duration {
 		return d
 	}
 	return def
+}
+
+// ---------------------------------------------------------------------------
+// systemd credentials
+// ---------------------------------------------------------------------------
+
+// credential reads a secret from the systemd credential store, falling back to
+// an environment variable.
+//
+// systemd's LoadCredential= places each secret in a file under
+// $CREDENTIALS_DIRECTORY: a per-service tmpfs, mode 0400, owned by the service
+// user, unmounted when the unit stops. An environment variable is worse in three
+// specific ways, none of them theoretical:
+//
+//	it is readable from /proc/<pid>/environ for anyone who can read the process,
+//	which on the control node includes anything running as root;
+//
+//	it is inherited by every child process, so a shell-out leaks the database
+//	password to whatever it runs;
+//
+//	it is trivially captured whole — `systemctl show -p Environment` prints it,
+//	and so does a crash reporter dumping the environment.
+//
+// The environment fallback is deliberate rather than lazy. It keeps local
+// development working without systemd, and it means a partially migrated
+// deployment starts rather than failing in a way that reads like a missing
+// secret. The credential path wins when both are present, so migrating a value
+// is additive: add the LoadCredential line, remove the env line afterwards.
+func credential(name, envKey string) string {
+	if dir := os.Getenv("CREDENTIALS_DIRECTORY"); dir != "" {
+		// filepath.Base defends against a name containing a separator, which
+		// would otherwise read outside the credential directory.
+		b, err := os.ReadFile(filepath.Join(dir, filepath.Base(name)))
+		if err == nil {
+			// Trailing newlines are an artefact of however the value was
+			// written, not part of the secret. A password with a stray newline
+			// fails authentication in a way that looks like a wrong password.
+			return strings.TrimRight(string(b), "\r\n")
+		}
+	}
+	return os.Getenv(envKey)
+}
+
+// CredentialSource reports where each secret was actually read from, so a
+// deployment can prove the migration happened rather than assuming it.
+func CredentialSource(name, envKey string) string {
+	if dir := os.Getenv("CREDENTIALS_DIRECTORY"); dir != "" {
+		if _, err := os.Stat(filepath.Join(dir, filepath.Base(name))); err == nil {
+			return "systemd-credential"
+		}
+	}
+	if os.Getenv(envKey) != "" {
+		return "environment"
+	}
+	return "unset"
+}
+
+// DatabaseURL is the exported form, for the binaries that need a connection
+// string without the rest of the control API's configuration.
+//
+// It exists because cmd/reconcile read WG_DATABASE_URL directly, and moving the
+// password into a systemd credential broke it — reconciliation died with
+// "WG_DATABASE_URL is not set" while the API was healthy. One assembly used by
+// everything is the fix; two ways to build a DSN is how one of them rots.
+func DatabaseURL() string { return databaseURL() }
+
+// databaseURL assembles the connection string, taking the password from the
+// systemd credential store when one is present.
+//
+// The password is the part worth protecting, and it is the part that would
+// otherwise sit in a DSN in the environment where every child process inherits
+// it. WG_DATABASE_URL_TEMPLATE carries everything else and contains no secret,
+// so it can stay in the unit file and be read by anyone.
+//
+// A complete WG_DATABASE_URL still wins if it is set, because local development
+// and the migrate tool both pass one directly.
+func databaseURL() string {
+	if url := os.Getenv("WG_DATABASE_URL"); url != "" {
+		return url
+	}
+	tmpl := os.Getenv("WG_DATABASE_URL_TEMPLATE")
+	password := credential("db_app_password", "WG_DB_APP_PASSWORD")
+	if tmpl == "" || password == "" {
+		return ""
+	}
+	// A password is percent-encoded because it goes into a URL and generated
+	// passwords contain characters that terminate one early. This was not
+	// hypothetical: the current password contains '-' and '_' safely, but the
+	// next rotation could produce '@' or '/' and would silently connect to the
+	// wrong host or database rather than failing.
+	return strings.Replace(tmpl, "{password}", url.QueryEscape(password), 1)
 }

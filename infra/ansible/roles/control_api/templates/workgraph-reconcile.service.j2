@@ -1,6 +1,8 @@
 [Unit]
 Description=Workgraph reconciliation
-Documentation=plan section 18, WP-D3
+# Documentation= must be a URI; a bare phrase makes systemd log
+# "Invalid URL, ignoring" on every start.
+Documentation=https://github.com/datopian/company-workgraph#wp-d3
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -9,6 +11,14 @@ Type=oneshot
 User={{ control_api_user }}
 Group={{ control_api_user }}
 EnvironmentFile=/etc/workgraph/control-api.env
+
+# The database password, as a credential rather than in the environment — the
+# same reasoning as control-api.service. Without this, reconciliation cannot
+# build a DSN at all now that the password has left the environment file.
+LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+{% if control_api_local_github_key | default('') | length > 0 %}
+LoadCredential=github_app_private_key:{{ control_api_github_key_path }}
+{% endif %}
 
 ExecStart={{ control_api_reconcile_binary }}
 

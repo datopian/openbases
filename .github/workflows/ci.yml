@@ -136,6 +136,9 @@ jobs:
       - name: agent health escalation and deduplication
         run: psql -v ON_ERROR_STOP=1 -f test/integration/agent_health.sql
 
+      - name: credential registry holds references, not values
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/credential_registry.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest

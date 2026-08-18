@@ -30,6 +30,55 @@
     group: root
   notify: Restart control-api
 
+# Credential source files. systemd reads these at start and copies them into a
+# per-service tmpfs; the service user never needs to read them itself, which is
+# why they are root-only rather than group-readable like the env file.
+- name: Ensure the credential directory exists
+  ansible.builtin.file:
+    path: /etc/workgraph/credentials
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the service credentials
+  ansible.builtin.copy:
+    dest: "/etc/workgraph/credentials/{{ item.name }}"
+    content: "{{ item.value }}"
+    owner: root
+    group: root
+    # 0400 root-only. systemd runs as root when it loads the credential, so the
+    # service user needs no access to the source file at all — only to the copy
+    # systemd places in $CREDENTIALS_DIRECTORY.
+    mode: "0400"
+  loop:
+    - name: db_app_password
+      value: "{{ postgresql_app_password }}"
+    - name: github_webhook_secret
+      value: "{{ control_api_github_webhook_secret }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: item.value | default('') | length > 0
+  notify: Restart control-api
+
+# A credential that is no longer managed must not linger. systemd would keep
+# loading a stale file, and a rotated-away secret still on disk is exactly what
+# revocation is supposed to remove.
+- name: Remove credentials that are no longer configured
+  ansible.builtin.file:
+    path: "/etc/workgraph/credentials/{{ item.name }}"
+    state: absent
+  loop:
+    - name: db_app_password
+      value: "{{ postgresql_app_password }}"
+    - name: github_webhook_secret
+      value: "{{ control_api_github_webhook_secret }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.value | default('') | length == 0
+  notify: Restart control-api
+
 - name: Install the service environment
   ansible.builtin.template:
     src: control-api.env.j2
@@ -58,6 +107,52 @@
     state: started
     daemon_reload: true
 
+# Converge on the RUNNING process, not just on the files.
+#
+# Handlers run at the end of a play, so a play that fails part-way applies its
+# file changes and never fires them. The next run then sees those files as
+# already correct, notifies nothing, and the stale process keeps running for
+# ever. That is not hypothetical: it happened here. A new binary, unit and
+# environment file sat on disk for two days while the old process served
+# traffic with the plaintext database URL still in its environment — the very
+# thing the systemd credential migration removes. Every file-level check said
+# "migrated".
+#
+# So the deployed binary's mtime is compared against the service's start time,
+# and a service older than its own binary is restarted. This converges from a
+# half-applied state, which a notify cannot.
+- name: Read the deployed binary and the running service
+  ansible.builtin.stat:
+    path: "{{ control_api_binary }}"
+  register: control_api_binary_stat
+
+- name: Read the service start timestamp
+  ansible.builtin.command: systemctl show -p ActiveEnterTimestampMonotonic --value control-api
+  register: control_api_started
+  changed_when: false
+
+- name: Read the system boot time, to compare a monotonic clock against a wall clock
+  ansible.builtin.command: awk '/^btime/ {print $2}' /proc/stat
+  register: control_api_btime
+  changed_when: false
+
+- name: Restart the control API when it is older than its own binary
+  ansible.builtin.systemd:
+    name: control-api
+    state: restarted
+  vars:
+    # ActiveEnterTimestampMonotonic is microseconds since boot; btime is the
+    # boot instant in epoch seconds. Together they give the service's start as
+    # an epoch second, comparable with the binary's mtime.
+    service_started_epoch: >-
+      {{ (control_api_btime.stdout | int) + ((control_api_started.stdout | int) // 1000000) }}
+  when:
+    - control_api_binary_stat.stat.exists
+    - control_api_started.stdout | int > 0
+    # A second of slack, so a binary written in the same second as the restart
+    # does not cause a restart on every subsequent run.
+    - (control_api_binary_stat.stat.mtime | int) > (service_started_epoch | int) + 1
+
 # ---------------------------------------------------------------------------
 # Reconciliation (WP-D3)
 # ---------------------------------------------------------------------------
@@ -71,6 +166,15 @@
     # Owned by root and not writable by the service user: a process that can
     # rewrite its own next invocation is a persistence mechanism.
     mode: "0755"
+  # Skipped when no local build is supplied, rather than failing the play.
+  #
+  # This mattered more than it looks. A failure here aborted the play BEFORE
+  # handlers ran, which left the control node with a new binary, a new unit and
+  # a new environment file on disk while the OLD process kept running with the
+  # old environment — including the plaintext database URL this work exists to
+  # remove. Reading the config files said "migrated"; the running process said
+  # otherwise, and only /proc/<pid>/environ showed the difference.
+  when: control_api_local_reconcile_binary | default('') | length > 0
 
 # The App private key can mint tokens for every installed repository, so its
 # mode is part of the security model — the loader refuses a key readable by

@@ -46,6 +46,18 @@ func main() {
 	log.Info("starting control-api",
 		"env", cfg.Environment, "addr", cfg.ListenAddr, "build", version.String())
 
+	// Where each secret came from, by name, never by value.
+	//
+	// The point is that migrating to systemd credentials is verifiable rather
+	// than assumed. The application falls back to an environment variable when
+	// no credential file is present, which is what keeps local development and a
+	// half-migrated deployment working — and is also exactly what would let a
+	// migration silently not happen. Logging the source turns "we moved the
+	// secrets" into something you can grep for.
+	log.Info("credential sources",
+		"db_app_password", config.CredentialSource("db_app_password", "WG_DB_APP_PASSWORD"),
+		"github_webhook_secret", config.CredentialSource("github_webhook_secret", "WG_GITHUB_WEBHOOK_SECRET"))
+
 	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
 		log.Error("opening database", "error", err)

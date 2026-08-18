@@ -43,3 +43,7 @@ Each runbook states: when to use it, who may run it, prerequisites and required 
 exact commands, how to verify success, how to roll back, and what to record afterwards. Every
 runbook must have been executed at least once — in staging where the action is destructive — before
 go-live.
+
+## Written
+
+- [Rotate or revoke a credential](rotate-a-credential.md) — WP-B3
