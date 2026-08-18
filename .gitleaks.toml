@@ -26,14 +26,21 @@ Encrypting them would be wrong twice: it would claim a protection the value does
 not need, and it would move a line out of the reviewable half of the secrets
 file for no gain.
 
-Scoped by both key pattern and path so it cannot suppress a finding elsewhere.
-Verified by comparing the finding set with and without this file on an identical
-tree: without it, exactly one finding — the AUD at line 15; with it, none.
-Nothing else changes state.
+Scoped by the key pattern ALONE. `paths` is deliberately absent: in a global
+allowlist gitleaks treats `paths` and `regexes` as OR, so listing both
+suppressed every finding in those files rather than the AUD lines. Demonstrated
+by planting `some_api_key: <64 hex>` in group_vars — without this config, four
+findings including the planted one; with paths and regexes together, zero.
+
+Verified after removing `paths`: the three real AUD lines are suppressed and the
+planted non-AUD line is still reported.
 """
 regexTarget = "line"
-regexes = ['''access_aud_[a-z]+:\s*[0-9a-f]{64}''']
-paths = ['''infra/secrets/.*\.enc\.yaml$''']
+# Both spellings the same value appears under: `access_aud_staging` in the
+# encrypted secrets file, and `control_api_cell_access_aud` /
+# `control_api_cell_health_access_aud` in Ansible group_vars. Anchored on the
+# key ENDING in an aud name so it cannot match an arbitrary 64-hex value.
+regexes = ['''[a-z_]*access_aud(_[a-z]+)?:\s*[0-9a-f]{64}''']
 
 # A caution for whoever next changes this file, learned by getting it wrong
 # several times in a row.
