@@ -200,6 +200,15 @@ func CredentialSource(name, envKey string) string {
 	return "unset"
 }
 
+// DatabaseURL is the exported form, for the binaries that need a connection
+// string without the rest of the control API's configuration.
+//
+// It exists because cmd/reconcile read WG_DATABASE_URL directly, and moving the
+// password into a systemd credential broke it — reconciliation died with
+// "WG_DATABASE_URL is not set" while the API was healthy. One assembly used by
+// everything is the fix; two ways to build a DSN is how one of them rots.
+func DatabaseURL() string { return databaseURL() }
+
 // databaseURL assembles the connection string, taking the password from the
 // systemd credential store when one is present.
 //

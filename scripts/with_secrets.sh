@@ -78,9 +78,17 @@ if printf '%s\n' "$plain" | grep -q '^github_app_private_key: |'; then
   keydir="$(mktemp -d)"
   chmod 700 "$keydir"
   trap 'rm -rf "$keydir"' EXIT INT TERM
+  # Strip ALL leading whitespace, not a fixed amount.
+  #
+  # The plaintext was written with a two-space indent, so this used to strip
+  # exactly two — and SOPS's YAML round-trip re-emits the block scalar with
+  # FOUR. Every line kept two spaces, the PEM became unparseable, and the
+  # failure surfaced far away as "Key must be a PEM encoded PKCS1 or PKCS8 key"
+  # from a token mint. A PEM has no significant leading whitespace, so removing
+  # all of it is both correct and immune to whatever indent SOPS picks next.
   printf '%s\n' "$plain" \
-    | sed -n '/^github_app_private_key: |/,/^[^ ]/p' \
-    | sed '1d;/^[^ ]/d;s/^  //' > "$keydir/github-app.pem"
+    | sed -n '/^github_app_private_key: |/,/^[^[:space:]]/p' \
+    | sed '1d;/^[^[:space:]]/d;s/^[[:space:]]*//' > "$keydir/github-app.pem"
   chmod 600 "$keydir/github-app.pem"
   export GITHUB_APP_PRIVATE_KEY_PATH="$keydir/github-app.pem"
 fi

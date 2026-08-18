@@ -15,6 +15,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/datopian/workgraph/internal/config"
 	"github.com/datopian/workgraph/internal/githubapp"
 	"github.com/datopian/workgraph/internal/reconcile"
 )
@@ -33,9 +34,12 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	dsn := os.Getenv("WG_DATABASE_URL")
+	// Shares the control API's assembly, so a password held as a systemd
+	// credential works here too. Reading WG_DATABASE_URL directly is what
+	// broke this when the password moved out of the environment.
+	dsn := config.DatabaseURL()
 	if dsn == "" {
-		log.Error("WG_DATABASE_URL is not set")
+		log.Error("no database connection string; set WG_DATABASE_URL, or WG_DATABASE_URL_TEMPLATE with a db_app_password credential")
 		os.Exit(1)
 	}
 	db, err := sql.Open("pgx", dsn)
