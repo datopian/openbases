@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetch one WAL segment from the archive. Used as restore_command.
 #
-#   wg-restore-wal <%f: segment name> <%p: destination path>
+#   wg-restore-wal <%f: segment name> <%p: destination path> [archive directory]
 #
 # Managed by Ansible (WP-I2). The counterpart to wg-archive-wal, which stores
 # segments gzipped.
@@ -13,9 +13,19 @@
 # happen.
 set -uo pipefail
 
-ARCHIVE_DIR="{{ backup_wal_archive_dir }}"
-name="${1:?usage: wg-restore-wal <segment> <destination>}"
-dest="${2:?usage: wg-restore-wal <segment> <destination>}"
+name="${1:?usage: wg-restore-wal <segment> <destination> [archive]}"
+dest="${2:?usage: wg-restore-wal <segment> <destination> [archive]}"
+# The archive to read from, defaulting to the one on this node.
+#
+# Overridable as a third ARGUMENT rather than an environment variable, because
+# PostgreSQL runs restore_command as a child of the postmaster: it inherits the
+# postmaster's environment, not the environment of whoever started the recovery.
+# An env var would work when tested by hand and be ignored during real recovery.
+#
+# The override is what lets a drill restore from a copy pulled out of R2, which
+# is the path that would be used if this node were gone — and therefore the one
+# worth testing.
+ARCHIVE_DIR="${3:-{{ backup_wal_archive_dir }}}"
 
 if [ -f "$ARCHIVE_DIR/$name.gz" ]; then
   # Decompress to a temporary file and move it into place, so a partial write is

@@ -147,7 +147,14 @@ archive_mode = off
 # decompresses, and still handles the plain segments archived before compression
 # was introduced — a restore has to span that boundary, and the boundary is in
 # the past, which is where restores happen.
-restore_command = '/usr/local/bin/wg-restore-wal %f %p'
+#
+# The archive directory is passed EXPLICITLY. --archive-dir was accepted by this
+# script from the start and then ignored here, because the helper used the path
+# baked into it at deployment time. So a restore always read the local archive
+# whatever it was told, which went unnoticed while the only caller was a drill
+# that wanted the local archive anyway — and would have quietly defeated a
+# restore from an off-machine copy.
+restore_command = '/usr/local/bin/wg-restore-wal %f %p $ARCHIVE_DIR'
 
 # Modest, because this runs alongside the live cluster on a small node and must
 # not compete with it for memory. shared_buffers is not one of the settings

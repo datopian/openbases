@@ -248,6 +248,32 @@ a silent total failure is that the receipt is written from a separate count of
 what is actually in the bucket, which stayed at zero and refused to claim a copy
 existed.
 
+### Restoring from the off-machine copy
+
+`test/acceptance/restore_drill_offsite.sh` — 10/10, evidence at
+`docs/go-live/evidence/2026-08-22-restore-drill-offsite.json`. It reads **nothing**
+from `/var/lib/workgraph`: the base backup and the WAL both come out of R2.
+
+| Measure | Observed |
+| --- | --- |
+| Downloaded | 18 MB tar + 79 WAL segments |
+| Fetch | 7s |
+| Restore | 3s |
+| **Recovery time including the fetch** | **10s** |
+| Recovery point | 24s |
+
+The fetch counts toward the recovery time, because recovering from off-machine
+means downloading first and a number that excludes that is not the time anybody
+experiences.
+
+It asserts that recovery **replayed WAL fetched from R2**, not merely that the
+restore succeeded. That check exists because of the bug it found: `--archive-dir`
+had been accepted by the restore script from the start and then ignored, since
+`restore_command` used the archive path baked into the deployed helper. Every
+restore read the local archive whatever it was told. Nothing noticed, because the
+only caller was a drill that wanted the local archive anyway — and it would have
+quietly defeated exactly this test, passing while proving nothing.
+
 ## What is still NOT protected
 
 The gap is no longer "everything is on one machine". What remains:
@@ -261,6 +287,3 @@ The gap is no longer "everything is on one machine". What remains:
 - **12-month audit retention** is not configured.
 - **Monthly retention** (the plan's 12 monthly alongside 30 daily) is implicit in
   never deleting rather than expressed as a rule.
-- **The restore drill has never run against an off-machine copy.** It restores
-  from the local base backup. Pulling a tar from R2 and restoring that is a
-  different path, and an untested path is a belief.
