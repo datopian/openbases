@@ -146,6 +146,23 @@ as editing.
   when a view looked stale — would now raise `platform_api_unavailable` within
   five minutes.
 - **The RLS integration suite ran as superuser** (`wg-8yv.50`, was #6). See above.
+- **A view bypassed the policy on its own table** (`wg-5n2`). Found and fixed
+  during this pass rather than carried as a risk, and recorded because the way it
+  was found is the transferable part. `credential_registry` had a correct
+  admin-only read policy; `credential_rotation_due`, declared four lines below it,
+  handed every row to any authenticated user — since PostgreSQL 15 a view is
+  evaluated as its OWNER unless it declares `security_invoker`, and the owner is
+  the superuser that applies migrations, which never evaluates row-level security
+  at all. A non-admin could read the name, owner, store, delivery mechanism, blast
+  radius and revocation path of every credential in the company: not the secrets,
+  but the map. Fixed in migration 0022, and `check_migrations.sh` now fails any
+  view that omits `security_invoker`, so the next one cannot reintroduce it.
+
+  It surfaced because the missing test was recorded as a gap instead of waved
+  through. `scripts/check_rls_tests.py` lists the tests that read a protected
+  table without dropping privileges together with the reason each is acceptable,
+  and this policy was on that list as **uncovered**. Writing the test the list
+  admitted was missing found a live bypass.
 - **No off-machine backup of the work graph** (`wg-ohk`, was #7). The R2 token now
   covers the backup buckets, and the graph, the database and the WAL archive are
   copied off the machine every fifteen minutes. A restore drill has recovered
