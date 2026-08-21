@@ -76,6 +76,10 @@ VALUES ('00000000-0000-0000-0000-000000000f10', 'restricted', '00000000-0000-000
 -- changed the account.
 CREATE TEMP TABLE wg_org_admin AS
 SELECT u.id FROM users u WHERE u.primary_email = 'anuar.ustayev@datopian.com';
+-- Readable after the role drop. A temp table created by the owner is not
+-- readable by workgraph_app without this, and the failure — "permission denied
+-- for table wg_org_admin" — arrives after the drop, well away from the CREATE.
+GRANT SELECT ON wg_org_admin TO workgraph_app;
 
 DO $$
 DECLARE n integer;
