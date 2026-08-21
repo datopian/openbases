@@ -17,7 +17,15 @@ password_encryption = scram-sha-256
 # does not require downtime.
 wal_level = {{ postgresql_wal_level }}
 archive_mode = {{ postgresql_archive_mode }}
-archive_command = '/bin/true'   # replaced by WP-I2 with the real R2 upload
+# archive_command is deliberately NOT set here. WP-I2 sets it in
+# conf.d/20-archive.conf, which is read after this file, so having a value in
+# both places would mean the one a reader finds first is not the one in effect.
+#
+# It used to be '/bin/true', which DISCARDS every segment while looking
+# configured — archive_mode on, no errors, and no recoverable history. With no
+# archive_command at all, PostgreSQL retains WAL instead of throwing it away, so
+# the failure mode if the backup role has not run is a growing pg_wal that the
+# disk-pressure alert reports, rather than silent unrecoverability.
 max_wal_senders = 3
 
 # Log enough to investigate an incident. Statement logging stays off: query text

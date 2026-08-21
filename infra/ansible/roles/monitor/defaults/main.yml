@@ -32,10 +32,25 @@ monitor_receipt_dir: /var/lib/workgraph/backups
 # backups it can find treats the total absence of a backup as nothing to say,
 # which is the failure that matters most.
 #
-# postgres is declared even though WP-I2 has not implemented it yet. That is the
-# point — the gap belongs in an operator's inbox rather than being discovered
-# during a restore. See docs/runbooks/backup-stale.md.
-monitor_backup_streams: "beads:24h,postgres:24h"
+# Each max age allows for missed runs rather than matching the cadence exactly,
+# because a timer that fires a minute late is not an incident:
+#
+#   beads     snapshot every 15 minutes, so 1h tolerates three misses
+#   postgres  base backup daily, so 36h tolerates one miss
+#
+# The OFF-MACHINE copies are not declared, and that is a judgement rather than an
+# oversight. There is no off-machine backup: wg-ohk records that the R2 key
+# returns 403 on the backup bucket, so everything is currently on the same
+# machine as the thing it protects. Declaring it would produce an alert that can
+# never clear until somebody mints a token — and a permanently red alert is how
+# the alerting system built in WP-I1 gets ignored, which would cost more than the
+# gap it advertises. The gap is tracked as an open P0 bead and stated in
+# docs/go-live/BACKUP_AND_RECOVERY.md; it becomes an alert the moment offsite is
+# supposed to work.
+monitor_backup_streams: >-
+  {{ 'beads:1h,postgres:36h,beads-offsite:36h,postgres-offsite:36h'
+     if (backup_offsite_enabled | default(false))
+     else 'beads:1h,postgres:36h' }}
 
 # Filesystems to measure. The PostgreSQL data directory is listed separately from
 # root because on this node they can fill for entirely unrelated reasons, and an

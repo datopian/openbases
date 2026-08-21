@@ -1,0 +1,283 @@
+---
+- name: Ensure the shared backup group exists
+  ansible.builtin.group:
+    name: "{{ backup_group }}"
+    system: true
+
+# Both accounts write into the receipt directory. Membership rather than a
+# world-writable directory, and rather than putting postgres in the graph
+# owner's group, which would give it read access to the graph itself.
+- name: Add the backup writers to the shared group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: "{{ backup_group }}"
+    append: true
+  loop:
+    - postgres
+    - "{{ backup_beads_user }}"
+  notify: Restart PostgreSQL for group membership
+
+- name: Create the backup directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    # Group-writable and setgid, so a receipt written by either account stays
+    # group-readable for the monitor without anybody having to remember chmod.
+    - { path: "{{ backup_root }}", owner: root, group: "{{ backup_group }}", mode: "2770" }
+    - { path: "{{ backup_postgres_dir }}", owner: postgres, group: postgres, mode: "0700" }
+    - { path: "{{ backup_beads_dir }}", owner: "{{ backup_beads_user }}", group: "{{ backup_beads_user }}", mode: "0700" }
+    # The archive is written by the PostgreSQL server process itself.
+    - { path: "{{ backup_wal_archive_dir }}", owner: postgres, group: postgres, mode: "0700" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Install the WAL archive command
+  ansible.builtin.template:
+    src: wg-archive-wal.j2
+    dest: /usr/local/bin/wg-archive-wal
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the backup scripts
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/bin/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { src: "{{ playbook_dir }}/../../scripts/backup_postgres.sh", dest: wg-backup-postgres }
+    - { src: "{{ playbook_dir }}/../../scripts/backup_beads_hq.sh", dest: wg-backup-beads }
+    - { src: "{{ playbook_dir }}/../../scripts/restore_postgres.sh", dest: wg-restore-postgres }
+  loop_control:
+    label: "{{ item.dest }}"
+
+# ---------------------------------------------------------------------------
+# WAL archiving: the setting that actually determines the recovery point
+# ---------------------------------------------------------------------------
+#
+# archive_mode was already on with archive_command = /bin/true, which discards
+# every segment while looking configured. Both of these are reload-only, so no
+# restart is needed and there is no reason to defer them.
+- name: Wire the real archive command
+  ansible.builtin.copy:
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/conf.d/20-archive.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+    content: |
+      # Managed by Ansible (WP-I2). Replaces the archive_command = '/bin/true'
+      # placeholder left by WP-B2.
+      #
+      # %p is the path to the segment, %f its name. The command exits 0 only
+      # after the bytes are fsynced into the archive, because PostgreSQL is free
+      # to recycle a segment the moment this reports success.
+      archive_command = '/usr/local/bin/wg-archive-wal %p %f'
+      # Force a segment out at least this often. Without it a segment is only
+      # archived when 16 MB has accumulated, which on a small, quiet database can
+      # be hours — an unbounded recovery point despite archiving being "on".
+      archive_timeout = {{ backup_archive_timeout }}
+  notify: Reload PostgreSQL
+
+- name: Apply the archive configuration now
+  ansible.builtin.meta: flush_handlers
+
+# Proof, not assumption. A wrong archive_command shows up here rather than during
+# a restore, which is the only other time anybody looks.
+- name: Force a WAL segment and confirm it reaches the archive
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      before=$(find {{ backup_wal_archive_dir }} -maxdepth 1 -type f | wc -l)
+      psql -qc 'SELECT pg_switch_wal()' >/dev/null
+      for i in $(seq 1 30); do
+        after=$(find {{ backup_wal_archive_dir }} -maxdepth 1 -type f | wc -l)
+        [ "$after" -gt "$before" ] && { echo "archived: $before -> $after"; exit 0; }
+        sleep 1
+      done
+      echo "no segment reached {{ backup_wal_archive_dir }} within 30s" >&2
+      psql -qtAc "SELECT last_failed_wal, last_failed_time, failed_count FROM pg_stat_archiver" >&2
+      exit 1
+  become: true
+  become_user: postgres
+  changed_when: false
+  register: backup_archive_probe
+
+- name: Report the archive probe
+  ansible.builtin.debug:
+    var: backup_archive_probe.stdout
+
+# ---------------------------------------------------------------------------
+# Timers
+# ---------------------------------------------------------------------------
+- name: Install the backup units
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: wg-backup-postgres.service
+      content: |
+        # Managed by Ansible (WP-I2).
+        [Unit]
+        Description=PostgreSQL base backup, verified
+        Documentation=https://github.com/datopian/company-workgraph#wp-i2
+        After=postgresql.service
+        Requires=postgresql.service
+
+        [Service]
+        Type=oneshot
+        User=postgres
+        Group=postgres
+        Environment=WG_BACKUP_BASE_DIR={{ backup_postgres_dir }}
+        Environment=WG_BACKUP_RECEIPT_DIR={{ backup_receipt_dir }}
+        Environment=WG_BACKUP_KEEP={{ backup_postgres_keep }}
+        Environment=WG_BACKUP_DATABASE={{ postgresql_database }}
+        ExecStart=/usr/local/bin/wg-backup-postgres
+        # A backup competing with live traffic on a 2-vCPU node should lose.
+        Nice=10
+        IOSchedulingClass=idle
+        NoNewPrivileges=true
+        PrivateTmp=true
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: wg-backup-postgres.timer
+      content: |
+        # Managed by Ansible (WP-I2).
+        [Unit]
+        Description=Daily PostgreSQL base backup
+        Documentation=https://github.com/datopian/company-workgraph#wp-i2
+
+        [Timer]
+        OnCalendar={{ backup_postgres_schedule }}
+        RandomizedDelaySec=600
+        # A missed backup runs on the next boot rather than being skipped. A node
+        # that was off is exactly when a backup is most likely to be wanted.
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+
+    - name: wg-backup-beads.service
+      content: |
+        # Managed by Ansible (WP-I2).
+        [Unit]
+        Description=Native work-graph snapshot
+        Documentation=https://github.com/datopian/company-workgraph#wp-i2
+        After=network-online.target
+
+        [Service]
+        Type=oneshot
+        User={{ backup_beads_user }}
+        Group={{ backup_beads_user }}
+        # bd shells out to Dolt, which segfaults without HOME.
+        Environment=HOME={{ backup_beads_home }}
+        Environment=PATH=/usr/local/bin:/usr/bin:/bin
+        Environment=WG_HQ_GRAPH={{ backup_beads_graph }}
+        Environment=WG_HQ_BACKUP_DIR={{ backup_beads_dir }}
+        Environment=WG_BACKUP_RECEIPT_DIR={{ backup_receipt_dir }}
+        ExecStart=/usr/local/bin/wg-backup-beads
+        Nice=10
+        NoNewPrivileges=true
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: wg-backup-beads.timer
+      content: |
+        # Managed by Ansible (WP-I2).
+        [Unit]
+        Description=Work-graph snapshot every {{ backup_beads_interval }}
+        Documentation=https://github.com/datopian/company-workgraph#wp-i2
+
+        [Timer]
+        OnBootSec=3min
+        OnUnitActiveSec={{ backup_beads_interval }}
+        RandomizedDelaySec=60
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+
+    - name: wg-backup-beads-export.service
+      content: |
+        # Managed by Ansible (WP-I2). The daily JSONL export, which is an extra
+        # recovery aid and NOT the backup: it preserves neither Dolt history nor
+        # the state bd backup restore consumes.
+        [Unit]
+        Description=Daily work-graph JSONL export
+        Documentation=https://github.com/datopian/company-workgraph#wp-i2
+
+        [Service]
+        Type=oneshot
+        User={{ backup_beads_user }}
+        Group={{ backup_beads_user }}
+        Environment=HOME={{ backup_beads_home }}
+        Environment=PATH=/usr/local/bin:/usr/bin:/bin
+        Environment=WG_HQ_GRAPH={{ backup_beads_graph }}
+        Environment=WG_HQ_BACKUP_DIR={{ backup_beads_dir }}
+        Environment=WG_BACKUP_RECEIPT_DIR={{ backup_receipt_dir }}
+        ExecStart=/usr/local/bin/wg-backup-beads --export
+        Nice=10
+        NoNewPrivileges=true
+
+    - name: wg-backup-beads-export.timer
+      content: |
+        # Managed by Ansible (WP-I2).
+        [Unit]
+        Description=Daily work-graph JSONL export
+        Documentation=https://github.com/datopian/company-workgraph#wp-i2
+
+        [Timer]
+        OnCalendar={{ backup_beads_export_schedule }}
+        RandomizedDelaySec=600
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd
+
+- name: Enable the backup timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - wg-backup-postgres.timer
+    - wg-backup-beads.timer
+    - wg-backup-beads-export.timer
+
+# The first backup, now, rather than at 01:20 tomorrow. Until one exists there is
+# nothing to restore from, and the monitor is correctly alerting that there is
+# no backup — leaving that true overnight after deploying the fix for it would
+# be an odd definition of done.
+- name: Take the first backups now
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - wg-backup-postgres.service
+    - wg-backup-beads.service
+  register: backup_first_run
+  changed_when: true
+
+- name: Confirm both receipts exist
+  ansible.builtin.stat:
+    path: "{{ backup_receipt_dir }}/{{ item }}.receipt"
+  register: backup_receipts
+  failed_when: not backup_receipts.stat.exists
+  loop:
+    - postgres
+    - beads
