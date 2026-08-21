@@ -46,7 +46,10 @@ monitor_mounts: "/,/var/lib/postgresql"
 # between staging and production, and a threshold that needs a release to change
 # is one that gets worked around instead.
 monitor_disk_percent: 85
-monitor_webhook_backlog_age: 15m
+# Three reconciliation periods. workgraph-reconcile.timer fires every 15 minutes,
+# so a delivery arriving just after a pass waits nearly that long as a matter of
+# course; a threshold at or near the period alerts on healthy operation.
+monitor_webhook_backlog_age: 45m
 monitor_agent_health_silence: 30m
 
 # How many execution cells should be reporting agent health.

@@ -6,7 +6,14 @@ Deliveries are landing in `github_deliveries` and nothing is setting
 `processed_at`. The alert fires on the **age** of the oldest unprocessed
 delivery, not the depth of the queue: a burst of fifty during a busy merge is
 normal and drains on the next reconciliation pass, whereas one delivery stuck for
-an hour means the consumer is broken.
+three quarters of an hour means the consumer is broken.
+
+The threshold is three reconciliation periods. `workgraph-reconcile.timer` fires
+every 15 minutes, so a delivery that arrives just after a pass waits nearly that
+long as a matter of course — a queue 20 deep whose oldest entry is 9 minutes old
+is healthy, and this alert deliberately does not fire on it. **Reaching this
+threshold means three consecutive passes did not consume the queue**, so do not
+start by assuming a transient.
 
 This is the failure shape that hides best. The webhook endpoint keeps accepting
 deliveries and returning 200, so GitHub's delivery log is green and the problem
