@@ -21,6 +21,9 @@
     - postgresql
     - beads_hq
     - control_api
+    # After control_api: the monitor reads its environment file and its database
+    # credential, and probes its health endpoint.
+    - monitor
 
 - name: Configure execution cells
   hosts: execution

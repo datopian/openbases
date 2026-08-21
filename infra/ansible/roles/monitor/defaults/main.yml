@@ -1,0 +1,58 @@
+---
+# The platform monitor (WP-I1).
+#
+# Left empty, the binary is not deployed and the units are not installed, so a
+# run without a locally built binary changes nothing rather than removing a
+# working service. Build with `make build-linux`, which cross-compiles for the
+# node: ./bin/linux-amd64/monitor. A macOS binary from `make build` installs
+# without complaint and then fails to exec.
+monitor_local_binary: ""
+monitor_binary: /usr/local/bin/wg-monitor
+
+# The user the monitor runs as. It shares the control API's identity because it
+# needs exactly that identity's database access and no more; giving it its own
+# would mean a second credential to rotate for no additional confinement.
+#
+# A read-only database role would be better still, and is worth doing when one
+# exists — the monitor only ever SELECTs, apart from calling the two alert
+# functions.
+monitor_user: "{{ control_api_user | default('workgraph') }}"
+
+# How often to look. Every five minutes is a compromise: an outage is noticed
+# within one cycle, and the checks are three cheap queries, one loopback HTTP
+# request and a statfs, so the cost of looking often is negligible.
+monitor_interval: 5min
+
+# Where the backup jobs leave their receipts.
+monitor_receipt_dir: /var/lib/workgraph/backups
+
+# The backup obligations, as name:max-age.
+#
+# DECLARED rather than discovered, on purpose: a check that reports on the
+# backups it can find treats the total absence of a backup as nothing to say,
+# which is the failure that matters most.
+#
+# postgres is declared even though WP-I2 has not implemented it yet. That is the
+# point — the gap belongs in an operator's inbox rather than being discovered
+# during a restore. See docs/runbooks/backup-stale.md.
+monitor_backup_streams: "beads:24h,postgres:24h"
+
+# Filesystems to measure. The PostgreSQL data directory is listed separately from
+# root because on this node they can fill for entirely unrelated reasons, and an
+# alert that does not say which one sends the operator to the wrong place.
+monitor_mounts: "/,/var/lib/postgresql"
+
+# Thresholds. Configuration rather than constants: the right value differs
+# between staging and production, and a threshold that needs a release to change
+# is one that gets worked around instead.
+monitor_disk_percent: 85
+monitor_webhook_backlog_age: 15m
+monitor_agent_health_silence: 30m
+
+# How many execution cells should be reporting agent health.
+#
+# Zero means none is expected, and silence is then correct rather than an alert —
+# alerting about an absent component is how a staging environment teaches people
+# to mute the channel. Derived from the inventory so that removing a cell updates
+# the expectation instead of leaving a permanently failing check.
+monitor_expect_cells: "{{ groups['execution'] | default([]) | length }}"

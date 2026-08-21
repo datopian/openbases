@@ -1,0 +1,14 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# The timer, not the service. Restarting a oneshot service runs a monitor pass
+# immediately, which would write to inboxes during a deployment; restarting the
+# timer picks up the new unit and waits for the next scheduled pass.
+- name: Restart the monitor timer
+  ansible.builtin.systemd_service:
+    name: wg-monitor.timer
+    state: restarted
+    daemon_reload: true
+  when: monitor_binary_stat.stat.exists | default(false)
