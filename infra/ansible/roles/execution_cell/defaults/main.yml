@@ -34,3 +34,36 @@ witness_sweep: 10m
 # and handed to a person. Generous, because a polecat running a test suite is
 # routinely quiet for minutes and a false stall interrupts real work.
 witness_stall_after: 12m
+
+# ---------------------------------------------------------------------------
+# Resource limits, DERIVED from what the node actually has (WP-I3)
+# ---------------------------------------------------------------------------
+#
+# The previous limits were absolute numbers written without reference to the
+# machine, and both were wrong in the same direction:
+#
+#   MemoryMax = 8192M on a node with 3819 MiB of RAM. A ceiling above physical
+#   memory can never be reached — the kernel exhausts the machine first and the
+#   cgroup never intervenes. It read as protective in `systemctl show` and
+#   protected nothing.
+#
+#   CPUQuota = 200% on a 2-core node, for each of two cells. One cell could take
+#   the entire machine, leaving nothing for sshd or the tunnel — and the tunnel
+#   is the only way in, because the node has no inbound port. A runaway agent
+#   could make the box unreachable exactly when you needed to stop it.
+#
+# So they are computed from discovered facts with an explicit reservation. A
+# bigger node gets bigger limits; a limit can no longer exceed the hardware.
+#
+# The reservation is for the system, not spare capacity: sshd, cloudflared,
+# journald, and the deterministic witness all have to keep running while a cell
+# is being throttled.
+cell_system_reserve_cpu_percent: 25
+cell_system_reserve_memory_mb: 1024
+
+# A floor, so a small node produces a small-but-workable cell rather than an
+# unusable one. If the arithmetic falls below this the node is too small to host
+# the configured number of cells, which is worth failing on rather than papering
+# over.
+cell_min_cpu_percent: 40
+cell_min_memory_mb: 512

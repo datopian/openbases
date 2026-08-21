@@ -63,6 +63,65 @@
   loop_control:
     label: "{{ item.name }}"
 
+# ---------------------------------------------------------------------------
+# Resource limits, derived from the node (WP-I3)
+# ---------------------------------------------------------------------------
+#
+# Computed once from discovered facts so a limit can never again exceed the
+# hardware it is meant to bound. See the role defaults for what went wrong.
+- name: Derive per-cell limits from this node's capacity
+  ansible.builtin.set_fact:
+    cell_cpu_percent: >-
+      {{ [ (((ansible_processor_vcpus | int) * 100 - cell_system_reserve_cpu_percent)
+            / (execution_cells | length)) | round | int,
+           cell_min_cpu_percent ] | max }}
+    cell_memory_mb: >-
+      {{ [ (((ansible_memtotal_mb | int) - cell_system_reserve_memory_mb)
+            / (execution_cells | length)) | round | int,
+           cell_min_memory_mb ] | max }}
+
+- name: Report the derived limits, so a surprising number is visible in the log
+  ansible.builtin.debug:
+    msg: >-
+      {{ ansible_processor_vcpus }} vCPU and {{ ansible_memtotal_mb }} MiB across
+      {{ execution_cells | length }} cell(s):
+      CPUQuota={{ cell_cpu_percent }}% MemoryMax={{ cell_memory_mb }}M per cell
+
+# A limit above the machine's capacity is not a limit. This is the check that
+# would have caught MemoryMax=8192M on a 3819 MiB node before it shipped.
+- name: Refuse limits that exceed the hardware
+  ansible.builtin.assert:
+    that:
+      - (cell_memory_mb | int) < (ansible_memtotal_mb | int)
+      - ((cell_cpu_percent | int) * (execution_cells | length)) <= ((ansible_processor_vcpus | int) * 100)
+    fail_msg: >-
+      Derived limits exceed the node: {{ cell_memory_mb }}M per cell on a
+      {{ ansible_memtotal_mb }}M machine, or {{ cell_cpu_percent }}% x
+      {{ execution_cells | length }} cells on {{ ansible_processor_vcpus }} vCPU.
+      A ceiling above capacity can never fire.
+    success_msg: "derived limits fit within the node's capacity"
+
+- name: Install the per-cell slice agents actually run in
+  ansible.builtin.template:
+    src: wgcell.slice.j2
+    dest: "/etc/systemd/system/wgcell-{{ item.name }}.slice"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd
+
+- name: Start the per-cell slices
+  ansible.builtin.systemd_service:
+    name: "wgcell-{{ item.name }}.slice"
+    state: started
+    daemon_reload: true
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Apply cgroup limits per cell
   ansible.builtin.copy:
     dest: "/etc/systemd/system/user-.slice.d/50-wgcell-{{ item.name }}.conf"
@@ -72,9 +131,17 @@
       #
       # A build-heavy agent must not be able to starve the node. Plan section
       # 1.3 keeps the control plane off this machine for the same reason.
+      # These bound a real LOGIN session as the cell user, which is not how
+      # agents start: dispatch runs `su` from a root SSH session, so agent
+      # processes land in root's session scope and none of this applies to them.
+      # That is what wgcell-<name>.slice is for. This is kept so an interactive
+      # login is bounded too, and now uses the derived numbers rather than the
+      # absolute ones that exceeded the machine.
       [Slice]
-      CPUQuota={{ item.cpu_quota_percent }}%
-      MemoryMax={{ item.memory_limit_mb }}M
+      CPUAccounting=yes
+      MemoryAccounting=yes
+      CPUQuota={{ cell_cpu_percent }}%
+      MemoryMax={{ cell_memory_mb }}M
       TasksMax={{ item.max_processes }}
   loop: "{{ execution_cells }}"
   loop_control:

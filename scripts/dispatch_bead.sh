@@ -20,12 +20,42 @@ set -uo pipefail
 BEAD="${1:?usage: dispatch_bead.sh <bead-id> [rig] [timeout-seconds]}"
 RIG="${2:-sandbox}"
 DEADLINE="${3:-900}"
-CELL=/srv/cells/oss
+CELL_DEFAULT_NAME="oss"
+CELL=/srv/cells/${CELL_NAME:-$CELL_DEFAULT_NAME}
 
-run() {
-  su -s /bin/bash -c "export PATH=/usr/local/bin:\$PATH HOME=$CELL
-cd $CELL/town && $1" wgcell_oss 2>&1
-}
+CELL_NAME="${CELL_NAME:-oss}"
+SLICE="wgcell-${CELL_NAME}.slice"
+
+# Agents run inside the cell's slice, not in whatever cgroup this script happens
+# to be in.
+#
+# This used to be a plain `su`, and that was a hole rather than a detail. `su`
+# from a root SSH session leaves the process in ROOT'S session scope, so every
+# agent ran outside the per-cell cgroup and no CPU, memory or task limit applied
+# to any of them. user-<uid>.slice carried a quota and held zero processes
+# (WP-I3). systemd-run places the town — and therefore tmux, and therefore every
+# agent tmux spawns — inside the limited slice.
+#
+# Falls back to `su` when the slice is absent, so a node that has not been
+# re-provisioned still dispatches rather than failing; the fallback is announced
+# because it means the limits are not in force.
+if [ -f "/etc/systemd/system/${SLICE}" ]; then
+  run() {
+    systemd-run --quiet --pipe --collect --wait \
+      --uid="wgcell_${CELL_NAME}" --slice="$SLICE" \
+      --setenv=PATH=/usr/local/bin:/usr/bin:/bin \
+      --setenv=HOME="$CELL" \
+      --working-directory="$CELL/town" \
+      /bin/bash -lc "$1" 2>&1
+  }
+else
+  echo "!! ${SLICE} is absent; falling back to su, and the per-cell resource"
+  echo "!! limits will NOT apply to these agents. Re-run the execution_cell role."
+  run() {
+    su -s /bin/bash -c "export PATH=/usr/local/bin:\$PATH HOME=$CELL
+cd $CELL/town && $1" "wgcell_${CELL_NAME}" 2>&1
+  }
+fi
 
 teardown() {
   echo "  tearing down..."
