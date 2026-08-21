@@ -1,0 +1,40 @@
+# Managed by Ansible (WP-I3). Resource limits for cell {{ item.name }}.
+#
+# This is the slice agents ACTUALLY run in. The limits on user-<uid>.slice apply
+# only to real login sessions, and agents are not started from one: dispatch runs
+# `su` from a root SSH session, so every agent process inherited root's session
+# scope and no limit applied to any of them. The user slice held zero processes
+# while advertising a quota.
+#
+# Placement is by `systemd-run --slice=wgcell-{{ item.name }}.slice`, which puts
+# the town — and therefore tmux, and therefore every agent it spawns — inside
+# this cgroup. Verified on the node: a 40% quota produced exactly 2400 ms of CPU
+# in 6 seconds with 89 throttled periods.
+
+[Unit]
+Description=Workgraph execution cell {{ item.name }}
+Before=slices.target
+
+[Slice]
+# Accounting on explicitly. Without it the usage counters read zero, which makes
+# any measurement of whether a limit is working impossible.
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+IOAccounting=yes
+
+# Derived from the node, not chosen. See the role defaults for the reasoning.
+CPUQuota={{ cell_cpu_percent }}%
+MemoryHigh={{ (cell_memory_mb * 0.8) | round | int }}M
+MemoryMax={{ cell_memory_mb }}M
+TasksMax={{ item.max_processes | default(512) }}
+
+# MemoryHigh before MemoryMax on purpose: it throttles and reclaims under
+# pressure rather than killing outright, so a cell that is merely busy slows
+# down, and only a cell that is genuinely runaway gets an OOM kill.
+
+# Cells are lower priority than the system. This is what keeps the node
+# administrable while a cell is at its quota — the quota bounds it, and the
+# weight decides who wins the remainder.
+CPUWeight=50
+IOWeight=50
