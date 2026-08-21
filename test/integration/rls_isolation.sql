@@ -73,22 +73,23 @@ VALUES ('00000000-0000-0000-0000-000000000f10', 'restricted', '00000000-0000-000
 -- The organisation admin's id, resolved HERE as the owner because users and
 -- role_grants are themselves protected: after dropping privileges this session
 -- could not look it up, and hardcoding a uuid would pass silently if the seed
--- changed the account.
-CREATE TEMP TABLE wg_org_admin AS
-SELECT u.id FROM users u WHERE u.primary_email = 'anuar.ustayev@datopian.com';
--- Readable after the role drop. A temp table created by the owner is not
--- readable by workgraph_app without this, and the failure — "permission denied
--- for table wg_org_admin" — arrives after the drop, well away from the CREATE.
-GRANT SELECT ON wg_org_admin TO workgraph_app;
-
+-- ever changed the account.
+--
+-- Carried across the role change in a session setting rather than a temp table.
+-- A temp table created by the owner is not reachable by workgraph_app — it needs
+-- both a grant on the table and usage on the temp schema — and the failure
+-- surfaces after the drop, far from the CREATE, as "permission denied for table".
+-- A setting has no permission surface at all.
 DO $$
-DECLARE n integer;
+DECLARE v_admin uuid;
 BEGIN
-  SELECT count(*) INTO n FROM wg_org_admin;
-  IF n <> 1 THEN
-    RAISE EXCEPTION 'expected exactly one seeded organisation admin, found %; the '
-                    'admin-only read assertions below would prove nothing', n;
+  SELECT u.id INTO v_admin FROM users u
+   WHERE u.primary_email = 'anuar.ustayev@datopian.com';
+  IF v_admin IS NULL THEN
+    RAISE EXCEPTION 'no seeded organisation admin was found; the admin-only read '
+                    'assertions below would prove nothing';
   END IF;
+  PERFORM set_config('wg.test_admin_id', v_admin::text, false);
 END $$;
 
 SET LOCAL ROLE workgraph_app;
@@ -204,7 +205,7 @@ BEGIN
   -- The admin must, or the policy is not admin-only, it is nobody-only — and a
   -- table nobody can read looks identical to a policy that works.
   PERFORM set_config('workgraph.user_id',
-                     (SELECT id::text FROM wg_org_admin), true);
+                     current_setting('wg.test_admin_id'), true);
   SELECT count(*) INTO n FROM credential_registry;
   IF n = 0 THEN
     RAISE EXCEPTION 'the organisation admin cannot read the credential registry; '
