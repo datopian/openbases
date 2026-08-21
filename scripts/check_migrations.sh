@@ -61,8 +61,28 @@ for t in test/integration/*.sql; do
   # The FULL path, not the basename. A comment mentioning 0007_projections.sql
   # matches a bare "projections.sql" and would satisfy this check without any
   # step existing — the same false positive that hid the gap in the first place.
-  grep -qF "$t" .github/workflows/ci.yml || \
-    note "$(basename "$t") exists but is never run by .github/workflows/ci.yml"
+  if grep -qF "$t" .github/workflows/ci.yml; then
+    continue
+  fi
+  # A file may also earn its place by being INCLUDED by a test that CI runs,
+  # rather than being a test itself — assert_app_role.sql is machinery shared by
+  # every test that drops to workgraph_app. Requiring a \ir reference from a
+  # file the workflow actually runs keeps the original guarantee: the file is
+  # reached on every CI run, or it is reported.
+  inc="$(basename "$t")"
+  if grep -rqE "^\\\\ir[[:space:]]+$inc\\b" test/integration/*.sql 2>/dev/null; then
+    # And whatever includes it must itself be run, or this is circular.
+    included_by_live=0
+    for u in $(grep -rlE "^\\\\ir[[:space:]]+$inc\\b" test/integration/*.sql); do
+      grep -qF "$u" .github/workflows/ci.yml && included_by_live=1
+    done
+    if [ "$included_by_live" = 1 ]; then
+      continue
+    fi
+    note "$inc is only included by tests that CI never runs"
+    continue
+  fi
+  note "$(basename "$t") exists but is never run by .github/workflows/ci.yml"
 done
 
 python3 scripts/check_reserved_words.py || fail=1
