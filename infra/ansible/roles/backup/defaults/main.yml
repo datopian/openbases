@@ -1,0 +1,62 @@
+---
+# Backup and disaster recovery (WP-I2). Runs on the control node.
+
+# A group shared by the two accounts that write receipts: postgres takes the
+# database backup, and the graph's owner takes the work-graph backup. A shared
+# group is narrower than making the directory world-writable and narrower than
+# adding either account to the other's group.
+backup_group: wgbackup
+
+backup_root: /var/lib/workgraph/backups
+backup_receipt_dir: /var/lib/workgraph/backups
+backup_postgres_dir: /var/lib/workgraph/backups/postgres
+backup_beads_dir: /var/lib/workgraph/backups/beads
+
+# The WAL archive. Deliberately NOT inside the PostgreSQL data directory: an
+# archive that shares a directory tree with the thing it protects is lost by the
+# same `rm -rf` that made it necessary.
+backup_wal_archive_dir: /var/lib/workgraph/wal-archive
+
+# How long a WAL segment may wait before being archived.
+#
+# This, not the base backup schedule, is what sets the recovery point objective.
+# The plan documents 15 minutes; 5 leaves room for a retry and a slow copy
+# without eating the whole budget.
+#
+# It matters more than it looks on a quiet database. archive_timeout defaults to
+# 0, meaning a segment is only archived once 16 MB of WAL has accumulated — on a
+# 25 MB database with light traffic that can be many hours, so the RPO was
+# unbounded despite archive_mode being on.
+backup_archive_timeout: 5min
+
+# 30 daily base backups, as the plan requires. The database is 25 MB and the
+# node has 142 GB free, so retention is bounded by the plan rather than by disk.
+backup_postgres_keep: 30
+
+# Native work-graph snapshot cadence. The plan asks for at least every 15
+# minutes, matching the PostgreSQL recovery point objective.
+backup_beads_interval: 15min
+
+# Schedules. Both early UTC and offset from each other so two backups do not
+# contend for the same disk and CPU on a 2-vCPU node.
+backup_postgres_schedule: "01:20"
+backup_beads_export_schedule: "01:40"
+
+# The graph to back up. Defaulted rather than read straight from the beads_hq
+# role, so this role works when that one is not in the play and a rename there
+# fails visibly here instead of resolving to an empty path.
+backup_beads_home: "{{ beads_hq_root | default('/srv/graphs') }}"
+backup_beads_graph: "{{ backup_beads_home }}/{{ beads_hq_name | default('company-hq') }}"
+backup_beads_user: "{{ beads_hq_user | default('workgraph') }}"
+
+# Off-machine copies are NOT configured here, and that is a blocker rather than
+# an omission (wg-ohk). The R2 access key reaches the OpenTofu state bucket and
+# returns 403 on workgraph-backups-staging, because it was scoped to the buckets
+# that existed when it was minted and the backup bucket was created later.
+#
+# Until a token covering the backup bucket exists, everything below is on the
+# same machine as the thing it protects. That survives a bad migration, a dropped
+# table and a corrupted page; it does not survive losing the node. The monitor
+# declares postgres-offsite and beads-offsite as streams with no receipt, so the
+# gap is an open alert rather than a footnote nobody reads.
+backup_offsite_enabled: false

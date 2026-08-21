@@ -61,6 +61,17 @@ their inbox rather than having to know this index exists.
 | `platform_disk_pressure` | [a filesystem is filling up](disk-pressure.md) |
 | `platform_backup_stale` | [a backup stream is stale or has never run](backup-stale.md) |
 
+## Recovery procedures (WP-I2)
+
+| Procedure | Runbook |
+| --- | --- |
+| Restore PostgreSQL, verify a backup, or recover to a point in time | [restore-postgresql.md](restore-postgresql.md) |
+| Restore the work graph | [restore-the-work-graph.md](restore-the-work-graph.md) |
+
+Scope and objectives are in
+[docs/go-live/BACKUP_AND_RECOVERY.md](../go-live/BACKUP_AND_RECOVERY.md),
+including what is **not** protected yet.
+
 The alerts are raised by `wg-monitor` on the control node (ADR-0020). It runs on a
 five-minute timer, refreshes an open alert rather than raising a new one, and
 clears an alert when its condition passes.

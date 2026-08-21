@@ -24,6 +24,9 @@
     # After control_api: the monitor reads its environment file and its database
     # credential, and probes its health endpoint.
     - monitor
+    # After postgresql (it reconfigures WAL archiving) and beads_hq (it backs up
+    # the graph that role creates).
+    - backup
 
 - name: Configure execution cells
   hosts: execution

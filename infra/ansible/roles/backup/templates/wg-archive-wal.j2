@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Archive one WAL segment. Called by PostgreSQL as archive_command.
+#
+#   wg-archive-wal <%p: path to the segment> <%f: segment file name>
+#
+# Managed by Ansible (WP-I2). PostgreSQL's contract for this command is narrow
+# and unforgiving, and both ways of getting it wrong are silent:
+#
+#   Exit 0 when the segment is NOT durably stored, and PostgreSQL is free to
+#   recycle it. The segment is gone, and the gap is discovered during a restore
+#   — the one moment when nothing can be done about it.
+#
+#   Exit non-zero forever, and PostgreSQL retries and retains, so pg_wal grows
+#   without bound until the filesystem fills and the database stops accepting
+#   writes. That failure is loud, which is why it is the right way to fail.
+#
+# So this exits 0 only after the bytes are in place and fsynced, and it exits
+# non-zero for everything else. The disk-pressure alert (WP-I1) is the backstop
+# for the second case: a persistently failing archive shows up as pg_wal growth
+# long before the disk is full.
+set -uo pipefail
+
+ARCHIVE_DIR="{{ backup_wal_archive_dir }}"
+src="${1:?usage: wg-archive-wal <source> <name>}"
+dst_name="${2:?usage: wg-archive-wal <source> <name>}"
+
+# A segment name is fixed-format hex. Refusing anything else keeps a crafted or
+# corrupted name from writing outside the archive.
+case "$dst_name" in
+  *[!0-9A-Za-z._]*|""|.|..) echo "refusing suspicious segment name: $dst_name" >&2; exit 1 ;;
+esac
+
+dst="$ARCHIVE_DIR/$dst_name"
+[ -d "$ARCHIVE_DIR" ] || { echo "archive directory $ARCHIVE_DIR does not exist" >&2; exit 1; }
+[ -f "$src" ]         || { echo "source segment $src does not exist" >&2; exit 1; }
+
+# Already archived. PostgreSQL retries after a failure or a crash, so the same
+# segment legitimately arrives twice.
+#
+# Identical content means the earlier attempt succeeded and this is a retry:
+# report success. DIFFERENT content means two different segments claim the same
+# name, which should be impossible and would destroy a recoverable timeline if
+# the newer one won. Fail loudly instead of choosing.
+if [ -f "$dst" ]; then
+  if cmp -s "$src" "$dst"; then
+    exit 0
+  fi
+  echo "$dst_name already archived with DIFFERENT content; refusing to overwrite" >&2
+  exit 1
+fi
+
+# Write to a temporary name in the same directory, fsync it, then rename.
+#
+# Rename within one filesystem is atomic, so a crash mid-copy can never leave a
+# short file under the real name — a truncated segment would be accepted by a
+# restore and fail in the middle of replay.
+tmp="$dst.partial.$$"
+trap 'rm -f "$tmp"' EXIT INT TERM
+
+if ! cp -- "$src" "$tmp"; then
+  echo "copying $dst_name into the archive failed (is the filesystem full?)" >&2
+  exit 1
+fi
+
+# The bytes, then the directory entry. Without the second, the rename can be
+# lost by a crash while the file itself survives, leaving a segment that is
+# present on disk and invisible to a restore.
+if ! sync -- "$tmp" 2>/dev/null; then
+  # Older coreutils cannot fsync a single file; fall back to a full sync, which
+  # is heavier and still correct.
+  sync
+fi
+
+if ! mv -n -- "$tmp" "$dst"; then
+  echo "publishing $dst_name into the archive failed" >&2
+  exit 1
+fi
+trap - EXIT INT TERM
+
+sync -- "$ARCHIVE_DIR" 2>/dev/null || sync
+exit 0

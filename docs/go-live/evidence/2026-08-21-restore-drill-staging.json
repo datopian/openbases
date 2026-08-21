@@ -1,0 +1,22 @@
+{
+  "drill": "postgresql-restore",
+  "work_package": "WP-I2",
+  "at": "2026-08-21T16:40:21Z",
+  "host": "workgraph-staging-control",
+  "postgresql_version": "16.14(Ubuntu16.14-0ubuntu0.24.04.1)",
+  "database_size": "25MB",
+  "wal_segments_archived": 23,
+  "marker": "drill-20260821T164014Z-150046",
+  "marker_written_at": "2026-08-21 16:40:14.278239+00",
+  "marker_restored_at": "2026-08-21 16:40:14.278239+00",
+  "backup_seconds": 2,
+  "restore_seconds": 3,
+  "total_seconds": 5,
+  "rpo_seconds_observed": 7,
+  "rpo_seconds_documented": 900,
+  "rto_seconds_documented": 14400,
+  "destructive": false,
+  "note": "Restored into a scratch instance on port 5433 and compared against the live database. The live cluster was not modified beyond writing one marker row.",
+  "checks_passed": 6,
+  "checks_failed": 0
+}

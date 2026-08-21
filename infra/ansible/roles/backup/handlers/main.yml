@@ -1,0 +1,12 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# archive_command and archive_timeout are both reload-only settings, so this is
+# a reload and not a restart. A restart would drop every live connection to
+# change a backup setting.
+- name: Reload PostgreSQL
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: reloaded
