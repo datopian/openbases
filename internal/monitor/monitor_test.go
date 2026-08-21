@@ -54,7 +54,15 @@ func TestEvaluateWebhook(t *testing.T) {
 		// Alerting on depth would fire here, during correct operation.
 		{"deep but fresh", WebhookObservation{Unprocessed: 50, OldestUnprocessed: time.Minute}, false},
 		// The case that MUST alert: one delivery, stuck. Small and fatal.
-		{"shallow but stuck", WebhookObservation{Unprocessed: 1, OldestUnprocessed: time.Hour}, true},
+		{"shallow but stuck", WebhookObservation{Unprocessed: 1, OldestUnprocessed: 2 * time.Hour}, true},
+		// The case observed on staging while healthy: a queue 20 deep whose
+		// oldest entry is 9 minutes old, between two 15-minute reconciliation
+		// passes. This must NOT alert; a threshold at the reconciliation period
+		// would have fired on it.
+		{"between reconciliation passes", WebhookObservation{Unprocessed: 20, OldestUnprocessed: 9 * time.Minute}, false},
+		// One full period past the deadline is still not an alert, because a
+		// single missed pass is ordinary.
+		{"one missed pass", WebhookObservation{Unprocessed: 20, OldestUnprocessed: 20 * time.Minute}, false},
 		{"exactly at the limit is not yet failing", WebhookObservation{Unprocessed: 1, OldestUnprocessed: th.WebhookBacklogAge}, false},
 		{"just past the limit", WebhookObservation{Unprocessed: 1, OldestUnprocessed: th.WebhookBacklogAge + time.Second}, true},
 	} {

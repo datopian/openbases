@@ -140,10 +140,14 @@ type Finding struct {
 // between staging and production, and because a threshold that cannot be changed
 // without a release is one that gets worked around instead.
 type Thresholds struct {
-	// WebhookBacklogAge is how long a delivery may sit unprocessed. Generous:
-	// reconciliation runs on a timer, so a delivery is routinely unprocessed
-	// for a short while and alerting on that would be alerting on normal
-	// operation.
+	// WebhookBacklogAge is how long a delivery may sit unprocessed.
+	//
+	// It MUST be comfortably longer than the reconciliation period, because a
+	// delivery that arrives just after a pass waits the full period by design.
+	// Reconciliation runs every 15 minutes, and staging was observed with 20
+	// deliveries whose oldest was 9 minutes — entirely healthy, and a 15-minute
+	// threshold would have alerted on it within one cycle. An alerting system
+	// that fires during correct operation is one people mute in week one.
 	WebhookBacklogAge time.Duration
 	// AgentHealthSilence is how long the control plane may receive no
 	// agent-health report before the witness is presumed dead. Comfortably
@@ -157,7 +161,11 @@ type Thresholds struct {
 // DefaultThresholds are the values the deployment uses unless overridden.
 func DefaultThresholds() Thresholds {
 	return Thresholds{
-		WebhookBacklogAge:  15 * time.Minute,
+		// Three reconciliation periods. One missed pass is normal — a slow
+		// GitHub call, a restart during deployment. Three consecutive misses
+		// means the consumer is not running, which is the condition worth
+		// waking somebody for.
+		WebhookBacklogAge:  45 * time.Minute,
 		AgentHealthSilence: 30 * time.Minute,
 		DiskUsedPercent:    85,
 	}
