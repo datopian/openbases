@@ -38,6 +38,7 @@ export PATH
 
 BASE_DIR="${WG_BACKUP_BASE_DIR:-/var/lib/workgraph/backups/postgres}"
 RECEIPT_DIR="${WG_BACKUP_RECEIPT_DIR:-/var/lib/workgraph/backups}"
+ARCHIVE_DIR="${WG_WAL_ARCHIVE_DIR:-/var/lib/workgraph/wal-archive}"
 KEEP="${WG_BACKUP_KEEP:-30}"
 DATABASE="${WG_BACKUP_DATABASE:-workgraph}"
 
@@ -46,6 +47,7 @@ while [ "$#" -gt 0 ]; do
     --base-dir)    BASE_DIR="$2"; shift 2 ;;
     --keep)        KEEP="$2"; shift 2 ;;
     --receipt-dir) RECEIPT_DIR="$2"; shift 2 ;;
+    --archive-dir) ARCHIVE_DIR="$2"; shift 2 ;;
     --database)    DATABASE="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -178,6 +180,47 @@ if [ "${#all[@]}" -gt "$KEEP" ]; then
   for d in "${all[@]:0:$drop}"; do
     rm -rf "$BASE_DIR/$d" && echo "    removed $d"
   done
+fi
+
+# ---------------------------------------------------------------------------
+# WAL archive retention
+# ---------------------------------------------------------------------------
+#
+# This was missing entirely, and it is the more dangerous of the two retentions.
+# Base backups are pruned to a count; the WAL archive grew without bound. With
+# archive_timeout forcing a 16 MB segment every five minutes, the archive was
+# measured growing at 4.6 GB/day — the disk would have filled in about a month
+# and the only thing that would have noticed is the disk-pressure alert.
+#
+# The cutoff is the oldest base backup we still keep. Segments before it can
+# never be needed: recovery always starts from a base backup, so WAL preceding
+# the earliest one we have is unreachable by definition. Deleting anything NEWER
+# would silently break point-in-time recovery, which is why the cutoff is derived
+# from the backups on disk rather than from a number of days.
+oldest="$(find "$BASE_DIR" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' | sort | head -1)"
+label="$BASE_DIR/$oldest/base/backup_label"
+if [ -n "$oldest" ] && [ -f "$label" ]; then
+  # backup_label records where recovery from that backup must begin:
+  #   START WAL LOCATION: 0/1C000028 (file 00000001000000000000001C)
+  cutoff="$(sed -n 's/^START WAL LOCATION: .*(file \([0-9A-F]\{24\}\))$/\1/p' "$label" | head -1)"
+  if [ -n "$cutoff" ]; then
+    before="$(find "$ARCHIVE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+    # pg_archivecleanup is the supported tool and understands the segment naming
+    # rules, including that they do not sort lexically across timeline
+    # boundaries. -x .gz tells it the stored files carry that suffix.
+    if pg_archivecleanup -x .gz "$ARCHIVE_DIR" "$cutoff" 2>/dev/null; then
+      after="$(find "$ARCHIVE_DIR" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+      echo "  WAL archive: $before -> $after segment(s), keeping everything from $cutoff"
+    else
+      # Not fatal. A backup that succeeded must not be reported as failed
+      # because cleanup did not run; the disk alert is the backstop.
+      echo "  WARNING: pruning the WAL archive failed; it will keep growing" >&2
+    fi
+  else
+    echo "  WARNING: could not read a start location from $label; WAL not pruned" >&2
+  fi
+else
+  echo "  WARNING: no base backup found to prune the WAL archive against" >&2
 fi
 
 # The receipt, last, and only now.

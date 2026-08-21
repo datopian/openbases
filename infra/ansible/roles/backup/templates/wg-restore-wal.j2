@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Fetch one WAL segment from the archive. Used as restore_command.
+#
+#   wg-restore-wal <%f: segment name> <%p: destination path>
+#
+# Managed by Ansible (WP-I2). The counterpart to wg-archive-wal, which stores
+# segments gzipped.
+#
+# Plain files are still handled, because segments archived before compression was
+# introduced are uncompressed and a restore has to span the change. A restore
+# that only understood the current format would silently be unable to recover
+# through the boundary — and the boundary is in the past, which is where restores
+# happen.
+set -uo pipefail
+
+ARCHIVE_DIR="{{ backup_wal_archive_dir }}"
+name="${1:?usage: wg-restore-wal <segment> <destination>}"
+dest="${2:?usage: wg-restore-wal <segment> <destination>}"
+
+if [ -f "$ARCHIVE_DIR/$name.gz" ]; then
+  # Decompress to a temporary file and move it into place, so a partial write is
+  # never visible to recovery as a complete segment.
+  tmp="$dest.part.$$"
+  if zcat -- "$ARCHIVE_DIR/$name.gz" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mv -- "$tmp" "$dest"
+    exit 0
+  fi
+  rm -f "$tmp"
+  echo "wg-restore-wal: $name.gz is present but could not be decompressed" >&2
+  exit 1
+fi
+
+if [ -f "$ARCHIVE_DIR/$name" ]; then
+  cp -- "$ARCHIVE_DIR/$name" "$dest"
+  exit 0
+fi
+
+# Not an error worth shouting about: PostgreSQL asks for segments past the end of
+# the archive to discover where the archive ends, and for .history files that
+# only exist after a timeline switch. Exiting non-zero quietly is the documented
+# way to say "not here".
+exit 1

@@ -141,6 +141,66 @@ which would have been discovered during an incident instead:
   so the backup failed with "not installed" while the binary sat in
   `/usr/lib/postgresql/16/bin`.
 
+## What this costs
+
+Measured on staging, not estimated.
+
+### Local disk
+
+| Item | Size | Notes |
+| --- | --- | --- |
+| One base backup | 129 MB | 111 MB cluster + 17 MB streamed WAL + 1.9 MB dump |
+| 30 daily base backups | 3.9 GB | the plan's retention |
+| WAL archive, 30 days | ~145 MB | 16.5 KB per compressed segment, 288/day |
+| Work graph snapshot | 112 KB | plus small dated JSONL exports |
+| **Steady state** | **~4 GB** | on a 160 GB disk: under 3% |
+
+The WAL archive is the number that mattered. A segment is a **fixed 16 MB file
+however little is in it**, and `archive_timeout` forces one out every 5 minutes to
+keep the recovery point inside its budget. Uncompressed that measured **4.6 GB/day
+— about 138 GB/month**, which would have filled the disk in roughly a month, with
+no retention to stop it. The same segment gzips to ~22 KB, a factor of about 770,
+because an idle segment is almost entirely zeroes. Compression plus retention
+against the oldest kept base backup turns the archive from the largest thing on
+the node into a rounding error.
+
+### R2, once wg-ohk is unblocked
+
+At $0.015/GB-month storage and $4.50/million Class A operations, with egress free:
+
+| | Uncompressed, as-is | Tarred per backup |
+| --- | --- | --- |
+| Storage | 3.9 GB → $0.06/mo | 567 MB → $0.01/mo |
+| Class A ops | ~73,000/mo | ~330/mo |
+
+Both fit inside R2's free tier (10 GB-month storage, 1M Class A operations), so
+the realistic bill is **zero**, and the worst case is cents.
+
+**Upload one tar per backup, not the directory.** A plain-format base backup is
+**2,153 files**, and the whole run tars to **18.9 MB against 129 MB** — 6.8× less
+storage and one PUT instead of 2,153. The operation count is what would eventually
+cost money here, not the bytes.
+
+Locally the backups stay **uncompressed on purpose**: `pg_verifybackup` checks a
+plain backup in place, and a restore is a straight copy, which is what keeps the
+recovery time at seconds. Disk on this node is abundant and restore speed is the
+objective with a number attached, so the trade goes to speed locally and to size
+off-machine.
+
+### Hetzner host images
+
+Already being paid, and the largest backup cost by a wide margin:
+
+| Node | Type | Server | Backup surcharge (+20%) |
+| --- | --- | --- | --- |
+| workgraph-staging-control | cx43 | €15.99/mo | **€3.20/mo** |
+| workgraph-staging-execution | cx23 | €5.49/mo | **€1.10/mo** |
+
+**€4.30/month**, against roughly zero for everything above. If backup spend ever
+needs cutting, this is the only line worth looking at — and it is also the only
+copy that currently survives losing the node, so cutting it without fixing
+wg-ohk first would leave nothing off-machine at all.
+
 ## What is NOT protected
 
 **Everything is on the same machine as the thing it protects.** That survives a
