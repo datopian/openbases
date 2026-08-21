@@ -105,6 +105,42 @@ skipped — and the failure it exists to catch, an unrestorable backup, is caugh
 either way. The destructive procedure is the runbook, performed with human
 approval.
 
+## Measured, on staging
+
+`docs/evidence/2026-08-21-restore-drill-staging.json` — 6/6 checks, produced by
+the drill rather than typed here:
+
+| Measure | Documented | Observed |
+| --- | --- | --- |
+| Recovery point | 900s | **7s** |
+| Recovery time | 14400s | **3s** (backup 2s, restore 3s) |
+
+Read the second row with the database size next to it: 25 MB, restored in three
+seconds. It proves the procedure works, not that it scales. The number to watch as
+the database grows is the restore, and the drill records the size alongside it so
+a future run is comparable rather than merely reassuring.
+
+The recovery point is 7 seconds because the drill forces a WAL switch, so it
+measures the archive path rather than the wait for `archive_timeout`. Unforced,
+the worst case is the 5-minute `archive_timeout` — still inside the 15-minute
+objective, which is the margin that setting was chosen for.
+
+Building this found four faults that only a real restore surfaces, every one of
+which would have been discovered during an incident instead:
+
+- the `pg_dump` was written INSIDE the `pg_basebackup` directory, so
+  `pg_verifybackup` passed at backup time — the dump arrived afterwards — and
+  failed for ever after, because the manifest does not list it. Backups looked
+  good when taken and refused to restore;
+- Debian keeps `postgresql.conf` and `pg_hba.conf` in `/etc`, not the data
+  directory, so a restored copy has no configuration and will not start;
+- recovery refuses to finish if `max_connections` and four related settings are
+  below the source server's, which the operator cannot know at restore time — so
+  the backup now records them;
+- `pg_verifybackup` is not symlinked into `/usr/bin` by Debian's `pg_wrapper`,
+  so the backup failed with "not installed" while the binary sat in
+  `/usr/lib/postgresql/16/bin`.
+
 ## What is NOT protected
 
 **Everything is on the same machine as the thing it protects.** That survives a

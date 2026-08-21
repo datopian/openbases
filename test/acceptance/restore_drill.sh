@@ -21,6 +21,19 @@
 # mode this exists to catch — an unrestorable backup — is caught either way.
 set -uo pipefail
 
+# Debian's pg_wrapper symlinks only SOME PostgreSQL binaries into /usr/bin.
+# pg_verifybackup and pg_ctl are not among them, so a script that relies on PATH
+# alone fails with "pg_verifybackup is not installed" while the binary sits in
+# /usr/lib/postgresql/16/bin. Prepending in ascending version order leaves the
+# newest first.
+#
+# Done here rather than only in the systemd unit because the runbooks tell an
+# operator to run this by hand during an incident, and it has to work then.
+for _pgbin in $(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V); do
+  PATH="$_pgbin:$PATH"
+done
+export PATH
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BASE_DIR="${WG_BACKUP_BASE_DIR:-/var/lib/workgraph/backups/postgres}"
 ARCHIVE_DIR="${WG_WAL_ARCHIVE_DIR:-/var/lib/workgraph/wal-archive}"
@@ -66,11 +79,13 @@ echo
 # out of the restored copy — which also measures the real recovery point, because
 # the marker's age at restore time IS the data loss.
 MARKER="drill-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-if ! psql -d workgraph -qc "
-  CREATE TABLE IF NOT EXISTS restore_drill_markers (
-    marker text PRIMARY KEY, written_at timestamptz NOT NULL DEFAULT now());
-  INSERT INTO restore_drill_markers (marker) VALUES ('$MARKER');" >/dev/null 2>&1; then
+# INSERT only. The table is created by migration 0021 — a test that runs
+# CREATE TABLE against the live database is an unreviewed schema change, and it
+# would leave the deployed schema and db/migrations disagreeing.
+if ! psql -d workgraph -qc \
+    "INSERT INTO restore_drill_markers (marker) VALUES ('$MARKER')" >/dev/null 2>&1; then
   echo "cannot write a drill marker to the live database" >&2
+  echo "is migration 0021_restore_drill_markers.sql applied?" >&2
   exit 2
 fi
 MARKER_AT="$(psql -d workgraph -tAc \
@@ -127,8 +142,13 @@ grep -E "verified|table\(s\) in the restored" "$WORK/restore.log" | sed 's/^/   
 # ---------------------------------------------------------------------------
 echo
 echo "Checking what came back"
+# No `tr -d ' '`: psql -tA already returns the value unpadded, and stripping
+# spaces removed the one INSIDE the timestamp, turning
+# "2026-08-21 16:39:47+00" into "2026-08-2116:39:47+00" — which PostgreSQL then
+# rejected as out of range, so the recovery point read as unmeasurable on a
+# restore that had in fact worked perfectly.
 RESTORED_AT="$(psql -h "$RESTORE_DIR" -p "$PORT" -d workgraph -tAc \
-  "SELECT written_at FROM restore_drill_markers WHERE marker='$MARKER'" 2>/dev/null | tr -d ' ')"
+  "SELECT written_at FROM restore_drill_markers WHERE marker='$MARKER'" 2>/dev/null)"
 if [ -n "$RESTORED_AT" ]; then
   ok "the drill marker survived the round trip"
 else

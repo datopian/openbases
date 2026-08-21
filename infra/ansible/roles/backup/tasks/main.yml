@@ -29,6 +29,19 @@
     group: "{{ item.group }}"
     mode: "{{ item.mode }}"
   loop:
+    # The container directory, created EXPLICITLY and traversable.
+    #
+    # It existed only as an implicit parent before, which meant it inherited
+    # root:workgraph 0750 from whichever task happened to create a child first.
+    # postgres is not in the workgraph group, so it could not traverse into its
+    # own archive directory: WAL archiving failed with "Permission denied" and
+    # pg_stat_archiver counted the failures. Receipt writes would have failed the
+    # same way.
+    #
+    # 0751 rather than 0755: any account can traverse to the child it owns, and
+    # none can enumerate what else is in here. Nothing secret lives at this
+    # level; the protection is on the children.
+    - { path: /var/lib/workgraph, owner: root, group: root, mode: "0751" }
     # Group-writable and setgid, so a receipt written by either account stays
     # group-readable for the monitor without anybody having to remember chmod.
     - { path: "{{ backup_root }}", owner: root, group: "{{ backup_group }}", mode: "2770" }
@@ -97,15 +110,30 @@
   ansible.builtin.shell:
     cmd: |
       set -e
-      before=$(find {{ backup_wal_archive_dir }} -maxdepth 1 -type f | wc -l)
+      # pg_stat_archiver, not a file count. It is the server's own record of
+      # what it archived, and it distinguishes "archived" from "the directory
+      # happens to contain a file" — which matters here, because the counter
+      # read archived_count = 17 while the archive was EMPTY: archive_command
+      # was '/bin/true', so seventeen segments were reported as archived and
+      # discarded.
+      before=$(psql -tAc "SELECT coalesce(archived_count, 0) FROM pg_stat_archiver")
       psql -qc 'SELECT pg_switch_wal()' >/dev/null
-      for i in $(seq 1 30); do
-        after=$(find {{ backup_wal_archive_dir }} -maxdepth 1 -type f | wc -l)
-        [ "$after" -gt "$before" ] && { echo "archived: $before -> $after"; exit 0; }
+      # Up to two minutes, because PostgreSQL's archiver backs off after a
+      # failure and retries roughly every 60 seconds. A 30-second window timed
+      # out on a deployment where archiving had just been fixed and was about to
+      # succeed, which is a false alarm at the worst possible moment: it reports
+      # the backups broken immediately after repairing them.
+      for i in $(seq 1 120); do
+        after=$(psql -tAc "SELECT coalesce(archived_count, 0) FROM pg_stat_archiver")
+        if [ "$after" -gt "$before" ]; then
+          psql -tAc "SELECT 'archived ' || last_archived_wal || ' at ' || last_archived_time FROM pg_stat_archiver"
+          exit 0
+        fi
         sleep 1
       done
-      echo "no segment reached {{ backup_wal_archive_dir }} within 30s" >&2
-      psql -qtAc "SELECT last_failed_wal, last_failed_time, failed_count FROM pg_stat_archiver" >&2
+      echo "no segment was archived within 120s" >&2
+      psql -qtAc "SELECT 'failed_count=' || failed_count || ' last_failed_wal=' || coalesce(last_failed_wal, 'none') || ' at ' || coalesce(last_failed_time::text, 'never') FROM pg_stat_archiver" >&2
+      echo "check: sudo -u postgres /usr/local/bin/wg-archive-wal <path> <name>" >&2
       exit 1
   become: true
   become_user: postgres
@@ -140,6 +168,8 @@
         Type=oneshot
         User=postgres
         Group=postgres
+        # pg_verifybackup is not symlinked into /usr/bin by pg_wrapper.
+        Environment=PATH=/usr/lib/postgresql/{{ postgresql_version }}/bin:/usr/local/bin:/usr/bin:/bin
         Environment=WG_BACKUP_BASE_DIR={{ backup_postgres_dir }}
         Environment=WG_BACKUP_RECEIPT_DIR={{ backup_receipt_dir }}
         Environment=WG_BACKUP_KEEP={{ backup_postgres_keep }}

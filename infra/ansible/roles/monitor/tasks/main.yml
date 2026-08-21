@@ -1,15 +1,15 @@
 ---
 # The platform monitor (WP-I1). Runs on the control node, on a timer.
 
-- name: Ensure the backup receipt directory exists
-  ansible.builtin.file:
-    path: "{{ monitor_receipt_dir }}"
-    state: directory
-    owner: root
-    # Group-readable by the service user so the monitor can read receipts it
-    # does not own. Backup jobs run as root; the monitor must not.
-    group: "{{ monitor_user }}"
-    mode: "0750"
+# The receipt directory is deliberately NOT created here.
+#
+# It belongs to the backup role, which is what writes into it. Two roles
+# declaring the same directory with different owner and mode is a fight they take
+# turns winning on alternate runs, and idempotence is an acceptance criterion.
+#
+# If the backup role has not been deployed, the directory is absent, every
+# declared stream reports as missing, and the monitor alerts. That is the correct
+# answer: no backup role means no backups.
 
 - name: Install the monitor binary
   ansible.builtin.copy:

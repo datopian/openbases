@@ -23,6 +23,19 @@
 # was the only one being taken.
 set -uo pipefail
 
+# Debian's pg_wrapper symlinks only SOME PostgreSQL binaries into /usr/bin.
+# pg_verifybackup and pg_ctl are not among them, so a script that relies on PATH
+# alone fails with "pg_verifybackup is not installed" while the binary sits in
+# /usr/lib/postgresql/16/bin. Prepending in ascending version order leaves the
+# newest first.
+#
+# Done here rather than only in the systemd unit because the runbooks tell an
+# operator to run this by hand during an incident, and it has to work then.
+for _pgbin in $(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V); do
+  PATH="$_pgbin:$PATH"
+done
+export PATH
+
 BASE_DIR="${WG_BACKUP_BASE_DIR:-/var/lib/workgraph/backups/postgres}"
 RECEIPT_DIR="${WG_BACKUP_RECEIPT_DIR:-/var/lib/workgraph/backups}"
 KEEP="${WG_BACKUP_KEEP:-30}"
@@ -42,7 +55,18 @@ command -v pg_basebackup   >/dev/null || { echo "pg_basebackup is not installed"
 command -v pg_verifybackup >/dev/null || { echo "pg_verifybackup is not installed" >&2; exit 2; }
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-TARGET="$BASE_DIR/$STAMP"
+# One directory per backup, holding the physical copy and the logical dump in
+# SEPARATE subdirectories.
+#
+# The dump used to be written inside the pg_basebackup target, and that quietly
+# broke re-verification: pg_verifybackup compares the directory against the
+# manifest and reports any file the manifest does not list. Verification passed
+# at backup time, because the dump was written afterwards, and failed every time
+# afterwards — so the backup looked good when taken and refused to restore. The
+# restore drill caught it; nothing else would have until a real incident.
+RUN="$BASE_DIR/$STAMP"
+TARGET="$RUN/base"
+DUMP_DIR="$RUN/dump"
 mkdir -p "$BASE_DIR" || { echo "cannot create $BASE_DIR" >&2; exit 1; }
 
 echo "postgres backup $STAMP"
@@ -51,9 +75,9 @@ echo "postgres backup $STAMP"
 # and trust it. Anything that fails below is removed, and the receipt — which is
 # what the monitor reads — is only written at the very end.
 cleanup_failed() {
-  if [ -d "$TARGET" ]; then
-    echo "  removing the incomplete backup at $TARGET" >&2
-    rm -rf "$TARGET"
+  if [ -d "$RUN" ]; then
+    echo "  removing the incomplete backup at $RUN" >&2
+    rm -rf "$RUN"
   fi
 }
 
@@ -90,7 +114,8 @@ fi
 echo "  verified against the backup manifest"
 
 # The logical dump, next to the physical one so they are pruned together.
-if ! pg_dump --format=custom --compress=9 --file="$TARGET/$DATABASE.dump" "$DATABASE"; then
+mkdir -p "$DUMP_DIR"
+if ! pg_dump --format=custom --compress=9 --file="$DUMP_DIR/$DATABASE.dump" "$DATABASE"; then
   echo "  pg_dump failed" >&2
   cleanup_failed
   exit 1
@@ -99,15 +124,50 @@ fi
 # A dump is not verified by being produced. pg_restore --list parses the archive
 # and fails on a truncated or corrupt file, which is the cheap check that the
 # bytes are readable.
-if ! pg_restore --list "$TARGET/$DATABASE.dump" >/dev/null; then
+if ! pg_restore --list "$DUMP_DIR/$DATABASE.dump" >/dev/null; then
   echo "  the dump was written but is not readable by pg_restore" >&2
   cleanup_failed
   exit 1
 fi
-echo "  logical dump written and readable ($(du -h "$TARGET/$DATABASE.dump" | cut -f1))"
+echo "  logical dump written and readable ($(du -h "$DUMP_DIR/$DATABASE.dump" | cut -f1))"
 
-SIZE="$(du -sh "$TARGET" | cut -f1)"
-echo "  backup complete: $TARGET ($SIZE)"
+# Verify once more, now that everything has been written, so the state recorded
+# by the receipt is the state a restore will actually find.
+if ! pg_verifybackup "$TARGET" >/dev/null 2>&1; then
+  echo "  the backup no longer verifies after the dump was written" >&2
+  cleanup_failed
+  exit 1
+fi
+
+# Record the settings a RESTORE of this backup will need.
+#
+# PostgreSQL refuses to finish recovery if certain settings are lower than they
+# were on the server the backup came from: "recovery aborted because of
+# insufficient parameter settings ... max_connections = 20 is a lower setting
+# than on the primary server, where its value was 100." The values live in the
+# control file, so recovery knows them and the operator does not.
+#
+# Captured here so the BACKUP carries what its own restore requires. Querying the
+# live cluster at restore time would work on a good day and fail on the only day
+# it matters, because during a real disaster the cluster whose settings you need
+# is the one that is gone.
+#
+# Written outside base/ so it is not an extra file the backup manifest does not
+# know about — the mistake that made every restore refuse to verify.
+if ! psql -tAc "
+    SELECT name || ' = ' || setting
+      FROM pg_settings
+     WHERE name IN ('max_connections', 'max_worker_processes', 'max_wal_senders',
+                    'max_prepared_transactions', 'max_locks_per_transaction')
+     ORDER BY name" > "$RUN/restore_settings.conf"; then
+  echo "  could not record the settings needed to restore this backup" >&2
+  cleanup_failed
+  exit 1
+fi
+echo "  recorded $(wc -l < "$RUN/restore_settings.conf" | tr -d ' ') recovery setting(s)"
+
+SIZE="$(du -sh "$RUN" | cut -f1)"
+echo "  backup complete: $RUN ($SIZE)"
 
 # Retention. Prune AFTER a successful backup, never before: pruning first would
 # mean a failing backup slowly deletes the history that is all you have left.

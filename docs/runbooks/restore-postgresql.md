@@ -104,17 +104,18 @@ sudo -u postgres psql -h /var/lib/postgresql/restore-live -p 5433 -d workgraph \
 sudo -u postgres pg_ctl -D /var/lib/postgresql/restore-live stop
 ```
 
-Then move it in and undo the restore-specific settings. **This step matters**: the
-restore script sets `port`, `archive_mode = off` and a socket directory that are
-right for a scratch instance and wrong for the live one. Leaving `archive_mode =
-off` means the restored cluster takes no backups, which is how the second incident
-happens.
+Then move it in and remove the scratch configuration. **This step matters.** The
+restore script writes a self-contained minimal `postgresql.conf` and
+`pg_hba.conf` into the directory, with `archive_mode = off` and a scratch port.
+Debian's service starts with `-c config_file=/etc/postgresql/16/main/postgresql.conf`,
+so those files are ignored once it is the live directory — but leaving them there
+means the next person to read the data directory finds a configuration that is
+not in effect, with archiving apparently disabled. Delete them.
 
 ```bash
 mv /var/lib/postgresql/restore-live /var/lib/postgresql/16/main
-sudo -u postgres sed -i '/# Added by restore_postgres.sh/,$d' \
-  /var/lib/postgresql/16/main/postgresql.conf
-rm -f /var/lib/postgresql/16/main/recovery.signal
+cd /var/lib/postgresql/16/main
+rm -f postgresql.conf pg_hba.conf pg_ident.conf postgresql.auto.conf recovery.signal restore.log
 systemctl start postgresql
 ```
 
