@@ -50,6 +50,36 @@ done
 dupes="$(printf '%s\n' "${files[@]}" | xargs -n1 basename 2>/dev/null | cut -c1-4 | sort | uniq -d)"
 [ -n "$dupes" ] && note "duplicate migration numbers: $dupes"
 
+# A view over a protected table must be evaluated as the CALLER.
+#
+# Since PostgreSQL 15 a view runs with the permissions of its OWNER unless it
+# declares security_invoker = true. These migrations are applied by a superuser,
+# and a superuser never evaluates row-level security at all — so an ordinary view
+# over a protected table hands every row to anyone who can select from the view,
+# while the table underneath looks correctly protected.
+#
+# This is not hypothetical: credential_rotation_due was exactly that, and a
+# non-admin could read the whole credential registry through it (fixed in 0022).
+# The hole sat four lines below the policy it defeated.
+for f in "${files[@]}"; do
+  base="$(basename "$f")"
+  # Views declared and views hardened may be in different migrations, so the
+  # check is over the whole set rather than per file.
+  awk '/CREATE (OR REPLACE )?VIEW/ {
+        name = $0
+        sub(/.*VIEW[[:space:]]+/, "", name)
+        sub(/[[:space:]].*$/, "", name)
+        sub(/\(.*$/, "", name)
+        print name
+      }' "$f"
+done | sort -u | while read -r view; do
+  [ -n "$view" ] || continue
+  if ! grep -rqE "ALTER VIEW[[:space:]]+$view[[:space:]]+SET[[:space:]]*\([[:space:]]*security_invoker" "${files[@]}" \
+     && ! grep -rqE "CREATE (OR REPLACE )?VIEW[[:space:]]+$view[[:space:]]+WITH[[:space:]]*\([^)]*security_invoker" "${files[@]}"; then
+    note "view $view never sets security_invoker; it will be evaluated as its owner and bypass row-level security"
+  fi
+done
+
 # Every SQL integration test must actually run.
 #
 # A test file that exists but is not referenced by the workflow passes silently

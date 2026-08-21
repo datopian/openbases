@@ -62,7 +62,7 @@ Agents act on untrusted text: issue bodies, pull request comments, file contents
 
 **Evidence:** isolation held under concurrency with **zero violations**, including a deliberately abusive 250 goroutines over 5 connections — the condition where a session-scoped identity would leak user A's projects to user B.
 
-**Gap — `wg-8yv.50`:** the integration suite runs as superuser, which bypasses RLS entirely. Those tests pass whether or not the policies work. The load leak test runs as `workgraph_app` and is currently the only RLS test that can fail for the right reason.
+**Closed — `wg-8yv.50`:** the integration suite ran as superuser, which bypasses RLS entirely, so those tests passed whether or not the policies worked. Every test that reads a protected table now drops to `workgraph_app` and **asserts that it did**, because the drop was one deleted line away from silently making every assertion unfailable. `scripts/check_rls_tests.py` fails CI on either mistake — reading a protected table without dropping, or dropping without proving it.
 
 ### 4. Forged webhooks
 
@@ -112,14 +112,45 @@ Workgraph does not own the Cloudflare account. It carries roughly fifty Datopian
 
 Stated plainly, because a threat model that only lists wins is marketing.
 
-1. **Prompt injection.** No inspection of agent reasoning. Blast radius only.
+1. **Prompt injection.** No inspection of agent reasoning. Blast radius only. This
+   remains the largest accepted risk in the system.
 2. **MFA is not enforced in policy** (`wg-8yv.45`).
-3. **Detection is weak.** No observability or alerting yet (`wg-8yv.26`). Most controls fail closed, but a slow compromise would not be noticed — today's silent database password reset went unnoticed until something asked why a view was stale.
-4. **The age key is a single point of total compromise.**
-5. **The Cloudflare account is shared** with unrelated production.
-6. **The RLS integration suite runs as superuser** and cannot fail for the right reason (`wg-8yv.50`).
-7. **No off-machine backup of the work graph** (`wg-ohk`): the R2 credential does not cover the backup buckets.
-8. **This review was written by its author.** An independent pass is worth more than a second one by me.
+3. **The age key is a single point of total compromise.**
+4. **The Cloudflare account is shared with unrelated production**, and this is now
+   measured rather than suspected: the account holds at least twenty buckets
+   belonging to other work, including client data. It is why the R2 backup token
+   is scoped to four named buckets — an account-wide token in this repository's
+   encrypted file would have put every client bucket inside its blast radius.
+5. **Off-machine backups are not yet immutable.** They exist now, but the node
+   holds a token with object write access, so anyone who reaches the node can
+   delete what the node can reach. R2 bucket locks are written and plan cleanly
+   and are **not applied** (`wg-y9w`), because a lock cannot be destroyed by
+   OpenTofu and the period is a decision. Until then "the node cannot delete its
+   own backups" is true of the script and not of the bucket.
+6. **A dead node is silent** (`wg-vft`). The monitor runs on the node and reports
+   through the database, so it cannot alert on the node being gone. It degrades to
+   journal lines and a failed unit, which nothing off-machine watches.
+7. **This review was written by its author.** An independent pass is worth more
+   than a second one by me.
+
+### Closed since the first pass
+
+Listed rather than deleted, so the list shrinking is visible as work rather than
+as editing.
+
+- **Detection was weak** (`wg-8yv.26`, was #3). There is now a monitor on a
+  five-minute timer covering the API, the webhook backlog, witness silence, disk
+  and backup freshness, delivering into the attention inbox with a runbook link,
+  and proven by inducing all five failures. Its remaining blind spot is #6 above.
+  The incident this entry cited — a silently reset database password noticed only
+  when a view looked stale — would now raise `platform_api_unavailable` within
+  five minutes.
+- **The RLS integration suite ran as superuser** (`wg-8yv.50`, was #6). See above.
+- **No off-machine backup of the work graph** (`wg-ohk`, was #7). The R2 token now
+  covers the backup buckets, and the graph, the database and the WAL archive are
+  copied off the machine every fifteen minutes. A restore drill has recovered
+  from those copies without reading anything local. What is left is immutability,
+  which is #5.
 
 ## What would change my mind about the shape of this
 

@@ -70,6 +70,28 @@ VALUES ('00000000-0000-0000-0000-000000000f10', 'restricted', '00000000-0000-000
 -- Assertions, executed as the application role
 -- ---------------------------------------------------------------------------
 
+-- The organisation admin's id, resolved HERE as the owner because users and
+-- role_grants are themselves protected: after dropping privileges this session
+-- could not look it up, and hardcoding a uuid would pass silently if the seed
+-- ever changed the account.
+--
+-- Carried across the role change in a session setting rather than a temp table.
+-- A temp table created by the owner is not reachable by workgraph_app — it needs
+-- both a grant on the table and usage on the temp schema — and the failure
+-- surfaces after the drop, far from the CREATE, as "permission denied for table".
+-- A setting has no permission surface at all.
+DO $$
+DECLARE v_admin uuid;
+BEGIN
+  SELECT u.id INTO v_admin FROM users u
+   WHERE u.primary_email = 'anuar.ustayev@datopian.com';
+  IF v_admin IS NULL THEN
+    RAISE EXCEPTION 'no seeded organisation admin was found; the admin-only read '
+                    'assertions below would prove nothing';
+  END IF;
+  PERFORM set_config('wg.test_admin_id', v_admin::text, false);
+END $$;
+
 SET LOCAL ROLE workgraph_app;
 -- Prove the drop took effect; see the file for why a convention is not enough.
 \ir assert_app_role.sql
@@ -153,6 +175,65 @@ BEGIN
   PERFORM set_config('workgraph.user_id', alice, true);
   SELECT count(*) INTO n FROM knowledge_records;
   IF n <> 0 THEN RAISE EXCEPTION 'a newly written restricted record leaked to a non-member'; END IF;
+
+  -- ---------------------------------------------------------------------
+  -- credential_registry is readable only by an organisation admin (wg-5n2)
+  -- ---------------------------------------------------------------------
+  --
+  -- The registry holds no secret VALUES, only references: names, owners, where
+  -- each credential lives and how it is delivered. That is still a map of every
+  -- credential in the company and where to go looking, which is exactly what an
+  -- attacker wants first. The policy exists; until now nothing asserted it, so
+  -- it was recorded as an exemption in scripts/check_rls_tests.py rather than
+  -- covered.
+
+  -- A project lead is not an organisation admin, and must see nothing.
+  PERFORM set_config('workgraph.user_id', alice, true);
+  SELECT count(*) INTO n FROM credential_registry;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'a non-admin can read % credential registry row(s); the map of '
+                    'every credential in the company is exposed', n;
+  END IF;
+
+  -- Nor is an outsider.
+  PERFORM set_config('workgraph.user_id', mallory, true);
+  SELECT count(*) INTO n FROM credential_registry;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'an outsider can read % credential registry row(s)', n;
+  END IF;
+
+  -- The admin must, or the policy is not admin-only, it is nobody-only — and a
+  -- table nobody can read looks identical to a policy that works.
+  PERFORM set_config('workgraph.user_id',
+                     current_setting('wg.test_admin_id'), true);
+  SELECT count(*) INTO n FROM credential_registry;
+  IF n = 0 THEN
+    RAISE EXCEPTION 'the organisation admin cannot read the credential registry; '
+                    'the policy denies everyone, which passes a leak test while '
+                    'making the registry useless';
+  END IF;
+
+  -- The rotation-due view sits on the same table and must inherit the
+  -- restriction rather than becoming a way around it.
+  --
+  -- This is the classic gap. Since PostgreSQL 15 a view runs with the
+  -- permissions of its OWNER unless it is declared security_invoker = true, and
+  -- these migrations are applied by a superuser — so an ordinary view over a
+  -- protected table hands every row to anybody who can select from the view,
+  -- and the policy on the table underneath is never consulted.
+  PERFORM set_config('workgraph.user_id', alice, true);
+  BEGIN
+    SELECT count(*) INTO n FROM credential_rotation_due;
+    IF n <> 0 THEN
+      RAISE EXCEPTION 'a non-admin can read % row(s) through credential_rotation_due, '
+                      'bypassing the admin-only policy on the table', n;
+    END IF;
+  EXCEPTION
+    WHEN undefined_table THEN
+      -- The view is named by the credential registry work; if it is renamed this
+      -- assertion should be updated rather than silently dropped.
+      RAISE NOTICE 'credential_rotation_due does not exist; skipping the view check';
+  END;
 
   RAISE NOTICE 'RLS isolation: all assertions passed';
 END
