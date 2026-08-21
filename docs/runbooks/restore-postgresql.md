@@ -37,6 +37,26 @@ sudo -u postgres /usr/local/bin/wg-restore-postgres \
   --to /var/lib/postgresql/restore-check --port 5433 --verify
 ```
 
+### Choosing a target time
+
+The archive lags the present by up to `archive_timeout` (5 minutes), so **the
+newest recoverable moment is always a few minutes ago**. Asking for `now` is the
+natural thing to type and it fails hard: recovery replays everything it has and
+then exits with `recovery ended before configured recovery target was reached`,
+leaving an instance that will not start. It looks like the backups are broken.
+They are not.
+
+Find the newest recoverable moment first:
+
+```bash
+ls -t --time-style=+'%Y-%m-%d %H:%M:%S' /var/lib/workgraph/wal-archive/ | head -3
+sudo -u postgres psql -tAc \
+  "SELECT last_archived_wal, last_archived_time FROM pg_stat_archiver"
+```
+
+Pick a target at or before that. Omitting `--target-time` recovers as far as the
+archive allows, which is usually what you want.
+
 To a point in time — the moment before a bad migration, say:
 
 ```bash

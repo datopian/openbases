@@ -72,6 +72,33 @@ SRC="$BASE_DIR/$BACKUP/base"
 
 echo "restoring $BACKUP -> $TARGET_DIR (port $PORT)"
 
+# A recovery target later than the newest archived segment cannot be reached, and
+# PostgreSQL does not degrade gracefully: it replays everything it has and then
+# exits with "recovery ended before configured recovery target was reached",
+# leaving an instance that will not start. Asking for "now" does this, which is
+# the obvious thing to type.
+#
+# The archive lags the present by up to archive_timeout, so the newest recoverable
+# moment is always a few minutes ago. Warning up front is cheaper than the
+# operator reading a FATAL and concluding the backups are broken.
+if [ -n "$TARGET_TIME" ]; then
+  newest_seg="$(find "$ARCHIVE_DIR" -maxdepth 1 -type f -name '0*' -printf '%T@ %p\n' 2>/dev/null \
+                | sort -n | tail -1 | cut -d' ' -f2-)"
+  if [ -n "$newest_seg" ]; then
+    newest_at="$(date -u -r "$newest_seg" '+%Y-%m-%d %H:%M:%S+00' 2>/dev/null)"
+    echo "  newest archived segment is from $newest_at"
+    target_epoch="$(date -u -d "$TARGET_TIME" +%s 2>/dev/null || echo 0)"
+    newest_epoch="$(date -u -r "$newest_seg" +%s 2>/dev/null || echo 0)"
+    if [ "$target_epoch" -gt "$newest_epoch" ] 2>/dev/null; then
+      echo "  WARNING: the requested target is LATER than anything in the archive." >&2
+      echo "  Recovery will replay everything available and then fail with" >&2
+      echo "  \"recovery ended before configured recovery target was reached\"." >&2
+      echo "  Choose a target at or before $newest_at, or omit --target-time to" >&2
+      echo "  recover as far as the archive allows." >&2
+    fi
+  fi
+fi
+
 # Verify before trusting. A restore is the worst moment to discover the backup
 # was never readable, and it costs a second on a small database.
 if [ -f "$SRC/backup_manifest" ]; then
@@ -116,8 +143,11 @@ unix_socket_directories = '$TARGET_DIR'
 # its timeline would produce segment names that collide with the real ones.
 archive_mode = off
 
-# How recovery fetches the segments it needs from the archive.
-restore_command = 'cp $ARCHIVE_DIR/%f %p'
+# How recovery fetches the segments it needs from the archive. The helper
+# decompresses, and still handles the plain segments archived before compression
+# was introduced — a restore has to span that boundary, and the boundary is in
+# the past, which is where restores happen.
+restore_command = '/usr/local/bin/wg-restore-wal %f %p'
 
 # Modest, because this runs alongside the live cluster on a small node and must
 # not compete with it for memory. shared_buffers is not one of the settings

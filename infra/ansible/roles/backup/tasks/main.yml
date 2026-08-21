@@ -52,13 +52,33 @@
   loop_control:
     label: "{{ item.path }}"
 
-- name: Install the WAL archive command
+- name: Install the WAL archive and restore commands
   ansible.builtin.template:
-    src: wg-archive-wal.j2
-    dest: /usr/local/bin/wg-archive-wal
+    src: "{{ item }}.j2"
+    dest: "/usr/local/bin/{{ item }}"
     owner: root
     group: root
     mode: "0755"
+  loop:
+    - wg-archive-wal
+    - wg-restore-wal
+
+# One-off: segments archived before compression was introduced are plain 16 MB
+# files. Compressing them makes the archive uniform and reclaims most of its
+# size. Idempotent — after the first run there is nothing without a .gz.
+- name: Compress any uncompressed segments left in the archive
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      n=0
+      for f in $(find {{ backup_wal_archive_dir }} -maxdepth 1 -type f ! -name '*.gz'); do
+        gzip -6 "$f" && n=$((n + 1))
+      done
+      echo "compressed $n segment(s)"
+  become: true
+  become_user: postgres
+  register: backup_wal_compress
+  changed_when: "'compressed 0 segment' not in backup_wal_compress.stdout"
 
 - name: Install the backup scripts
   ansible.builtin.copy:
@@ -95,6 +115,11 @@
       # after the bytes are fsynced into the archive, because PostgreSQL is free
       # to recycle a segment the moment this reports success.
       archive_command = '/usr/local/bin/wg-archive-wal %p %f'
+      # Compress full-page images inside the WAL itself. This reduces how much
+      # WAL a busy database generates in the first place, which the per-segment
+      # gzip in archive_command cannot do — that only shrinks what is already
+      # written.
+      wal_compression = on
       # Force a segment out at least this often. Without it a segment is only
       # archived when 16 MB has accumulated, which on a small, quiet database can
       # be hours — an unbounded recovery point despite archiving being "on".
@@ -173,6 +198,7 @@
         Environment=WG_BACKUP_BASE_DIR={{ backup_postgres_dir }}
         Environment=WG_BACKUP_RECEIPT_DIR={{ backup_receipt_dir }}
         Environment=WG_BACKUP_KEEP={{ backup_postgres_keep }}
+        Environment=WG_WAL_ARCHIVE_DIR={{ backup_wal_archive_dir }}
         Environment=WG_BACKUP_DATABASE={{ postgresql_database }}
         ExecStart=/usr/local/bin/wg-backup-postgres
         # A backup competing with live traffic on a 2-vCPU node should lose.
