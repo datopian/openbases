@@ -33,6 +33,8 @@ $$;
 -- As the application role with NO identity: the situation of any unauthenticated
 -- or system query. It must see no projections at all.
 SET LOCAL ROLE workgraph_app;
+-- Prove the drop took effect; see the file for why a convention is not enough.
+\ir assert_app_role.sql
 
 DO $$
 DECLARE n integer;
@@ -109,6 +111,11 @@ BEGIN
 
   PERFORM set_config('workgraph.user_id', u::text, true);
   SET LOCAL ROLE workgraph_app;
+  -- Same guard as test/integration/assert_app_role.sql, inline because a psql
+  -- include cannot appear inside a PL/pgSQL block.
+  IF current_user <> 'workgraph_app' THEN
+    RAISE EXCEPTION 'running as %, not workgraph_app: row-level security is bypassed and the assertions below would pass regardless of the policies', current_user;
+  END IF;
 
   SELECT count(*) INTO n FROM pull_request_projections WHERE number = 8802;
   IF n <> 0 THEN

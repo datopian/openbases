@@ -80,6 +80,15 @@ jobs:
       - name: structural migration checks
         run: bash scripts/check_migrations.sh
 
+      # CI connects as postgres, a superuser, and a superuser never evaluates
+      # row-level security — FORCE ROW LEVEL SECURITY does not change that. So a
+      # visibility test that forgets to drop to workgraph_app passes whether the
+      # policies are right, wrong, or absent. This asserts that every test which
+      # reads a protected table either drops privileges AND proves it took
+      # effect, or is recorded as owner-only with the reason (wg-8yv.50).
+      - name: integration tests exercise RLS rather than bypassing it
+        run: python3 scripts/check_rls_tests.py
+
       # Applying against a real PostgreSQL is what catches a migration that
       # parses but cannot run.
       - name: apply migrations to an empty database

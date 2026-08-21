@@ -106,6 +106,8 @@ $$;
 -- As the application role, with NO user identity set — precisely the webhook's
 -- situation, and the one that was broken.
 SET LOCAL ROLE workgraph_app;
+-- Prove the drop took effect; see the file for why a convention is not enough.
+\ir assert_app_role.sql
 
 DO $$
 BEGIN

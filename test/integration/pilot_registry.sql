@@ -61,6 +61,8 @@ END
 $$;
 
 SET LOCAL ROLE workgraph_app;
+-- Prove the drop took effect; see the file for why a convention is not enough.
+\ir assert_app_role.sql
 
 DO $$
 DECLARE n integer; anu text; osahon text; outsider text;
