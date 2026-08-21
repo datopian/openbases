@@ -219,6 +219,26 @@ Fifteen minutes because **the WAL sync is what sets the off-machine recovery
 point**. If the node is lost, the recovery point is the newest segment that
 reached R2 — not the newest one in the local archive, which died with the node.
 
+### Retention, once the locks are applied
+
+| Prefix | Retention | Lock |
+| --- | --- | --- |
+| `postgres/` | 35 days | 30 days |
+| `wal/` | 35 days | 30 days |
+| `beads-hq/` | 35 days | 30 days |
+| `postgres-monthly/` | 400 days | 30 days |
+| the evidence and audit buckets | — | **365 days** |
+
+Every retention is longer than its lock, and that is a constraint rather than a
+preference: a lifecycle rule cannot delete a locked object, so a retention
+shorter than the lock would silently never take effect while looking like a
+managed policy. A variable validation enforces it.
+
+The monthly copies exist because the plan asks for thirty daily and twelve
+monthly, and a single age-based rule cannot express both. `backup_offsite.sh`
+writes one object per calendar month to its own prefix, which is one extra 19 MB
+upload a month.
+
 ### This never deletes from R2
 
 The central decision, and not an omission. The node holds a token that can write
@@ -278,12 +298,8 @@ quietly defeated exactly this test, passing while proving nothing.
 
 The gap is no longer "everything is on one machine". What remains:
 
-- **No R2 lifecycle or bucket-lock rules.** The plan asks for retention locks on
-  the backup and audit prefixes. Without them the off-machine copies grow
-  forever (cheaply), and nothing prevents an early deletion by anyone holding a
-  token with delete rights. This is the next piece of work and the thing that
-  makes "the node cannot delete its own backups" enforceable rather than merely
-  true of the current script.
-- **12-month audit retention** is not configured.
-- **Monthly retention** (the plan's 12 monthly alongside 30 daily) is implicit in
-  never deleting rather than expressed as a rule.
+- **The R2 locks and lifecycle rules are written but NOT applied.** They are in
+  `infra/tofu/modules/environment/main.tf` and plan cleanly; applying them needs
+  a decision, because a bucket lock **cannot be destroyed by OpenTofu** — once
+  created it stays in the API until removed by hand. Until they are applied, "the
+  node cannot delete its own backups" remains true only of the script.

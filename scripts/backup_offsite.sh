@@ -161,6 +161,40 @@ done
 echo "  base backups: $uploaded uploaded, $skipped already present"
 
 # ---------------------------------------------------------------------------
+# One copy per calendar month, under its own prefix
+# ---------------------------------------------------------------------------
+#
+# The plan asks for thirty daily and twelve monthly (section 15.3). A single
+# age-based lifecycle rule cannot express both, so the monthly copies live under
+# their own prefix with their own retention — 400 days against 35 for the
+# dailies. Without this, "twelve monthly" would be a sentence in a document and
+# nothing else.
+#
+# Uploaded rather than server-side copied: R2 rejects several of rclone's
+# server-side copy paths with 501, and one extra 19 MB PUT a month is not worth
+# the fragility of finding out which.
+newest_local="$(find "$BASE_DIR" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' | sort | tail -1)"
+if [ -n "$newest_local" ]; then
+  month="${newest_local:0:6}"   # YYYYMM from a YYYYMMDDTHHMMSSZ stamp
+  monthly="r2:$BUCKET/postgres-monthly/$month.tar.gz"
+  if [ -n "$(rclone lsf "$monthly" "${RC[@]}" 2>/dev/null)" ]; then
+    echo "  monthly copy for $month already present"
+  elif [ "$DRY_RUN" = 1 ]; then
+    echo "  would create the monthly copy for $month"
+  else
+    tmp="$(mktemp)"
+    if tar czf "$tmp" -C "$BASE_DIR/$newest_local" . \
+       && rclone copyto "$tmp" "$monthly" "${RC[@]}"; then
+      echo "  monthly copy created for $month (from $newest_local)"
+    else
+      echo "  failed to create the monthly copy for $month" >&2
+      fail=1
+    fi
+    rm -f "$tmp"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # WAL: the part that actually determines the off-machine recovery point
 # ---------------------------------------------------------------------------
 #

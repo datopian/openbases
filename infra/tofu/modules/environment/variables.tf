@@ -225,3 +225,72 @@ variable "ai_budget_shares" {
     error_message = "ai_budget_shares must sum to 1, so the per-gateway limits add up to the pool."
   }
 }
+
+# ---------------------------------------------------------------------------
+# R2 retention (WP-I2, wg-y9w)
+# ---------------------------------------------------------------------------
+
+variable "r2_lock_days" {
+  description = <<-EOT
+    How long an object in the backup, evidence and audit buckets cannot be
+    deleted or overwritten, in days.
+
+    This is the control that makes "the node cannot destroy its own backups"
+    true of the BUCKET rather than merely true of the script that writes to it.
+    The control node holds a token with object write access, so without a lock
+    anything the node can reach it can also delete — and a backup an attacker can
+    delete is not a backup.
+
+    Thirty days is chosen to match the daily retention: a compromised node can
+    stop new backups being made, which the monitor's staleness alert reports, and
+    cannot remove the month of history already stored.
+  EOT
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.r2_lock_days >= 7
+    error_message = "A lock shorter than a week would not survive a weekend, which is when an incident is least likely to be noticed."
+  }
+}
+
+variable "r2_audit_lock_days" {
+  description = <<-EOT
+    The same, for the audit and evidence buckets, where the plan requires at
+    least twelve months of retention (section 15.1). Audit records are the one
+    thing that must survive somebody wanting them gone.
+  EOT
+  type        = number
+  default     = 365
+}
+
+variable "r2_daily_retention_days" {
+  description = <<-EOT
+    How long daily backup objects live before a lifecycle rule expires them.
+
+    Longer than the lock, necessarily: a lifecycle rule cannot delete a locked
+    object, so a retention shorter than the lock would silently never take
+    effect and storage would grow for ever while appearing to be managed.
+  EOT
+  type        = number
+  default     = 35
+
+  validation {
+    condition     = var.r2_daily_retention_days > var.r2_lock_days
+    error_message = "Daily retention must exceed the lock period, or the lifecycle rule can never delete anything."
+  }
+}
+
+variable "r2_monthly_retention_days" {
+  description = <<-EOT
+    How long the monthly backup copies live. The plan asks for thirty daily and
+    twelve monthly (section 15.3); a single age-based rule cannot express both,
+    so monthly copies go to their own prefix with their own rule.
+
+    Four hundred rather than three hundred and sixty-five, so twelve monthly
+    copies are always present rather than the oldest expiring days before its
+    replacement is written.
+  EOT
+  type        = number
+  default     = 400
+}

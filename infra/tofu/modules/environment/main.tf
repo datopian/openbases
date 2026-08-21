@@ -437,14 +437,105 @@ resource "cloudflare_zero_trust_access_application" "ssh_execution" {
 # ---------------------------------------------------------------------------
 
 # Backups, encrypted evidence snapshots, audit exports and remote state.
-# Retention locks are applied to the backup and audit prefixes by WP-I2, which
-# owns the retention policy.
 resource "cloudflare_r2_bucket" "this" {
   for_each = toset(var.r2_buckets)
 
   account_id = var.cloudflare_account_id
   name       = "workgraph-${each.value}-${var.environment}"
   location   = var.r2_location
+}
+
+# ---------------------------------------------------------------------------
+# Retention locks (WP-I2, wg-y9w)
+# ---------------------------------------------------------------------------
+#
+# The off-machine backup script never deletes from R2, deliberately. But that is
+# a property of the SCRIPT: the control node holds a token with object write
+# access, so anyone who reaches the node can delete what the node can reach, and
+# a backup an attacker can delete is not a backup.
+#
+# A bucket lock moves the guarantee into the bucket. Within the lock period an
+# object cannot be deleted or overwritten by anybody holding the token — the node,
+# a stolen copy of its credential, or a mistaken operator.
+#
+# What it does NOT protect against is worth stating: a compromised node can stop
+# new backups being written. That is why the monitor alerts on staleness rather
+# than only on absence — the two failures look identical in the bucket, and only
+# one of them is visible there.
+#
+# Locks are also close to irreversible by design, which is the point and the
+# risk. Shortening one does not retroactively unlock objects already written, so
+# a lock period set too long is lived with rather than corrected.
+resource "cloudflare_r2_bucket_lock" "this" {
+  for_each = cloudflare_r2_bucket.this
+
+  account_id  = var.cloudflare_account_id
+  bucket_name = each.value.name
+
+  rules = [{
+    id      = "workgraph-${each.key}-lock"
+    enabled = true
+    # No prefix: everything in the bucket. A prefix would leave anything written
+    # outside it unprotected, and the whole point is that there is no gap for an
+    # attacker to write into and delete from.
+    condition = {
+      type            = "Age"
+      max_age_seconds = (each.key == "backups" ? var.r2_lock_days : var.r2_audit_lock_days) * 24 * 60 * 60
+    }
+  }]
+}
+
+# ---------------------------------------------------------------------------
+# Lifecycle: retention that is enforced rather than achieved by never deleting
+# ---------------------------------------------------------------------------
+#
+# Without this the off-machine copies grow for ever, because nothing deletes
+# them. That is cheap (about 570 MB a month) and it is not a policy — the plan
+# asks for thirty daily and twelve monthly, which is a statement about what is
+# kept AND what is not.
+#
+# A single age-based rule cannot express both, so the daily and monthly copies
+# live under separate prefixes with separate rules. The monthly copy is written
+# by scripts/backup_offsite.sh, one per calendar month.
+#
+# Every retention here is longer than the lock period. It has to be: a lifecycle
+# rule cannot delete a locked object, so a shorter retention would silently never
+# take effect while looking like a managed policy.
+resource "cloudflare_r2_bucket_lifecycle" "backups" {
+  account_id  = var.cloudflare_account_id
+  bucket_name = cloudflare_r2_bucket.this["backups"].name
+
+  rules = [
+    for r in [
+      { key = "postgres-daily", prefix = "postgres/", days = var.r2_daily_retention_days },
+      { key = "wal", prefix = "wal/", days = var.r2_daily_retention_days },
+      { key = "beads-hq", prefix = "beads-hq/", days = var.r2_daily_retention_days },
+      # The prefix the workstation script wrote to before the graph moved to the
+      # control node. Expired on the monthly schedule rather than deleted here,
+      # so the history is not destroyed by a refactor.
+      { key = "beads-legacy", prefix = "beads/", days = var.r2_monthly_retention_days },
+      { key = "postgres-monthly", prefix = "postgres-monthly/", days = var.r2_monthly_retention_days },
+      ] : {
+      id         = "workgraph-${r.key}"
+      enabled    = true
+      conditions = { prefix = r.prefix }
+      delete_objects_transition = {
+        condition = {
+          type    = "Age"
+          max_age = r.days * 24 * 60 * 60
+        }
+      }
+      # Abandoned multipart uploads are billed as storage and are invisible in a
+      # normal listing, so they accumulate silently. A week is generous for an
+      # upload that should take seconds.
+      abort_multipart_uploads_transition = {
+        condition = {
+          type    = "Age"
+          max_age = 7 * 24 * 60 * 60
+        }
+      }
+    }
+  ]
 }
 
 # ---------------------------------------------------------------------------
