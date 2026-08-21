@@ -71,6 +71,8 @@ VALUES ('00000000-0000-0000-0000-000000000f10', 'restricted', '00000000-0000-000
 -- ---------------------------------------------------------------------------
 
 SET LOCAL ROLE workgraph_app;
+-- Prove the drop took effect; see the file for why a convention is not enough.
+\ir assert_app_role.sql
 
 DO $$
 DECLARE

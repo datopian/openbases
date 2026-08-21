@@ -49,6 +49,11 @@ BEGIN
 
   PERFORM set_config('workgraph.user_id', outsider::text, true);
   SET LOCAL ROLE workgraph_app;
+  -- Same guard as test/integration/assert_app_role.sql, inline because a psql
+  -- include cannot appear inside a PL/pgSQL block.
+  IF current_user <> 'workgraph_app' THEN
+    RAISE EXCEPTION 'running as %, not workgraph_app: row-level security is bypassed and the assertions below would pass regardless of the policies', current_user;
+  END IF;
 
   -- "What changed since yesterday?" must not surface it.
   SELECT count(*) INTO n
