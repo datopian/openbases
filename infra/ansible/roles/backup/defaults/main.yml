@@ -60,3 +60,16 @@ backup_beads_user: "{{ beads_hq_user | default('workgraph') }}"
 # declares postgres-offsite and beads-offsite as streams with no receipt, so the
 # gap is an open alert rather than a footnote nobody reads.
 backup_offsite_enabled: false
+
+# The bucket the copies go to, and how often. Every 15 minutes because the WAL
+# sync is what sets the OFF-MACHINE recovery point: if the node is lost, the
+# recovery point is the newest segment that reached R2, not the newest one in the
+# local archive, which died with the node.
+backup_offsite_bucket: "workgraph-backups-{{ backup_environment | default('staging') }}"
+backup_offsite_interval: 15min
+
+# The R2 credentials, supplied from SOPS at run time (see group_vars secrets).
+# Empty means the offsite copy is not configured and its units are not installed.
+backup_r2_access_key_id: "{{ lookup('env', 'R2_ACCESS_KEY_ID') }}"
+backup_r2_secret_access_key: "{{ lookup('env', 'R2_SECRET_ACCESS_KEY') }}"
+backup_r2_account_id: "{{ lookup('env', 'CLOUDFLARE_ACCOUNT_ID') }}"

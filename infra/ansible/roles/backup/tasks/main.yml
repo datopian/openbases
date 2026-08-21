@@ -80,6 +80,19 @@
   register: backup_wal_compress
   changed_when: "'compressed 0 segment' not in backup_wal_compress.stdout"
 
+# rclone is the S3 client the beads backup already uses, so this keeps one tool
+# rather than adding a second. From the distribution rather than pinned like
+# gt/bd/dolt: those three have to interoperate at exact versions, which is why
+# they are pinned; an S3 copy has no such coupling and unattended-upgrades
+# keeping it patched is worth more than pinning it.
+- name: Install rclone for the off-machine copy
+  ansible.builtin.apt:
+    name: rclone
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: backup_offsite_enabled | bool
+
 - name: Install the backup scripts
   ansible.builtin.copy:
     src: "{{ item.src }}"
@@ -91,6 +104,7 @@
     - { src: "{{ playbook_dir }}/../../scripts/backup_postgres.sh", dest: wg-backup-postgres }
     - { src: "{{ playbook_dir }}/../../scripts/backup_beads_hq.sh", dest: wg-backup-beads }
     - { src: "{{ playbook_dir }}/../../scripts/restore_postgres.sh", dest: wg-restore-postgres }
+    - { src: "{{ playbook_dir }}/../../scripts/backup_offsite.sh", dest: wg-backup-offsite }
   loop_control:
     label: "{{ item.dest }}"
 
@@ -319,6 +333,120 @@
     - wg-backup-beads.timer
     - wg-backup-beads-export.timer
 
+# ---------------------------------------------------------------------------
+# Off-machine copy (wg-ohk)
+# ---------------------------------------------------------------------------
+- name: Ensure the credential directory exists
+  ansible.builtin.file:
+    path: /etc/workgraph/credentials
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: backup_offsite_enabled | bool
+
+- name: Install the R2 credentials
+  ansible.builtin.copy:
+    dest: "/etc/workgraph/credentials/{{ item.name }}"
+    content: "{{ item.value }}"
+    owner: root
+    group: root
+    # 0400 root-only. systemd loads the credential as root and places a copy in
+    # the unit's private $CREDENTIALS_DIRECTORY, so the service never needs to
+    # read this file.
+    mode: "0400"
+  loop:
+    - { name: r2_access_key_id, value: "{{ backup_r2_access_key_id }}" }
+    - { name: r2_secret_access_key, value: "{{ backup_r2_secret_access_key }}" }
+    - { name: r2_account_id, value: "{{ backup_r2_account_id }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when:
+    - backup_offsite_enabled | bool
+    - item.value | default('') | length > 0
+
+# A credential no longer configured must not linger: systemd would keep loading a
+# stale file, and a revoked key still on disk is exactly what revocation removes.
+- name: Remove R2 credentials that are no longer configured
+  ansible.builtin.file:
+    path: "/etc/workgraph/credentials/{{ item.name }}"
+    state: absent
+  loop:
+    - { name: r2_access_key_id, value: "{{ backup_r2_access_key_id }}" }
+    - { name: r2_secret_access_key, value: "{{ backup_r2_secret_access_key }}" }
+    - { name: r2_account_id, value: "{{ backup_r2_account_id }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  when: not (backup_offsite_enabled | bool) or (item.value | default('') | length == 0)
+
+- name: Install the offsite units
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: wg-backup-offsite.service
+      content: |
+        # Managed by Ansible (WP-I2). Copies backups to R2.
+        [Unit]
+        Description=Copy backups off the machine to R2
+        Documentation=https://github.com/datopian/company-workgraph#wp-i2
+        After=network-online.target
+        Wants=network-online.target
+
+        [Service]
+        Type=oneshot
+        # root, because it reads the postgres-owned base backups and the
+        # postgres-owned WAL archive. It only ever reads them.
+        User=root
+        LoadCredential=r2_access_key_id:/etc/workgraph/credentials/r2_access_key_id
+        LoadCredential=r2_secret_access_key:/etc/workgraph/credentials/r2_secret_access_key
+        LoadCredential=r2_account_id:/etc/workgraph/credentials/r2_account_id
+        Environment=WG_OFFSITE_BUCKET={{ backup_offsite_bucket }}
+        Environment=WG_BACKUP_BASE_DIR={{ backup_postgres_dir }}
+        Environment=WG_WAL_ARCHIVE_DIR={{ backup_wal_archive_dir }}
+        Environment=WG_HQ_BACKUP_DIR={{ backup_beads_dir }}
+        Environment=WG_BACKUP_RECEIPT_DIR={{ backup_receipt_dir }}
+        ExecStart=/usr/local/bin/wg-backup-offsite
+        Nice=10
+        IOSchedulingClass=idle
+        NoNewPrivileges=true
+        PrivateTmp=true
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: wg-backup-offsite.timer
+      content: |
+        # Managed by Ansible (WP-I2).
+        [Unit]
+        Description=Copy backups off the machine every {{ backup_offsite_interval }}
+        Documentation=https://github.com/datopian/company-workgraph#wp-i2
+
+        [Timer]
+        OnBootSec=5min
+        OnUnitActiveSec={{ backup_offsite_interval }}
+        RandomizedDelaySec=60
+        Persistent=true
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+  when: backup_offsite_enabled | bool
+  notify: Reload systemd
+
+- name: Enable the offsite timer
+  ansible.builtin.systemd_service:
+    name: wg-backup-offsite.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: backup_offsite_enabled | bool
+
 # The first backup, now, rather than at 01:20 tomorrow. Until one exists there is
 # nothing to restore from, and the monitor is correctly alerting that there is
 # no backup — leaving that true overnight after deploying the fix for it would
@@ -331,6 +459,13 @@
     - wg-backup-postgres.service
     - wg-backup-beads.service
   register: backup_first_run
+  changed_when: true
+
+- name: Copy them off the machine now
+  ansible.builtin.systemd_service:
+    name: wg-backup-offsite.service
+    state: started
+  when: backup_offsite_enabled | bool
   changed_when: true
 
 - name: Confirm both receipts exist
