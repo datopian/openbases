@@ -23,6 +23,37 @@ scripts/load_env.sh drop
 |---|---|---|
 | `leak_test.sql` | 1 — no cross-project leak | **pass**, 10 sampled users against 50 projects; 21,000 restricted items invisible to a non-member |
 | `query_latency.sql` | 2 — UI usable at load | project-scoped 20 ms, paged 23 ms, portfolio 375 ms, **unfiltered 7.6 s** |
+| `cmd/loadtest` | 1 and 2 under concurrency | **0 isolation violations**; p50 542 ms at 10 streams, 392 ms uncontended |
+
+## Concurrency
+
+```bash
+# on the control node, against the load database
+loadtest -dsn "postgres://workgraph_app:PW@127.0.0.1:5432/workgraph_load?sslmode=disable" \
+         -users 25 -conns 10 -streams 10 -seconds 45
+```
+
+The pool is deliberately smaller than the user count, and the streams cycle
+round-robin through users, so one physical connection serves many identities in
+quick succession. That is the condition an identity leak needs: `authz.WithUser`
+sets `workgraph.user_id` with `is_local = true`, so it is transaction-scoped and
+released on commit — correct, and worth proving rather than asserting, because a
+session-scoped setting would leak user A's identity to user B on the same pooled
+connection, invisibly under serial testing.
+
+Each worker's expected project set is computed **once, serially**, before the
+concurrent phase. Comparing against a precomputed baseline is what makes it a
+real test: a worker that asked "which projects am I a member of" during the
+concurrent phase would get an answer that leaked in the same direction and
+agreed with itself.
+
+Result: **0 isolation violations** in every configuration tried, including a
+deliberately abusive 250 goroutines over 5 connections.
+
+`-streams` is TOTAL concurrent readers, not per user. Reading the load target's
+"10 concurrent streams" as ten *per user* gave 250 goroutines over 5 connections
+and a p50 of 15 seconds that was almost entirely queue wait — measuring the
+harness rather than the system.
 
 ## Two traps in writing these, both hit
 
@@ -57,8 +88,19 @@ moment someone adds a cross-project work-item listing, which is a plausible next
 every project-scoped query is a sequential scan. The seeder creates one, and a real deployment needs
 it in a migration.
 
+## The per-row RLS cost
+
+392 ms uncontended for a 5,000-row cross-project scan is about **78 microseconds per candidate
+row**, which is exactly what makes 105,000 rows take 7.6 seconds. Query time is a linear function
+of the rows the planner cannot exclude by index first.
+
+Concurrency does not make that worse than it should be: p50 542 ms at ten streams against 392 ms
+uncontended is modest queueing. The problem is the constant, not contention. Filed as **wg-1ng**
+with a proposed fix — express the policy so the planner can use a semi-join over the membership set
+instead of a per-row function call.
+
 ## Not done yet
 
-Concurrency test (10 concurrent streams, 25 active agents), 100 GitHub events/minute freshness,
+100 GitHub events/minute freshness,
 the 24-hour soak, dependency and container scans, the resource-limit test for criterion 3, and the
 threat-model review.
