@@ -15,7 +15,11 @@
   loop:
     - postgres
     - "{{ backup_beads_user }}"
-  notify: Restart PostgreSQL for group membership
+  # No restart of PostgreSQL. Supplementary groups are read when a process
+  # starts, and the process that needs the group is the oneshot backup unit,
+  # which starts fresh on every run. The PostgreSQL server itself writes only to
+  # the archive directory, which it already owns — so restarting it here would be
+  # an outage bought for nothing.
 
 - name: Create the backup directories
   ansible.builtin.file:
