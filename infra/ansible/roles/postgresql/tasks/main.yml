@@ -77,6 +77,29 @@
 # The application connects as this role. It is deliberately NOT the table owner:
 # an owner bypasses row-level security unless FORCE is set on every table, and
 # depending on remembering FORCE is exactly the assumption 0008_rls.sql removes.
+# Refuse to run with no password rather than setting an empty one.
+#
+# This task sets the role's password on EVERY run from a variable that may be
+# empty — postgresql_app_password comes from an environment lookup, so a deploy
+# run without the secret sourced silently reset the database password to nothing.
+# Nothing noticed at the time. It surfaced later as reconciliation failing SASL
+# auth, the webhook delivery backlog never draining, and therefore a project
+# view quietly showing stale pull request state (WP-I3).
+#
+# The failure mode is the worst kind: a successful-looking apply that breaks
+# authentication for a service which only runs on a timer, so the breakage is
+# invisible until someone asks why the interface is out of date.
+- name: Refuse to set an empty database password
+  ansible.builtin.assert:
+    that:
+      - postgresql_app_password | default('') | length >= 16
+    fail_msg: >-
+      postgresql_app_password is empty or too short. Setting it now would reset
+      the application role's password and break every service that
+      authenticates with it. Run the deploy through scripts/with_secrets.sh so
+      WG_DB_APP_PASSWORD is present.
+    success_msg: "a database password is present"
+
 - name: Create the application role
   become: true
   become_user: postgres

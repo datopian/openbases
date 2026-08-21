@@ -238,3 +238,27 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+      # The interface's dependencies were not scanned by anything. govulncheck
+      # covers Go only, and the web application ships to a browser as part of
+      # the control API binary, so a vulnerable package there is served to every
+      # authenticated user (WP-I3).
+      #
+      # Dev dependencies are included deliberately. They do not reach the
+      # browser, but they run in CI with repository access, which is its own
+      # exposure — a compromised build tool is a supply-chain problem whether or
+      # not it ends up in the bundle.
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the web job. There is no .nvmrc; pinning it in two places is
+          # a small duplication, and referencing a file that does not exist
+          # would have failed the job on its first run.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: dependency scan, web
+        working-directory: apps/web
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
