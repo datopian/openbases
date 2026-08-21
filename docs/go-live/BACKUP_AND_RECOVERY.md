@@ -168,18 +168,22 @@ the node into a rounding error.
 
 At $0.015/GB-month storage and $4.50/million Class A operations, with egress free:
 
-| | Uncompressed, as-is | Tarred per backup |
+| | If uploaded as directories | As implemented: one tar each |
 | --- | --- | --- |
-| Storage | 3.9 GB → $0.06/mo | 567 MB → $0.01/mo |
-| Class A ops | ~73,000/mo | ~330/mo |
+| Storage | 3.9 GB → $0.06/mo | **570 MB/mo → $0.01/mo** |
+| Class A ops | ~73,000/mo | **~330/mo** |
 
 Both fit inside R2's free tier (10 GB-month storage, 1M Class A operations), so
 the realistic bill is **zero**, and the worst case is cents.
 
-**Upload one tar per backup, not the directory.** A plain-format base backup is
-**2,153 files**, and the whole run tars to **18.9 MB against 129 MB** — 6.8× less
-storage and one PUT instead of 2,153. The operation count is what would eventually
-cost money here, not the bytes.
+One tar per backup rather than the directory: a plain-format base backup is
+**2,153 files** and the run tars to **18.9 MB against 129 MB** — 6.8× less storage
+and one PUT instead of 2,153. On R2 the operation count is what would eventually
+cost money, not the bytes.
+
+Because nothing is ever deleted remotely, storage grows about 570 MB a month —
+roughly 7 GB after a year, which crosses the free tier into a few cents a month.
+A lifecycle rule is the intended answer, not client-side deletes.
 
 Locally the backups stay **uncompressed on purpose**: `pg_verifybackup` checks a
 plain backup in place, and a restore is a straight copy, which is what keeps the
@@ -201,28 +205,62 @@ needs cutting, this is the only line worth looking at — and it is also the onl
 copy that currently survives losing the node, so cutting it without fixing
 wg-ohk first would leave nothing off-machine at all.
 
-## What is NOT protected
+## Off-machine copies
 
-**Everything is on the same machine as the thing it protects.** That survives a
-bad migration, a dropped table, a corrupted page and an accidental deletion. It
-does **not** survive losing the node.
+`wg-backup-offsite.timer`, every 15 minutes, to `r2://workgraph-backups-staging`:
 
-The blocker is a credential, not a design: the R2 access key reaches
-`workgraph-tfstate-staging` and returns 403 on `workgraph-backups-staging`,
-because it was scoped to the buckets that existed when it was minted and the
-backup bucket was created afterwards. Tracked as **wg-ohk** (P0). Fixing it needs
-an R2 token with Object Read & Write over the backup, evidence and audit buckets,
-which is an organisation-level action.
+| Prefix | What | Measured |
+| --- | --- | --- |
+| `postgres/` | one gzipped tar per base backup | 8 objects, 18.9 MB each |
+| `wal/` | the compressed WAL archive | 63 segments, 2.3 MB |
+| `beads-hq/` | the work-graph snapshot | 18 objects, 0.1 MB |
 
-Consequently these plan requirements are **not met**:
+Fifteen minutes because **the WAL sync is what sets the off-machine recovery
+point**. If the node is lost, the recovery point is the newest segment that
+reached R2 — not the newest one in the local archive, which died with the node.
 
-- copy backup data to encrypted R2 storage;
-- R2 retention locks on backup and audit prefixes;
-- 30 daily / 12 monthly retention (30 daily exists locally; monthly needs offsite);
-- 12-month audit retention.
+### This never deletes from R2
 
-The monitor does not alert on the missing off-machine copy. That is deliberate and
-arguable: an alert that cannot clear until somebody mints a token would sit red
-indefinitely, and a permanently red alert is how the alerting system stops being
-read. It is an open P0 bead and this document instead. It becomes an alert the
-moment `backup_offsite_enabled` is true.
+The central decision, and not an omission. The node holds a token that can write
+to the bucket, so anything the node can delete is not a backup: an attacker who
+reaches the disk also reaches the copies of it. Retention off-machine therefore
+has to be a **server-side lifecycle rule**, which the node cannot influence.
+
+The cost of never deleting is known and small: 18.9 MB a day is about 570 MB a
+month and under 7 GB a year, against a 10 GB free tier.
+
+### Two things R2 does not implement
+
+Both cost a deployment cycle to find, so they are written down:
+
+- **`rclone rcat` fails with 501.** Streaming an upload of unknown length uses a
+  multipart flow R2 does not implement. The tar goes to a temporary file first so
+  the size is known and the object goes up as a single PUT — which also allows an
+  exact size comparison on read-back, a stronger check than "not empty".
+- **`--no-update-modtime` is required.** R2 does not implement the `CopyObject`
+  call rclone uses to rewrite a modification time, so without it every re-run
+  logs a 501 per object that already exists.
+
+And a third that was mine rather than R2's: `rclone lsf` on a path that does not
+exist **exits 0 with no output**, so checking the exit status reported every
+backup as already uploaded and sent nothing. The only reason that did not become
+a silent total failure is that the receipt is written from a separate count of
+what is actually in the bucket, which stayed at zero and refused to claim a copy
+existed.
+
+## What is still NOT protected
+
+The gap is no longer "everything is on one machine". What remains:
+
+- **No R2 lifecycle or bucket-lock rules.** The plan asks for retention locks on
+  the backup and audit prefixes. Without them the off-machine copies grow
+  forever (cheaply), and nothing prevents an early deletion by anyone holding a
+  token with delete rights. This is the next piece of work and the thing that
+  makes "the node cannot delete its own backups" enforceable rather than merely
+  true of the current script.
+- **12-month audit retention** is not configured.
+- **Monthly retention** (the plan's 12 monthly alongside 30 daily) is implicit in
+  never deleting rather than expressed as a rule.
+- **The restore drill has never run against an off-machine copy.** It restores
+  from the local base backup. Pulling a tar from R2 and restoring that is a
+  different path, and an untested path is a belief.
