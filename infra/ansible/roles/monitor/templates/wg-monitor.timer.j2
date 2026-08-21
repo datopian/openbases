@@ -1,0 +1,23 @@
+# Managed by Ansible (WP-I1).
+[Unit]
+Description=Run the Workgraph platform monitor periodically
+Documentation=https://github.com/datopian/company-workgraph#wp-i1
+
+[Timer]
+# A timer rather than a loop inside the process. `systemctl list-timers` then
+# says when it last ran and when it runs next, a crash is restarted without any
+# supervision logic of its own, and a missed run is a fact the operating system
+# records rather than something the monitor would have to notice about itself.
+OnBootSec=2min
+OnUnitActiveSec={{ monitor_interval }}
+
+# Small, because five minutes is already short and a large jitter would make the
+# effective interval unpredictable.
+RandomizedDelaySec=30
+
+# A missed run executes once on the next boot rather than being skipped silently.
+# The node having been off is exactly when something may have broken.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

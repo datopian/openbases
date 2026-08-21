@@ -95,6 +95,29 @@ if [ "${COUNT:-0}" -eq 0 ]; then
 fi
 echo "  verified: $COUNT object(s) at beads/$STAMP/"
 
+# Leave a receipt the monitor can read (WP-I1).
+#
+# Written HERE, after the read-back verification above, and nowhere else. That
+# ordering is the whole value of the receipt: it attests that the remote copy was
+# confirmed to exist, not merely that an upload command returned zero — which is
+# exactly the failure the verification exists to catch.
+#
+# The timestamp is the file's CONTENT rather than its mtime, because a copy, a
+# restore, or a careless `touch` would all refresh an mtime and none of them is a
+# backup. The monitor parses the content for the same reason.
+#
+# Best-effort: a backup that succeeded must not be reported as failed because the
+# receipt directory is missing on a workstation. A missing receipt on the node is
+# itself an alert, so the failure is not lost.
+RECEIPT_DIR="${WG_BACKUP_RECEIPT_DIR:-/var/lib/workgraph/backups}"
+if [ -d "$RECEIPT_DIR" ] && [ -w "$RECEIPT_DIR" ]; then
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$RECEIPT_DIR/beads.receipt"
+  echo "  receipt written to $RECEIPT_DIR/beads.receipt"
+else
+  echo "  no writable receipt directory at $RECEIPT_DIR; the monitor will report"
+  echo "  this backup as missing even though it succeeded" >&2
+fi
+
 # The reviewable export, refreshed alongside so the two halves stay together.
 SEED="${WG_SEED_PATH:-$ROOT/../company-workgraph/beads-bootstrap/seed/go-live-plan.jsonl}"
 if [ -d "$(dirname "$SEED")" ]; then

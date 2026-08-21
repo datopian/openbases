@@ -148,6 +148,12 @@ jobs:
       - name: credential registry holds references, not values
         run: psql -v ON_ERROR_STOP=1 -f test/integration/credential_registry.sql
 
+      # The acceptance criterion for WP-I1 is that an alert REACHES the operator
+      # with a runbook link, which is a property of the delivery path rather than
+      # of the code that computes the alert.
+      - name: platform alerts reach an operator with a runbook
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/platform_alerts.sql
+
   toolchain:
     name: toolchain
     runs-on: ubuntu-latest

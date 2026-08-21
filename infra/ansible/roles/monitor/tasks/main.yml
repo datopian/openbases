@@ -1,0 +1,107 @@
+---
+# The platform monitor (WP-I1). Runs on the control node, on a timer.
+
+- name: Ensure the backup receipt directory exists
+  ansible.builtin.file:
+    path: "{{ monitor_receipt_dir }}"
+    state: directory
+    owner: root
+    # Group-readable by the service user so the monitor can read receipts it
+    # does not own. Backup jobs run as root; the monitor must not.
+    group: "{{ monitor_user }}"
+    mode: "0750"
+
+- name: Install the monitor binary
+  ansible.builtin.copy:
+    src: "{{ monitor_local_binary }}"
+    dest: "{{ monitor_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: monitor_local_binary | length > 0
+  notify: Restart the monitor timer
+
+- name: Install the monitor unit
+  ansible.builtin.template:
+    src: wg-monitor.service.j2
+    dest: /etc/systemd/system/wg-monitor.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart the monitor timer
+
+- name: Install the monitor timer
+  ansible.builtin.template:
+    src: wg-monitor.timer.j2
+    dest: /etc/systemd/system/wg-monitor.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart the monitor timer
+
+- name: Check whether the monitor binary is present
+  ansible.builtin.stat:
+    path: "{{ monitor_binary }}"
+  register: monitor_binary_stat
+
+# Enabling a timer whose ExecStart does not exist produces a unit that fails
+# every five minutes, which is indistinguishable from a monitor reporting real
+# trouble. Better to install the units and leave the timer stopped until a binary
+# is deployed.
+- name: Enable the monitor timer
+  ansible.builtin.systemd_service:
+    name: wg-monitor.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: monitor_binary_stat.stat.exists
+
+# Proof that the monitor can actually run here, rather than the assumption that
+# installing a unit means a working check.
+#
+# --dry-run so this raises nothing: an Ansible run must not write into people's
+# inboxes as a side effect of deploying. It exercises the database connection,
+# the health probe, the statfs and the receipt read, which is where the failures
+# are — a missing credential, a wrong DSN, an unreadable receipt directory.
+- name: Verify the monitor runs
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --pipe
+      - --wait
+      - --unit=wg-monitor-verify
+      - --property=Type=oneshot
+      - --property=User={{ monitor_user }}
+      - --property=EnvironmentFile=/etc/workgraph/control-api.env
+      - --property=LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+      - "{{ monitor_binary }}"
+      - --dry-run
+      - -health-url
+      - "http://127.0.0.1:{{ control_api_port }}/health/ready"
+      - -mounts
+      - "{{ monitor_mounts }}"
+      - -receipts
+      - "{{ monitor_receipt_dir }}"
+      - -backup-streams
+      - "{{ monitor_backup_streams }}"
+      - -expect-cells
+      - "{{ monitor_expect_cells }}"
+  register: monitor_verify
+  # A dry run exits 1 when a check is failing, which is a legitimate answer here
+  # — a full disk should not fail the deployment. Only an inability to RUN is a
+  # deployment failure, so the output is asserted rather than the exit code.
+  failed_when: >-
+    monitor_verify.stdout is not search('api\s')
+    or monitor_verify.stdout is not search('backup\s')
+  changed_when: false
+  when: monitor_binary_stat.stat.exists
+
+- name: Report what the monitor sees
+  ansible.builtin.debug:
+    var: monitor_verify.stdout_lines
+  when: monitor_binary_stat.stat.exists

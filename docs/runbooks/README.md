@@ -47,3 +47,20 @@ go-live.
 ## Written
 
 - [Rotate or revoke a credential](rotate-a-credential.md) — WP-B3
+
+## Alert runbooks (WP-I1)
+
+Each is linked from the alert that raises it, so an operator arrives here from
+their inbox rather than having to know this index exists.
+
+| Alert rule | Runbook |
+| --- | --- |
+| `platform_api_unavailable` | [the control API is unavailable](api-unavailable.md) |
+| `platform_webhook_backlog` | [GitHub deliveries are not being processed](webhook-backlog.md) |
+| `platform_agent_health_silent` | [the witness has stopped reporting](agent-health-silent.md) |
+| `platform_disk_pressure` | [a filesystem is filling up](disk-pressure.md) |
+| `platform_backup_stale` | [a backup stream is stale or has never run](backup-stale.md) |
+
+The alerts are raised by `wg-monitor` on the control node (ADR-0020). It runs on a
+five-minute timer, refreshes an open alert rather than raising a new one, and
+clears an alert when its condition passes.

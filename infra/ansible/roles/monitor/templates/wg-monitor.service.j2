@@ -1,0 +1,57 @@
+# Managed by Ansible (WP-I1).
+[Unit]
+Description=Workgraph platform monitor
+# Documentation= must be a URI; a bare phrase makes systemd log
+# "Invalid URL, ignoring" on every start.
+Documentation=https://github.com/datopian/company-workgraph#wp-i1
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ monitor_user }}
+Group={{ monitor_user }}
+# The DSN without its password, shared with the API so the two cannot disagree
+# about how to build one.
+EnvironmentFile=/etc/workgraph/control-api.env
+
+# The database password as a credential rather than in the environment, the same
+# reasoning as control-api.service.
+LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+
+ExecStart={{ monitor_binary }} \
+  -health-url http://127.0.0.1:{{ control_api_port }}/health/ready \
+  -mounts {{ monitor_mounts }} \
+  -receipts {{ monitor_receipt_dir }} \
+  -backup-streams {{ monitor_backup_streams }} \
+  -expect-cells {{ monitor_expect_cells }} \
+  -disk-percent {{ monitor_disk_percent }} \
+  -webhook-backlog-age {{ monitor_webhook_backlog_age }} \
+  -agent-health-silence {{ monitor_agent_health_silence }}
+
+# The monitor exits non-zero when an alert reached NOBODY, which is the one
+# failure it cannot report through the inbox. A failed unit in
+# `systemctl list-units --failed` is then the signal of last resort, so the
+# failure must be allowed to stand rather than being swallowed.
+SuccessExitStatus=0
+
+# Same hardening as the rest of the control plane. It reads three tables and a
+# filesystem; nothing else on the node is its business.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target
