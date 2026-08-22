@@ -61,7 +61,16 @@ build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 		-o $(BIN)/linux-amd64/monitor ./cmd/monitor
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
 		-o $(BIN)/linux-amd64/worker ./cmd/worker
-	@echo "built: $(BIN)/linux-amd64/witness $(BIN)/linux-amd64/monitor $(BIN)/linux-amd64/worker"
+	@# control-api and reconcile belong here too. They were cross-compiled by
+	@# hand, which is how the deployed API came to report version=dev
+	@# commit=unknown: a hand-rolled `go build` omits LDFLAGS, and then nothing
+	@# can answer "is the running code the deployed code" — the question that
+	@# matters most during an incident.
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+		-o $(BIN)/linux-amd64/control-api ./cmd/control-api
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+		-o $(BIN)/linux-amd64/reconcile ./cmd/reconcile
+	@echo "built: $(BIN)/linux-amd64/{witness,monitor,worker,control-api,reconcile}"
 
 verify-versions: ## Check installed gt/bd/dolt against versions.lock
 	@bash scripts/verify_versions.sh
