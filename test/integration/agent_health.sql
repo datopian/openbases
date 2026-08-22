@@ -42,8 +42,20 @@ BEGIN
   PERFORM system_record_agent_health('oss', 'sandbox', 'dust', 'escalate',
       'git-dirty', 'session_running=false, verdict=NEEDS_RECOVERY', 'sa-03r', false);
 
+  -- Scoped to this transaction, not to the whole table.
+  --
+  -- cell/rig/polecat are REAL names on a running system, so on staging this
+  -- filter matched 1590 rows of genuine history and the test failed with
+  -- "expected both decisions recorded, got 1592". It only ever passed because
+  -- CI runs it against an empty database — which meant it could not be used to
+  -- check a live one, exactly when checking is most useful.
+  --
+  -- now() is the transaction timestamp, and rows inserted above take it as their
+  -- observed_at default, so >= now() selects this test's rows and excludes
+  -- everything that existed before.
   SELECT count(*) INTO n FROM agent_health_events
-   WHERE cell = 'oss' AND rig = 'sandbox' AND polecat IN ('nitro', 'dust');
+   WHERE cell = 'oss' AND rig = 'sandbox' AND polecat IN ('nitro', 'dust')
+     AND observed_at >= now();
   IF n <> 2 THEN
     RAISE EXCEPTION 'expected both decisions recorded, got %', n;
   END IF;
@@ -92,7 +104,8 @@ BEGIN
       'witness:sandbox/dust:silent-session', 0.5, expl, 'internal');
 
   SELECT count(*) INTO n FROM attention_items
-   WHERE user_id = lead AND dedupe_key LIKE 'witness:sandbox/dust:%';
+   WHERE user_id = lead AND dedupe_key LIKE 'witness:sandbox/dust:%'
+     AND created_at >= now();
   IF n <> 2 THEN
     RAISE EXCEPTION 'a second, different problem should raise its own item; got % total', n;
   END IF;
@@ -114,8 +127,12 @@ BEGIN
     RAISE EXCEPTION 'seeing the problem again un-snoozed an item the operator had deferred';
   END IF;
 
+  -- Also scoped to this transaction. These dedupe keys are the shape a real
+  -- witness produces, so on a live database a resolved item with the same key
+  -- would be counted and the assertion would fail for the wrong reason.
   SELECT count(*) INTO n FROM attention_items
-   WHERE user_id = lead AND dedupe_key = 'witness:sandbox/dust:git-dirty';
+   WHERE user_id = lead AND dedupe_key = 'witness:sandbox/dust:git-dirty'
+     AND created_at >= now();
   IF n <> 1 THEN
     RAISE EXCEPTION 'a snoozed item was duplicated rather than updated; got %', n;
   END IF;
