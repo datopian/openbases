@@ -38,7 +38,7 @@ outage:
 | credential | order | why |
 |---|---|---|
 | `db_app_password` | PostgreSQL first, then deploy | the running pool stays open, so there is no window at all |
-| `github_webhook_secret` | deploy, then GitHub, fast | **there is a window either way** — one secret is in force per side and they must match. GitHub retries, and the Advanced tab can redeliver. wg-4bn removes the window by accepting the previous secret too |
+| `github_webhook_secret` | see the four-step rotation below | **no window**, since the service accepts the outgoing secret alongside the new one. Done in one step there IS a window either way, because GitHub signs with exactly one secret |
 | `github_app_private_key` | add new, deploy, verify, **then delete old** | GitHub allows two valid keys. Stopping before the delete leaves more exposure than you started with |
 | `ai_gateway_token`, `cloudflare_api_token` | create new, deploy, verify, then revoke old | Cloudflare cannot scope a gateway token to one gateway (wg-4r2) |
 
@@ -110,3 +110,57 @@ key generated.
 Plan §11.4 requires an offline copy held with Datopian leadership alongside the
 OpenTofu state passphrase. That copy is the recovery path, and it is a human
 responsibility this tooling cannot discharge — tracked on wg-8yv.5.
+
+## Rotating the GitHub webhook secret without an outage
+
+The endpoint accepts a previous secret as well as the current one, so the two
+sides never have to agree at the same instant. Done in one step instead, every
+delivery is rejected until whichever side changed second catches up — and no
+ordering avoids that, because GitHub signs with exactly one secret.
+
+Four steps, and the order matters:
+
+**1. Deploy the new secret with the old one still accepted.**
+
+```bash
+cd infra/ansible
+../../scripts/with_secrets.sh staging ansible-playbook -i inventory/staging.yml site.yml \
+  --limit workgraph-staging-control \
+  -e control_api_github_webhook_secret_previous="<the CURRENT secret, before you change it>"
+```
+
+The new value comes from the encrypted file as usual; `_previous` is the value
+being retired. Both are accepted from this point.
+
+**2. Change it in GitHub.** App settings → Webhook → Secret. Deliveries signed
+with either secret verify, so nothing is rejected while you do it.
+
+**3. Confirm GitHub is signing with the new one.**
+
+```bash
+ssh -o ProxyCommand="cloudflared access ssh --hostname %h" root@ssh-staging.openbases.com \
+  "journalctl -u control-api --since '-10min' | grep -ci 'signature verification failed'"
+```
+
+Zero, and deliveries still arriving, means the new secret is in use. Send a test
+delivery from the App's Advanced tab if traffic is quiet.
+
+**4. Remove the previous secret.** Re-run step 1 without the `-e` flag. Until you
+do, the service logs a warning on every start:
+
+```
+the previous GitHub webhook secret is still accepted; remove
+WG_GITHUB_WEBHOOK_SECRET_PREVIOUS once GitHub is signing with the new one
+```
+
+That warning is the point. A rotation abandoned after step 2 leaves a deployment
+accepting a secret somebody believes was retired, which is worse than the outage
+window this procedure exists to avoid — so it is visible on every restart rather
+than only in whoever's memory started it.
+
+Then record it, which is a separate step because the provider half is not
+something a script can confirm:
+
+```bash
+scripts/record_rotation.sh staging github_webhook_secret
+```

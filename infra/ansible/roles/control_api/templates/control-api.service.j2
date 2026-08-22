@@ -24,6 +24,11 @@ EnvironmentFile=/etc/workgraph/control-api.env
 # and there is no reason to hide them from a shell-out.
 LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
 LoadCredential=github_webhook_secret:/etc/workgraph/credentials/github_webhook_secret
+{% if control_api_github_webhook_secret_previous | default('') | length > 0 %}
+# Present only during a rotation. LoadCredential fails the unit if the file is
+# missing, so this is conditional rather than always declared.
+LoadCredential=github_webhook_secret_previous:/etc/workgraph/credentials/github_webhook_secret_previous
+{% endif %}
 {% if control_api_local_github_key | default('') | length > 0 %}
 LoadCredential=github_app_private_key:{{ control_api_github_key_path }}
 {% endif %}

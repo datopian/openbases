@@ -58,6 +58,15 @@ func main() {
 		"db_app_password", config.CredentialSource("db_app_password", "WG_DB_APP_PASSWORD"),
 		"github_webhook_secret", config.CredentialSource("github_webhook_secret", "WG_GITHUB_WEBHOOK_SECRET"))
 
+	// A rotation that was started and never finished leaves this set, and a
+	// deployment quietly accepting a secret somebody believes was retired is
+	// worse than the outage window it was introduced to avoid. Warned about on
+	// every start so it is noticed rather than inherited.
+	if cfg.GitHubWebhookSecretPrevious != "" {
+		log.Warn("the previous GitHub webhook secret is still accepted; " +
+			"remove WG_GITHUB_WEBHOOK_SECRET_PREVIOUS once GitHub is signing with the new one")
+	}
+
 	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
 		log.Error("opening database", "error", err)
@@ -542,7 +551,8 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	// an identity", and cmd/control-api asserts it is the only one — an
 	// exception that is tested is a decision; an untested one is a hole.
 	mux.HandleFunc("POST /v1/integrations/github/webhook", func(w http.ResponseWriter, r *http.Request) {
-		delivery, err := githubapp.VerifyWebhook(r, []byte(cfg.GitHubWebhookSecret))
+		delivery, err := githubapp.VerifyWebhook(r,
+			[]byte(cfg.GitHubWebhookSecret), []byte(cfg.GitHubWebhookSecretPrevious))
 		if err != nil {
 			// One response for every rejection. Distinguishing a bad signature
 			// from a missing one tells a forger what to change.

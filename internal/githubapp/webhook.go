@@ -3,6 +3,7 @@ package githubapp
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -40,8 +41,27 @@ type Delivery struct {
 // The signature is checked BEFORE the payload is parsed. Parsing first would
 // mean running a JSON decoder over attacker-controlled input on an endpoint
 // that anyone can reach.
-func VerifyWebhook(r *http.Request, secret []byte) (*Delivery, error) {
-	if len(secret) == 0 {
+//
+// Several secrets may be supplied, and any one of them authenticates the
+// delivery. That exists to remove an outage window rather than for convenience:
+// GitHub signs with exactly one secret and this endpoint used to accept exactly
+// one, so during a rotation every delivery was rejected until both sides agreed.
+// No ordering avoids it — an early draft of the rotation script claimed
+// deploying first did, which is simply wrong. Accepting the previous secret as
+// well makes the rotation: add the old value as PREVIOUS, deploy, change GitHub,
+// then drop PREVIOUS on the next deploy. No window at any point.
+//
+// It is not data loss without this — GitHub retries, and the Advanced tab can
+// redeliver — but it made a routine rotation feel risky enough to postpone,
+// which is how a credential goes unrotated.
+func VerifyWebhook(r *http.Request, secrets ...[]byte) (*Delivery, error) {
+	usable := make([][]byte, 0, len(secrets))
+	for _, s := range secrets {
+		if len(s) > 0 {
+			usable = append(usable, s)
+		}
+	}
+	if len(usable) == 0 {
 		// Refusing to run without a secret is deliberate: an empty secret would
 		// make every forged request verify.
 		return nil, fmt.Errorf("%w: no webhook secret configured", ErrBadSignature)
@@ -60,7 +80,7 @@ func VerifyWebhook(r *http.Request, secret []byte) (*Delivery, error) {
 		return nil, ErrPayloadTooLarge
 	}
 
-	if !validSignature(body, signature, secret) {
+	if !validSignature(body, signature, usable) {
 		return nil, ErrBadSignature
 	}
 
@@ -78,12 +98,18 @@ func VerifyWebhook(r *http.Request, secret []byte) (*Delivery, error) {
 	}, nil
 }
 
-// validSignature compares in constant time.
+// validSignature compares in constant time against every candidate secret.
 //
 // A byte-by-byte comparison leaks, through timing, how many leading bytes were
 // correct, which turns forging a signature into a per-byte search. Plan section
 // 9.3 requires constant-time comparison for exactly this reason.
-func validSignature(body []byte, signature string, secret []byte) bool {
+//
+// EVERY secret is tried, always, and the results are accumulated without a
+// branch. Returning as soon as one matches would make a delivery signed with the
+// current secret measurably faster than one signed with the previous, which
+// tells an observer which secret they hold — and during a rotation that is
+// exactly the thing worth not telling them.
+func validSignature(body []byte, signature string, secrets [][]byte) bool {
 	const prefix = "sha256="
 	if !strings.HasPrefix(signature, prefix) {
 		return false
@@ -93,7 +119,14 @@ func validSignature(body []byte, signature string, secret []byte) bool {
 		return false
 	}
 
-	mac := hmac.New(sha256.New, secret)
-	mac.Write(body)
-	return hmac.Equal(provided, mac.Sum(nil))
+	var matched int
+	for _, secret := range secrets {
+		mac := hmac.New(sha256.New, secret)
+		mac.Write(body)
+		// Bitwise OR rather than || : the logical operator short-circuits, so
+		// once one secret matched the rest would not be computed, and the work
+		// done would depend on which secret was correct.
+		matched |= subtle.ConstantTimeCompare(provided, mac.Sum(nil))
+	}
+	return matched == 1
 }

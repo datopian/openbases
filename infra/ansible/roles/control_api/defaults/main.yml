@@ -26,3 +26,8 @@ control_api_worker_interval: 5s
 # Enough that a backlog drains in a pass or two rather than dribbling out at one
 # batch per tick, and small enough that a pass stays short.
 control_api_worker_batch: 200
+
+# The outgoing webhook secret, accepted alongside the current one while a
+# rotation is in flight. Empty except during that window; see
+# docs/runbooks/rotate-a-credential.md.
+control_api_github_webhook_secret_previous: ""

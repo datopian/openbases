@@ -56,6 +56,12 @@
       value: "{{ postgresql_app_password }}"
     - name: github_webhook_secret
       value: "{{ control_api_github_webhook_secret }}"
+    # Set only while a webhook secret rotation is in flight: the outgoing value,
+    # accepted alongside the new one so no delivery is rejected while GitHub and
+    # this service disagree. Removed on the next deploy once GitHub is signing
+    # with the new secret; the API warns on every start while it is present.
+    - name: github_webhook_secret_previous
+      value: "{{ control_api_github_webhook_secret_previous | default('') }}"
   loop_control:
     label: "{{ item.name }}"
   no_log: true
@@ -74,6 +80,8 @@
       value: "{{ postgresql_app_password }}"
     - name: github_webhook_secret
       value: "{{ control_api_github_webhook_secret }}"
+    - name: github_webhook_secret_previous
+      value: "{{ control_api_github_webhook_secret_previous | default('') }}"
   loop_control:
     label: "{{ item.name }}"
   when: item.value | default('') | length == 0
