@@ -273,3 +273,54 @@ func listPullRequests(ctx context.Context, gh *githubapp.Client, tok *githubapp.
 	}
 	return prs, nil
 }
+
+// replayLockKey is the advisory lock that keeps two replayers out of each
+// other's way.
+//
+// An arbitrary constant, chosen once and never derived from anything that could
+// change: an advisory lock is only a lock if everybody asks for the same number.
+const replayLockKey int64 = 0x77677265706c6179 // "wgreplay"
+
+// ReplayIfIdle replays pending deliveries unless another replayer is already
+// doing it, and reports whether it ran.
+//
+// Two things call Replay now — the worker every few seconds, and the
+// reconciliation timer every fifteen minutes — so they will eventually overlap.
+// Without a lock both would read the same pending receipts and project them
+// twice. The projection's ordering guard would discard the second apply, so the
+// end state would be correct, but each would also mark the delivery processed
+// and one would log a failure for work the other had already done. Correct
+// results reached through a confusing log is how a real fault becomes invisible.
+//
+// pg_try_advisory_lock rather than pg_advisory_lock: a replayer that cannot get
+// the lock should skip this tick and try again in five seconds, not queue up
+// behind a fifteen-minute reconciliation pass and then run against state that
+// has already been handled.
+//
+// The lock is session-scoped, so it is released explicitly and also by the
+// connection dropping — a worker killed mid-pass does not leave it held.
+func ReplayIfIdle(ctx context.Context, db *sql.DB, log *slog.Logger, limit int) (Result, bool, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return Result{}, false, err
+	}
+	defer conn.Close()
+
+	var acquired bool
+	if err := conn.QueryRowContext(ctx,
+		`SELECT pg_try_advisory_lock($1)`, replayLockKey).Scan(&acquired); err != nil {
+		return Result{}, false, err
+	}
+	if !acquired {
+		return Result{}, false, nil
+	}
+	defer func() {
+		// Best effort: the lock also dies with the connection, which is what
+		// makes this safe if the unlock never runs.
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx),
+			`SELECT pg_advisory_unlock($1)`, replayLockKey)
+	}()
+
+	out, err := Replay(ctx, db, log, limit)
+	return out, true, err
+}

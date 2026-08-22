@@ -59,7 +59,9 @@ build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 		-o $(BIN)/linux-amd64/witness ./cmd/witness
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
 		-o $(BIN)/linux-amd64/monitor ./cmd/monitor
-	@echo "built: $(BIN)/linux-amd64/witness $(BIN)/linux-amd64/monitor"
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+		-o $(BIN)/linux-amd64/worker ./cmd/worker
+	@echo "built: $(BIN)/linux-amd64/witness $(BIN)/linux-amd64/monitor $(BIN)/linux-amd64/worker"
 
 verify-versions: ## Check installed gt/bd/dolt against versions.lock
 	@bash scripts/verify_versions.sh

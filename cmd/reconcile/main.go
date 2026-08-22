@@ -49,7 +49,15 @@ func main() {
 	}
 	defer db.Close()
 
-	replay, err := reconcile.Replay(ctx, db, log, *limit)
+	// ReplayIfIdle, because the worker now replays every few seconds and the two
+	// would otherwise read the same pending receipts and project them twice.
+	// Skipping when the worker holds the lock is correct: it is already doing
+	// this work, and reconciliation's own job — asking GitHub for state that
+	// never arrived — happens below regardless.
+	replay, ran, err := reconcile.ReplayIfIdle(ctx, db, log, *limit)
+	if err == nil && !ran {
+		log.Info("replay skipped; the worker is already projecting deliveries")
+	}
 	if err != nil {
 		log.Error("replay", "error", err)
 		os.Exit(1)

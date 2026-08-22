@@ -1,0 +1,24 @@
+{
+  "measurement": "event-freshness",
+  "work_package": "WP-D3 / WP-I3",
+  "at": "2026-08-22T12:45:00Z",
+  "host": "workgraph-staging-control",
+  "target_seconds": 60,
+  "target_source": "plan section 15.1, 'Event freshness under 60 seconds'",
+  "before": {
+    "deliveries_measured": 3287,
+    "window_hours": 48,
+    "avg_seconds": 474.9,
+    "p50_seconds": 459.0,
+    "p95_seconds": 939.8,
+    "max_seconds": 1041.1,
+    "cause": "nothing consumed github_deliveries except workgraph-reconcile.timer every 15 minutes; cmd/worker had no handler and was not deployed"
+  },
+  "after": {
+    "deliveries_measured": 3,
+    "seconds": [3.47, 2.42, 1.37],
+    "method": "signed check_run webhooks posted to the live endpoint, timed until processed_at was set",
+    "change": "workgraph-worker.service projects deliveries on a 5s poll"
+  },
+  "note": "The before figures are a 48-hour population; the after figures are three individual deliveries against a running worker. They are not the same kind of measurement, and the after set is too small to quote a percentile from."
+}
