@@ -42,15 +42,25 @@ type Outcome struct {
 // Work that could be lost outranks work that was merely never submitted, and
 // both outrank a session that has gone quiet — which may well turn out to be
 // fine. The numbers are on the same 0..1 scale the other inbox rules use.
+// Scored by SITUATION rather than by the raw reason, for the same reason the
+// dedupe key is. Gas Town reports "git-dirty" and "not-idle" for one situation
+// depending on transient state, and scoring the reason meant the same inbox item
+// was refreshed at 0.9 on one pass and 0.75 on the next — an item that moves up
+// and down the list while nothing about the problem has changed.
 func Score(d Decision) float64 {
-	switch {
-	case d.Action == Escalate && strings.HasPrefix(d.Reason, "git-"):
+	switch d.Situation() {
+	case "work-at-risk":
+		// Work that exists and is not safely stored outranks everything else
+		// here: it is the only case where waiting can lose something.
 		return 0.9
-	case d.Action == Escalate:
+	case "never-submitted":
 		return 0.75
-	case d.Action == Ambiguous:
+	case "stalled":
 		return 0.5
 	default:
+		if d.Action == Escalate {
+			return 0.75
+		}
 		return 0.1
 	}
 }
@@ -119,10 +129,14 @@ func Ingest(ctx context.Context, db *sql.DB, r Report) (Outcome, error) {
 			"rig":     d.Rig,
 			"polecat": d.Polecat,
 			"action":  string(d.Action),
-			"reason":  d.Reason,
-			"basis":   d.Basis,
-			"bead":    d.Bead,
-			"silence": d.Silence,
+			// Both: the situation is what the item is keyed and ranked on, and
+			// the raw reason is what Gas Town actually said. Keeping only the
+			// normalised form would hide a new reason worth classifying.
+			"situation": d.Situation(),
+			"reason":    d.Reason,
+			"basis":     d.Basis,
+			"bead":      d.Bead,
+			"silence":   d.Silence,
 		})
 		if err != nil {
 			return out, fmt.Errorf("encoding the explanation: %w", err)
