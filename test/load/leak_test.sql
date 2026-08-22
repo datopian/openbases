@@ -140,6 +140,24 @@ BEGIN
   PERFORM set_config('workgraph.user_id', '', true);
   RAISE NOTICE 'checked % users against % projects', checked, (SELECT count(*) FROM truth_work);
 
+  -- Refuse an empty population.
+  --
+  -- The anti-vacuity check below counts users who could see nothing, which is
+  -- the right guard when there ARE users. It cannot catch the case where the
+  -- loop never ran: with no users, zero_visibility stays 0 and everything
+  -- downstream passes. Run against a database with no load fixture this printed
+  -- "checked 0 users against 0 projects" and then "no cross-project leak", which
+  -- is the most reassuring possible way to say nothing was tested.
+  --
+  -- Found by running this against the live staging database by mistake, where
+  -- the fixture does not exist. The mistake was mine; the sentence it produced
+  -- was the test's.
+  IF checked = 0 THEN
+    RAISE EXCEPTION 'no users were checked: this database has no load fixture, so '
+                    'the assertions below would report success having tested nothing. '
+                    'Apply test/load/seed.sql first.';
+  END IF;
+
   IF total_leaks > 0 THEN
     RAISE EXCEPTION 'CROSS-PROJECT LEAK: % offending project(s) across % users', total_leaks, checked;
   END IF;
