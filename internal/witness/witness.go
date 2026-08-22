@@ -30,6 +30,7 @@ package witness
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -103,14 +104,68 @@ type Decision struct {
 	At      time.Time `json:"at"`
 }
 
+// Situation collapses Gas Town's reason into the small set of situations a
+// person can actually do something about.
+//
+// This exists because the reason is NOT stable for a fixed situation, which the
+// original keying assumed. Observed on the sandbox rig: the same polecat, needing
+// the same action, alternated between reasons depending on whether the town was
+// up —
+//
+//	git-dirty / git-unpushed / cleanup-has_uncommitted   when it was down
+//	not-idle                                             when it was up
+//
+// so each polecat produced two inbox rows describing one problem. Dedup was
+// working perfectly; it was being given two different keys for one situation.
+//
+// The distinction that matters is kept: work that exists and is not safely
+// stored is a different job from work that was finished and never submitted,
+// which is different again from a session that has gone quiet. The distinction
+// that does not matter — which of several git-shaped reasons Gas Town happened
+// to report this pass — is dropped. The raw reason still travels in the
+// explanation, which is refreshed on every observation, so nothing is lost for
+// somebody reading the item.
+func (d Decision) Situation() string {
+	switch {
+	case d.Action == Ambiguous:
+		// However the silence was described, the job is the same: look at a
+		// session that has stopped talking.
+		return "stalled"
+	case d.Reason == "never-submitted":
+		return "never-submitted"
+	case isUnsafelyStoredWork(d.Reason):
+		return "work-at-risk"
+	default:
+		// An unrecognised reason keeps its own identity rather than being folded
+		// into work-at-risk. Folding it would be the original bug in reverse:
+		// quietly merging two genuinely different problems into one row. A new
+		// reason from Gas Town should be noisy enough to notice and classify.
+		return "other:" + d.Reason
+	}
+}
+
+// isUnsafelyStoredWork reports whether the reason describes work that exists on
+// a machine and is not safely stored anywhere else.
+//
+// Matched by family rather than by an exact list, because these strings come
+// from Gas Town and a new git- or cleanup- variant is a rename of something
+// already covered rather than a new situation.
+func isUnsafelyStoredWork(reason string) bool {
+	switch reason {
+	case "not-idle", "needs-recovery":
+		return true
+	}
+	return strings.HasPrefix(reason, "git-") || strings.HasPrefix(reason, "cleanup-")
+}
+
 // DedupeKey identifies the situation, not the observation.
 //
 // A stalled polecat is still stalled on the next pass, and an inbox that grows
-// one identical row per tick is worse than no inbox. Keying on rig, polecat and
-// reason means the same situation collapses to one item, while a polecat that
-// moves from "git-dirty" to "never submitted" correctly raises a new one.
+// one identical row per tick is worse than no inbox. Keyed on the SITUATION
+// rather than the raw reason, so the same problem collapses to one item even
+// when Gas Town describes it differently between passes.
 func (d Decision) DedupeKey() string {
-	return fmt.Sprintf("witness:%s/%s:%s", d.Rig, d.Polecat, d.Reason)
+	return fmt.Sprintf("witness:%s/%s:%s", d.Rig, d.Polecat, d.Situation())
 }
 
 // StallAfter is how long a live session may stay silent before the case is

@@ -166,10 +166,10 @@ func TestDecideNeverNukesWorkAtRisk(t *testing.T) {
 // modes: one row per tick for a standing problem, and one row silently reused
 // when the problem changes.
 func TestDedupeKeyDistinguishesSituations(t *testing.T) {
-	a := Decision{Rig: "sandbox", Polecat: "dust", Reason: "git-dirty"}
-	b := Decision{Rig: "sandbox", Polecat: "dust", Reason: "git-dirty", At: time.Now()}
-	c := Decision{Rig: "sandbox", Polecat: "dust", Reason: "never-submitted"}
-	d := Decision{Rig: "autoclaw", Polecat: "dust", Reason: "git-dirty"}
+	a := Decision{Rig: "sandbox", Polecat: "dust", Action: Escalate, Reason: "git-dirty"}
+	b := Decision{Rig: "sandbox", Polecat: "dust", Action: Escalate, Reason: "git-dirty", At: time.Now()}
+	c := Decision{Rig: "sandbox", Polecat: "dust", Action: Escalate, Reason: "never-submitted"}
+	d := Decision{Rig: "autoclaw", Polecat: "dust", Action: Escalate, Reason: "git-dirty"}
 
 	if a.DedupeKey() != b.DedupeKey() {
 		t.Error("the same situation observed twice must collapse to one item")
@@ -179,6 +179,65 @@ func TestDedupeKeyDistinguishesSituations(t *testing.T) {
 	}
 	if a.DedupeKey() == d.DedupeKey() {
 		t.Error("the same polecat name in another rig is another polecat")
+	}
+}
+
+// The bug this fixes: Gas Town reports a different reason for the SAME situation
+// depending on whether the town is up, so one polecat needing one action produced
+// two inbox rows. These are the exact pairs observed on the sandbox rig.
+func TestGasTownReasonVariantsCollapseToOneItem(t *testing.T) {
+	for _, tc := range []struct{ name, down, up string }{
+		{"chrome", "git-dirty", "not-idle"},
+		{"fury", "git-unpushed", "not-idle"},
+		{"rust", "cleanup-has_uncommitted", "not-idle"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			down := Decision{Rig: "sandbox", Polecat: tc.name, Action: Escalate, Reason: tc.down}
+			up := Decision{Rig: "sandbox", Polecat: tc.name, Action: Escalate, Reason: tc.up}
+			if down.DedupeKey() != up.DedupeKey() {
+				t.Errorf("%q and %q are the same situation and must share one inbox item\n  %s\n  %s",
+					tc.down, tc.up, down.DedupeKey(), up.DedupeKey())
+			}
+		})
+	}
+}
+
+// Collapsing must not go too far. These are genuinely different jobs for a
+// person and must stay separate, or the fix for a noisy inbox becomes a way to
+// hide a second problem behind the first.
+func TestDistinctSituationsStaySeparate(t *testing.T) {
+	base := Decision{Rig: "sandbox", Polecat: "dust", Action: Escalate}
+	atRisk := base
+	atRisk.Reason = "git-dirty"
+	never := base
+	never.Reason = "never-submitted"
+	stalled := Decision{Rig: "sandbox", Polecat: "dust", Action: Ambiguous, Reason: "silent-session"}
+	unknown := base
+	unknown.Reason = "some-new-gastown-reason"
+
+	keys := map[string]string{
+		"work-at-risk":    atRisk.DedupeKey(),
+		"never-submitted": never.DedupeKey(),
+		"stalled":         stalled.DedupeKey(),
+		"unknown":         unknown.DedupeKey(),
+	}
+	seen := map[string]string{}
+	for name, k := range keys {
+		if prev, dup := seen[k]; dup {
+			t.Errorf("%s and %s share the key %q; one problem would hide the other", prev, name, k)
+		}
+		seen[k] = name
+	}
+}
+
+// A stalled session is the same job however the silence is described, so the
+// reason must not leak into the key for an ambiguous decision.
+func TestStalledIgnoresTheReasonText(t *testing.T) {
+	a := Decision{Rig: "sandbox", Polecat: "dust", Action: Ambiguous, Reason: "silent-session"}
+	b := Decision{Rig: "sandbox", Polecat: "dust", Action: Ambiguous, Reason: "no-heartbeat-for-14m"}
+	if a.DedupeKey() != b.DedupeKey() {
+		t.Errorf("two descriptions of one silent session produced two items:\n  %s\n  %s",
+			a.DedupeKey(), b.DedupeKey())
 	}
 }
 
@@ -219,5 +278,26 @@ func TestDecideAgainstRealOutput(t *testing.T) {
 	}
 	if tally.Ambiguous != 0 {
 		t.Errorf("no session was running, so nothing should be ambiguous; got %d", tally.Ambiguous)
+	}
+}
+
+// Score must be stable for a situation, not for the words describing it. The
+// same item was previously refreshed at 0.9 on one pass and 0.75 on the next,
+// moving up and down the inbox while nothing about the problem changed.
+func TestScoreIsStableAcrossReasonVariants(t *testing.T) {
+	dirty := Decision{Rig: "sandbox", Polecat: "chrome", Action: Escalate, Reason: "git-dirty"}
+	notIdle := Decision{Rig: "sandbox", Polecat: "chrome", Action: Escalate, Reason: "not-idle"}
+	if Score(dirty) != Score(notIdle) {
+		t.Errorf("one situation scored %v and %v depending on the reason text",
+			Score(dirty), Score(notIdle))
+	}
+
+	// And the ordering it exists for must survive: unstored work outranks work
+	// that was merely never submitted, which outranks a quiet session.
+	never := Decision{Rig: "sandbox", Polecat: "chrome", Action: Escalate, Reason: "never-submitted"}
+	stalled := Decision{Rig: "sandbox", Polecat: "chrome", Action: Ambiguous, Reason: "silent-session"}
+	if !(Score(dirty) > Score(never) && Score(never) > Score(stalled)) {
+		t.Errorf("the ranking is wrong: work-at-risk %v, never-submitted %v, stalled %v",
+			Score(dirty), Score(never), Score(stalled))
 	}
 }
