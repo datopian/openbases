@@ -1,0 +1,50 @@
+# Managed by Ansible (WP-D3). Projects inbound GitHub deliveries.
+[Unit]
+Description=Workgraph worker
+Documentation=https://github.com/datopian/company-workgraph#wp-d3
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+# A long-running service, not a timer.
+#
+# Event freshness has a 60-second target (plan section 15.1) and measured 459s
+# at p50 against it, because nothing consumed deliveries except the
+# fifteen-minute reconciliation timer. A timer cannot meet a target shorter than
+# its own period, so this runs continuously and polls.
+Type=simple
+User={{ control_api_user }}
+Group={{ control_api_user }}
+EnvironmentFile=/etc/workgraph/control-api.env
+LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+
+ExecStart={{ control_api_worker_binary }} \
+  -interval {{ control_api_worker_interval }} \
+  -batch {{ control_api_worker_batch }}
+
+Restart=always
+RestartSec=10s
+
+# No GitHub App key. The worker projects payloads that already arrived and never
+# calls GitHub — that is reconciliation's job — so it has no reason to hold a
+# credential that can mint a token for every installed repository.
+
+# Same hardening as the rest of the control plane.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

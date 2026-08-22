@@ -1,0 +1,21 @@
+{
+  "drill": "24-hour-staging-soak",
+  "work_package": "WP-I3",
+  "bead": "wg-8yv.28",
+  "from": "2026-08-21T07:13:17Z",
+  "to": "2026-08-22T07:11:52Z",
+  "samples": 287,
+  "hours": 23.8,
+  "webhooks_sent": 2870,
+  "webhooks_failed": 0,
+  "worst_webhook_ms": 80,
+  "worst_query_ms": 683,
+  "peak_backlog": 47,
+  "rss_kb_first": 17436,
+  "rss_kb_last": 17536,
+  "fds_first": 7,
+  "fds_last": 7,
+  "pg_conns_first": 2,
+  "pg_conns_last": 2,
+  "samples_api_down": 0
+}

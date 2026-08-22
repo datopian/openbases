@@ -189,6 +189,42 @@
   when: control_api_local_github_key | length > 0
   no_log: true
 
+- name: Install the worker binary
+  ansible.builtin.copy:
+    src: "{{ control_api_local_worker_binary }}"
+    dest: "{{ control_api_worker_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: control_api_local_worker_binary | default('') | length > 0
+  notify: Restart the worker
+
+- name: Install the worker unit
+  ansible.builtin.template:
+    src: workgraph-worker.service.j2
+    dest: /etc/systemd/system/workgraph-worker.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart the worker
+
+- name: Check whether the worker binary is present
+  ansible.builtin.stat:
+    path: "{{ control_api_worker_binary }}"
+  register: control_api_worker_stat
+
+# Starting a unit whose ExecStart does not exist produces a restart loop that
+# looks exactly like a crashing worker.
+- name: Enable the worker
+  ansible.builtin.systemd_service:
+    name: workgraph-worker.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: control_api_worker_stat.stat.exists
+
 - name: Install the reconciliation unit and timer
   ansible.builtin.template:
     src: "{{ item }}.j2"

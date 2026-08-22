@@ -11,3 +11,18 @@ control_api_local_github_key: ""
 control_api_github_app_id: ""
 control_api_github_installation_id: ""
 control_api_local_reconcile_binary: ""
+
+# The worker (WP-D3). Projects inbound GitHub deliveries continuously.
+#
+# Empty means the binary is not deployed and the unit is not started, the same
+# pattern as the witness and the monitor: a run without a locally built binary
+# changes nothing rather than leaving a unit pointing at a file that is not
+# there. Build with `make build-linux`.
+control_api_local_worker_binary: ""
+control_api_worker_binary: /usr/local/bin/workgraph-worker
+# Five seconds. The poll is one indexed query, and the target it exists to meet
+# is 60 seconds end to end.
+control_api_worker_interval: 5s
+# Enough that a backlog drains in a pass or two rather than dribbling out at one
+# batch per tick, and small enough that a pass stays short.
+control_api_worker_batch: 200
