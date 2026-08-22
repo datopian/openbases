@@ -102,6 +102,16 @@
     - backup_offsite_enabled | bool
     - backup_rclone_version not in (backup_rclone_installed.stdout | default(''))
   block:
+    # rclone publishes a zip, and the node has no unzip: the failure is
+    # "Failed to find handler for ... rclone.zip", which reads like a corrupt
+    # download rather than a missing tool.
+    - name: Ensure unzip is available
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
     - name: Download the rclone release
       ansible.builtin.get_url:
         url: "https://downloads.rclone.org/{{ backup_rclone_version }}/rclone-{{ backup_rclone_version }}-linux-amd64.zip"
