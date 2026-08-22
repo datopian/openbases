@@ -7,9 +7,18 @@ supervision cost compared with the work — had no answer in the data. It had to
 be inferred from request counts and timing, which is how "the patrol roles cost
 more than the work" started as a guess.
 
-Every agent role now tags its requests with cf-aig-metadata (role, cell, rig),
-written into each role's settings.json by the gastown Ansible role. This reads
-those logs back and groups by the tag.
+Agent roles tag their requests with cf-aig-metadata (role, cell, rig), written
+into each role's settings.json by wg-set-agent-metadata in the gastown Ansible
+role. This reads those logs back and groups by the tag.
+
+Read the (untagged) row before drawing conclusions from the rest. It is not a
+rounding error: on the staging oss gateway over 168 hours it was 98.3% of spend
+($35.98 of $36.61), all of it on the three Claude models and all of it predating
+the tagger. Requests made before tagging existed cannot be attributed
+retroactively, and no agent has run since, so whether polecat sessions — which
+get their .claude directory created per session, after the tagger has run — are
+covered is UNVERIFIED. Do not read a small (untagged) row as proof that
+attribution works until an agent run has produced tagged polecat traffic.
 
 Usage:
   scripts/cost_by_role.py [--gateway workgraph-staging-oss] [--hours 24]
