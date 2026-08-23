@@ -1,0 +1,11 @@
+# The shared GitHub Actions runner.
+#
+# ansible_host is a Cloudflare hostname, not an IP: the runner has no inbound
+# port, and cloudflared proxies SSH over the tunnel it dialled out on.
+all:
+  children:
+    ci_runners:
+      hosts:
+        gha-runner:
+          ansible_host: ssh-ci-runner.openbases.com
+          ansible_user: root

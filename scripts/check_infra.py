@@ -11,6 +11,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MODULE = ROOT / "infra" / "tofu" / "modules" / "environment"
+CI_MODULE = ROOT / "infra" / "tofu" / "modules" / "ci-runner"
 
 problems = []
 
@@ -269,6 +270,48 @@ def check_spend_limit_not_in_terraform() -> None:
         )
 
 
+def check_ci_runner_posture() -> None:
+    """The CI runner gets the same posture as every other node.
+
+    It is the most exposed thing we run — it executes whatever a workflow says —
+    so the temptation to open a port "just for the runner" is exactly where the
+    posture would erode. These are the same two invariants the platform nodes
+    are held to, asserted separately because the checks above read only the
+    environment module and a new module would otherwise be unguarded.
+    """
+    main_tf = CI_MODULE / "main.tf"
+    if not main_tf.exists():
+        return  # not yet added; nothing to guard
+
+    text = main_tf.read_text()
+
+    inbound = re.findall(r'direction\s*=\s*"in"', text)
+    if inbound:
+        problems.append(
+            f"the ci-runner module declares {len(inbound)} inbound firewall rule(s); "
+            "a runner polls GitHub outbound and needs none, and management is the tunnel"
+        )
+
+    for m in re.finditer(r'resource\s+"hcloud_server"\s+"(\w+)"\s*\{', text):
+        name = m.group(1)
+        depth, start = 0, m.end() - 1
+        body = ""
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    body = text[start + 1 : i]
+                    break
+        if "user_data" not in body:
+            problems.append(
+                f'ci-runner hcloud_server "{name}" has no user_data. With no inbound rule '
+                "there is no way to reach it, so a node that does not bootstrap itself is "
+                "unreachable and has to be destroyed"
+            )
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -279,6 +322,7 @@ def main() -> int:
         check_tfvars_hold_no_secrets,
         check_account_level_settings,
         check_spend_limit_not_in_terraform,
+        check_ci_runner_posture,
     ):
         check()
 
