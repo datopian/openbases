@@ -63,11 +63,11 @@ their inbox rather than having to know this index exists.
 
 ## Continuous integration
 
-| Situation | Runbook |
-| --- | --- |
-| A job failed with "Actions budget is preventing further use" | [use the self-hosted runner](use-the-self-hosted-runner.md) |
-
-Background and cost reasoning: [docs/ci-runners.md](../ci-runners.md).
+CI runs on a shared self-hosted runner. If a job fails with "Actions budget is
+preventing further use", the fix is one line —
+`runs-on: [self-hosted, linux, x64]`. Instructions and the reasoning live in
+[datopian/self-hosted-runner-hetzner](https://github.com/datopian/self-hosted-runner-hetzner),
+which owns that infrastructure.
 
 ## Recovery procedures (WP-I2)
 

@@ -50,33 +50,6 @@ read_key() {
   printf '%s\n' "$plain" | sed -n "s/^$1: \{0,1\}//p" | head -1
 }
 
-# The CI runner environment is a different file with a different blast radius:
-# its Hetzner token reaches only the runner project, and its GitHub credential
-# only mints runner registrations. Exported under CI_ names so a CI value can
-# never be mistaken for a platform one in a playbook.
-if [ "$ENVIRONMENT" = "ci" ]; then
-  export HCLOUD_TOKEN="$(read_key ci_hcloud_token)"
-  export HCLOUD_LOCATION="$(read_key ci_hcloud_location)"
-  export CI_GITHUB_ORG="$(read_key ci_github_org)"
-  export CI_GITHUB_APP_ID="$(read_key ci_github_app_id)"
-  export CI_GITHUB_APP_INSTALLATION_ID="$(read_key ci_github_app_installation_id)"
-  export CI_GITHUB_PAT="$(read_key ci_github_pat)"
-  # The App key is a block scalar when set; handled the same way as the
-  # platform one below.
-  if printf '%s\n' "$plain" | grep -q '^ci_github_app_private_key: |'; then
-    keydir="$(mktemp -d)"; chmod 700 "$keydir"
-    trap 'rm -rf "$keydir"' EXIT INT TERM
-    printf '%s\n' "$plain" \
-      | sed -n '/^ci_github_app_private_key: |/,/^[^[:space:]]/p' \
-      | sed '1d;/^[^[:space:]]/d;s/^[[:space:]]*//' > "$keydir/ci-app.pem"
-    chmod 600 "$keydir/ci-app.pem"
-    export CI_GITHUB_APP_PRIVATE_KEY="$(cat "$keydir/ci-app.pem")"
-  fi
-  unset plain
-  "$@"
-  exit $?
-fi
-
 export HCLOUD_TOKEN="$(read_key hcloud_token)"
 export HCLOUD_PROJECT="$(read_key hcloud_project)"
 export HCLOUD_LOCATION="$(read_key hcloud_location)"
