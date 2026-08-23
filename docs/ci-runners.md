@@ -65,6 +65,36 @@ takes a count.
 being down meaning all CI is down. Perhaps an hour a month once stable, more
 while it is not.
 
+## Registering the runners
+
+**The default needs no stored credential.** Register once, by hand, with a token
+from the GitHub UI:
+
+Organisation → Settings → Actions → Runners → New runner. GitHub shows a
+`config.sh` command with a registration token. On the box, as the runner user,
+run it once per concurrent slot:
+
+```bash
+sudo -u ghrunner /opt/actions-runner/1/config.sh \
+  --url https://github.com/datopian --token <FROM THE UI> \
+  --name "$(hostname)-1" --labels self-hosted,linux,x64,hetzner --unattended
+```
+
+The token is single-use and expires in an hour. The runner then reconnects
+indefinitely; nothing long-lived is stored on the box.
+
+**Ephemeral runners are the alternative, and they are off by default.** They
+give stronger isolation — one job per registration, so nothing carries over —
+but the box must mint a token for every job, which means an organisation-scoped
+GitHub credential living permanently on the least trusted machine we run. For
+private repositories whose contributors already have commit access, that is the
+wrong trade: the isolation guards against accident, and the credential is a
+standing target.
+
+Turn `ci_runner_ephemeral` on when untrusted code might run here — a public
+repository, or pull requests from outside the organisation. Then it is worth it,
+and the runner group needs re-examining at the same time.
+
 ## Migrating a repository
 
 `runs-on: ubuntu-latest` will **not** use these runners. GitHub always routes
@@ -76,9 +106,16 @@ jobs:
     runs-on: [self-hosted, linux, x64]   # was: ubuntu-latest
 ```
 
-That is the real migration cost — one line per job across every repository, and
-new repositories default silently back to paid hosted runners unless someone
-notices.
+One line per job. The forcing function is a **low hard limit on the Actions
+budget** — around $5 — so a job that could run on our runner fails instead of
+being billed. The developer reads
+[the runbook](runbooks/use-the-self-hosted-runner.md), changes the line, moves
+on. That is cheaper than a migration plan and it keeps working for repositories
+created later, which would otherwise default back to paid runners unnoticed.
+
+Two things must stay on GitHub's runners and are the reason the limit is $5
+rather than zero: macOS or Windows jobs, and public repositories — free there
+anyway, and a fork's pull request must never run on our hardware.
 
 Things that differ once migrated:
 

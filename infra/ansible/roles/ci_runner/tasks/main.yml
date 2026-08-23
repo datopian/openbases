@@ -1,16 +1,20 @@
 ---
 # The shared GitHub Actions runner for Datopian repositories.
 
-- name: Refuse to run without a GitHub credential
+# Only ephemeral runners need a stored credential. A persistent runner is
+# registered once by hand with a token from the GitHub UI, which is why the
+# default path stores nothing on the box.
+- name: Refuse ephemeral runners without a GitHub credential
   ansible.builtin.assert:
     that:
       - (ci_runner_github_app_id | default('') not in ['', 'UNSET']) or
         (ci_runner_github_pat | default('') not in ['', 'UNSET'])
     fail_msg: >-
-      No GitHub credential. Set the App (preferred) or a PAT in
-      infra/secrets/ci.enc.yaml and run through scripts/with_secrets.sh.
-      Without one the runners install and then fail to register, which looks
-      like a broken runner rather than a missing secret.
+      ci_runner_ephemeral is true but no GitHub credential is set. An ephemeral
+      runner must mint a registration token for every job. Either set the App or
+      a PAT in infra/secrets/ci.enc.yaml, or leave ci_runner_ephemeral false and
+      register once from the GitHub UI.
+  when: ci_runner_ephemeral | bool
 
 - name: Create the runner user
   ansible.builtin.user:
@@ -117,7 +121,9 @@
   loop_control:
     label: "{{ item.name }}"
   no_log: true
-  when: item.value | default('') not in ['', 'UNSET']
+  when:
+    - ci_runner_ephemeral | bool
+    - item.value | default('') not in ['', 'UNSET']
   notify: Restart the runners
 
 - name: Remove credentials that are no longer configured
@@ -131,7 +137,7 @@
     - { name: github_pat, value: "{{ ci_runner_github_pat }}" }
   loop_control:
     label: "{{ item.name }}"
-  when: item.value | default('') in ['', 'UNSET']
+  when: not (ci_runner_ephemeral | bool) or item.value | default('') in ['', 'UNSET']
 
 - name: Install the registration script
   ansible.builtin.copy:

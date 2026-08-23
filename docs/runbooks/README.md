@@ -61,6 +61,14 @@ their inbox rather than having to know this index exists.
 | `platform_disk_pressure` | [a filesystem is filling up](disk-pressure.md) |
 | `platform_backup_stale` | [a backup stream is stale or has never run](backup-stale.md) |
 
+## Continuous integration
+
+| Situation | Runbook |
+| --- | --- |
+| A job failed with "Actions budget is preventing further use" | [use the self-hosted runner](use-the-self-hosted-runner.md) |
+
+Background and cost reasoning: [docs/ci-runners.md](../ci-runners.md).
+
 ## Recovery procedures (WP-I2)
 
 | Procedure | Runbook |

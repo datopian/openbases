@@ -33,8 +33,27 @@ ci_runner_group: "Default"
 # workflow that wants this runner has to say so.
 ci_runner_labels: "self-hosted,linux,x64,hetzner"
 
-# Credentials, from infra/secrets/ci.enc.yaml via scripts/with_secrets.sh.
-# The App is preferred; the PAT is the fallback so this can start today.
+# Ephemeral runners, OFF by default.
+#
+# --ephemeral is the stronger isolation: each registration is consumed by one
+# job, so nothing a job leaves behind reaches the next. The cost is that the box
+# must be able to mint a fresh registration token for every job, which means an
+# organisation-scoped GitHub credential living permanently on the least trusted
+# machine we run. That credential can register runners for the whole
+# organisation.
+#
+# For private repositories whose contributors already have commit access, that
+# is the wrong trade: the isolation guards against accident, and the credential
+# is a standing target. So the default is a PERSISTENT runner, registered once
+# with a token pasted from the GitHub UI and never stored.
+#
+# Turn this on when untrusted code might run here — a public repository, or
+# accepting pull requests from outside the organisation. Then the credential is
+# worth it, and the runner group must be re-examined at the same time.
+ci_runner_ephemeral: false
+
+# Credentials, only used when ci_runner_ephemeral is true. Left UNSET otherwise,
+# and the role installs nothing.
 ci_runner_github_app_id: "{{ lookup('env', 'CI_GITHUB_APP_ID') | default('', true) }}"
 ci_runner_github_app_installation_id: "{{ lookup('env', 'CI_GITHUB_APP_INSTALLATION_ID') | default('', true) }}"
 ci_runner_github_app_private_key: "{{ lookup('env', 'CI_GITHUB_APP_PRIVATE_KEY') | default('', true) }}"
