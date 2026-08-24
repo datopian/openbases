@@ -241,12 +241,19 @@ variable "r2_lock_days" {
     anything the node can reach it can also delete — and a backup an attacker can
     delete is not a backup.
 
-    Thirty days is chosen to match the daily retention: a compromised node can
-    stop new backups being made, which the monitor's staleness alert reports, and
-    cannot remove the month of history already stored.
+    Fourteen days, and the number is constrained from above rather than chosen
+    freely: a lifecycle rule cannot delete a locked object, so the lock must be
+    SHORTER than the retention or nothing ever expires and storage grows for
+    ever while appearing managed. With retention at thirty days, the lock has to
+    be less than thirty.
+
+    Fourteen leaves clear room for expiry and is longer than any realistic gap in
+    noticing that backups have stopped — the monitor alerts on a stale stream
+    within thirty-six hours. A compromised node can stop new backups being
+    written, which is alerted; it cannot remove the fortnight already stored.
   EOT
   type        = number
-  default     = 30
+  default     = 14
 
   validation {
     condition     = var.r2_lock_days >= 7
@@ -268,12 +275,16 @@ variable "r2_daily_retention_days" {
   description = <<-EOT
     How long daily backup objects live before a lifecycle rule expires them.
 
+    Thirty days, matching the monthly prefix: this deployment keeps a flat
+    thirty days of backups rather than the plan's thirty daily plus twelve
+    monthly.
+
     Longer than the lock, necessarily: a lifecycle rule cannot delete a locked
     object, so a retention shorter than the lock would silently never take
     effect and storage would grow for ever while appearing to be managed.
   EOT
   type        = number
-  default     = 35
+  default     = 30
 
   validation {
     condition     = var.r2_daily_retention_days > var.r2_lock_days
@@ -287,10 +298,15 @@ variable "r2_monthly_retention_days" {
     twelve monthly (section 15.3); a single age-based rule cannot express both,
     so monthly copies go to their own prefix with their own rule.
 
-    Four hundred rather than three hundred and sixty-five, so twelve monthly
-    copies are always present rather than the oldest expiring days before its
-    replacement is written.
+    Thirty days, the same as the dailies, which makes this prefix REDUNDANT and
+    it is worth saying so rather than leaving a reader to work it out: a monthly
+    copy that expires after thirty days means at most one exists at a time, and
+    there is no long-term history. This deployment keeps a flat thirty days.
+
+    The prefix and its one extra upload a month are kept because lengthening
+    this number is the whole change needed to get twelve-month retention back,
+    where deleting the prefix would mean re-deriving it.
   EOT
   type        = number
-  default     = 400
+  default     = 30
 }
