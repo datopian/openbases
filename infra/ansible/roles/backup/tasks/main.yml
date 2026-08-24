@@ -80,17 +80,75 @@
   register: backup_wal_compress
   changed_when: "'compressed 0 segment' not in backup_wal_compress.stdout"
 
-# rclone is the S3 client the beads backup already uses, so this keeps one tool
-# rather than adding a second. From the distribution rather than pinned like
-# gt/bd/dolt: those three have to interoperate at exact versions, which is why
-# they are pinned; an S3 copy has no such coupling and unattended-upgrades
-# keeping it patched is worth more than pinning it.
-- name: Install rclone for the off-machine copy
+# rclone, from the pinned release rather than the distribution.
+#
+# The distribution build fails the first attempt of every R2 upload with
+# "NotImplemented" (501) and succeeds on the retry. It works, and it produces an
+# ERROR line per object, which trains a reader to skim past errors in the log
+# that reports on backups. Reproduced on the node and not reproducible with
+# v1.73.0 against the same bucket, so it is a version problem, not R2.
+#
+# Checksum-verified: this writes the only off-machine copy of the database and
+# the work graph, so an unverified binary sits in the recovery path.
+- name: Check the installed rclone version
+  ansible.builtin.command: rclone version
+  register: backup_rclone_installed
+  changed_when: false
+  failed_when: false
+  when: backup_offsite_enabled | bool
+
+- name: Install the pinned rclone
+  when:
+    - backup_offsite_enabled | bool
+    - backup_rclone_version not in (backup_rclone_installed.stdout | default(''))
+  block:
+    # rclone publishes a zip, and the node has no unzip: the failure is
+    # "Failed to find handler for ... rclone.zip", which reads like a corrupt
+    # download rather than a missing tool.
+    - name: Ensure unzip is available
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Download the rclone release
+      ansible.builtin.get_url:
+        url: "https://downloads.rclone.org/{{ backup_rclone_version }}/rclone-{{ backup_rclone_version }}-linux-amd64.zip"
+        dest: "/tmp/rclone-{{ backup_rclone_version }}.zip"
+        checksum: "sha256:{{ backup_rclone_sha256 }}"
+        mode: "0644"
+
+    - name: Unpack it
+      ansible.builtin.unarchive:
+        src: "/tmp/rclone-{{ backup_rclone_version }}.zip"
+        dest: /tmp
+        remote_src: true
+        creates: "/tmp/rclone-{{ backup_rclone_version }}-linux-amd64/rclone"
+
+    - name: Install the binary
+      ansible.builtin.copy:
+        src: "/tmp/rclone-{{ backup_rclone_version }}-linux-amd64/rclone"
+        dest: /usr/local/bin/rclone
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Remove the download
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/rclone-{{ backup_rclone_version }}.zip"
+        - "/tmp/rclone-{{ backup_rclone_version }}-linux-amd64"
+
+# The distribution package would shadow the pinned binary depending on PATH
+# order, and having two is how you debug the wrong one.
+- name: Remove the distribution rclone
   ansible.builtin.apt:
     name: rclone
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+    state: absent
   when: backup_offsite_enabled | bool
 
 - name: Install the backup scripts

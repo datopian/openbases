@@ -66,6 +66,19 @@ type ControlAPI struct {
 	// standing between the endpoint and anyone who learns its URL.
 	GitHubWebhookSecret string
 
+	// GitHubWebhookSecretPrevious is also accepted, when set.
+	//
+	// It exists to remove the outage window in a rotation: GitHub signs with one
+	// secret and the endpoint used to accept one, so whichever side changed
+	// first, every delivery was rejected until the other caught up. Set this to
+	// the outgoing value, deploy, change GitHub, then remove it.
+	//
+	// Leaving it set indefinitely is the failure to watch for: a deployment that
+	// still accepts a secret somebody believes was retired. The service logs a
+	// warning at startup while it is set, so a half-finished rotation is visible
+	// rather than forgotten.
+	GitHubWebhookSecretPrevious string
+
 	// The GitHub App itself, used to mint short-lived git credentials for
 	// execution cells. Held only on the control node: the key can mint tokens
 	// for every installed repository, so an execution node must never see it.
@@ -93,7 +106,8 @@ func LoadControlAPI() (ControlAPI, error) {
 		CellAccessAudience:       os.Getenv("WG_CELL_ACCESS_AUD"),
 		CellHealthAccessAudience: os.Getenv("WG_CELL_HEALTH_ACCESS_AUD"),
 
-		GitHubWebhookSecret: credential("github_webhook_secret", "WG_GITHUB_WEBHOOK_SECRET"),
+		GitHubWebhookSecret:         credential("github_webhook_secret", "WG_GITHUB_WEBHOOK_SECRET"),
+		GitHubWebhookSecretPrevious: credential("github_webhook_secret_previous", "WG_GITHUB_WEBHOOK_SECRET_PREVIOUS"),
 
 		GitHubAppID:          os.Getenv("WG_GITHUB_APP_ID"),
 		GitHubInstallationID: os.Getenv("WG_GITHUB_INSTALLATION_ID"),

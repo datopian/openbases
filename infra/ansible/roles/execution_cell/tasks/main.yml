@@ -227,27 +227,29 @@
   loop_control:
     label: "{{ item.name }}"
 
-# One credential file per cell, mode 0600.
+# The per-cell model.env is REMOVED, not written (wg-5jf).
 #
-# Be honest about what this buys. Cloudflare cannot scope an AI Gateway token to
-# a single gateway, so the same token reaches every gateway in the account and a
-# cell that steals another's token gains nothing it did not already have. What
-# per-cell files DO give is that a filesystem read in one cell does not hand
-# over another's credential, and each can be rotated on its own.
+# It was written to every cell and read by nothing: not the shell profiles, not
+# /etc/profile.d, not dispatch_bead.sh, not a systemd unit. Gateway routing comes
+# from the cell's Claude Code settings at {cells_root}/{cell}/.claude/settings.json
+# — which is the USER-level settings file, because HOME is the cell root — and a
+# settings env value overrides the process environment, so it would win even if
+# something did source model.env.
 #
-# The Anthropic key itself is never here: AI Gateway holds it and forwards.
-- name: Install the cell model credentials
-  ansible.builtin.template:
-    src: cell-model.env.j2
-    dest: "{{ cells_root }}/{{ item.name }}/.credentials/model.env"
-    owner: "wgcell_{{ item.name | replace('-', '_') }}"
-    group: "wgcell_{{ item.name | replace('-', '_') }}"
-    mode: "0600"
+# So it was dead configuration containing a live gateway token, with comments
+# describing careful quoting for a shell that never read it. The cost is not the
+# file: it is that the next person debugging agent routing reads it first and is
+# misled, which is exactly what happened.
+#
+# Deleted from cells that already have it rather than merely no longer written,
+# because a stale copy on disk misleads just as well as a fresh one.
+- name: Remove the unused per-cell model credentials
+  ansible.builtin.file:
+    path: "{{ cells_root }}/{{ item.name }}/.credentials/model.env"
+    state: absent
   loop: "{{ execution_cells }}"
   loop_control:
     label: "{{ item.name }}"
-  no_log: true
-  when: ai_gateway_token | default("") | length > 0
 
 # ---------------------------------------------------------------------------
 # Idle agent backstop
