@@ -5,6 +5,25 @@ on:
     branches: [main]
   pull_request:
 
+# Runs on Datopian's own runner rather than GitHub's hosted fleet.
+#
+# GitHub bills hosted runners per minute, so cost rises with use and a busy
+# month hits a spending limit and blocks every repository — which is what
+# happened here: $35 over 143 job-hours, then CI stopped mid-work. The runner
+# is a Hetzner box at a flat EUR 10.49/month whatever it runs, so a budget can
+# no longer switch CI off.
+#
+# `ubuntu-latest` cannot be redirected to it: GitHub always routes that label
+# to its own fleet and it cannot be shadowed, so every job has to say
+# self-hosted explicitly.
+#
+# The runner is arm64. Everything this workflow needs publishes an arm64 build
+# — the pinned gt, bd and dolt all declare linux_arm64 in versions.lock, and
+# pgvector/pgvector ships arm64 for pg16 — and scripts/lockfile.sh already
+# selects by uname. A step that pulls an amd64-only binary will fail here.
+#
+# See github.com/datopian/self-hosted-runner-hetzner
+
 permissions:
   contents: read
 
@@ -15,7 +34,7 @@ concurrency:
 jobs:
   go:
     name: go
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -39,7 +58,7 @@ jobs:
 
   web:
     name: web
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     defaults:
       run:
         working-directory: apps/web
@@ -56,7 +75,7 @@ jobs:
 
   database:
     name: database
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     services:
       postgres:
         # pgvector is required by 0007_projections.sql. The stock postgres image
@@ -156,7 +175,7 @@ jobs:
 
   toolchain:
     name: toolchain
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -200,7 +219,7 @@ jobs:
 
   infrastructure:
     name: infrastructure
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
@@ -236,7 +255,7 @@ jobs:
 
   security:
     name: security
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with:
