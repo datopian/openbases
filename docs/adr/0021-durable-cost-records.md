@@ -85,11 +85,12 @@ Town writes `cf-aig-metadata: {"role":...,"cell":...}` into every agent's
 settings — but every imported entry predates its deployment. Nothing has run
 through the gateways since 2026-08-17.
 
-**`execution_cells` is empty on staging**, so even a tagged request has no cell
-row to resolve, and therefore no project. Attribution cannot work end to end
-until the cells that exist on disk are registered in the database. Tracked
-separately; the import is correct either way and will attribute retroactively for
-any entry it has not yet seen.
+**`execution_cells` was empty on staging**, so even a tagged request had no cell
+row to resolve, and therefore no project. Fixed by wg-38w: Ansible now registers
+the nodes and cells it already knows about, and both staging cells resolve to
+exactly one project. That work also corrected the resolution itself — it used
+`LIMIT 1`, which picks arbitrarily when a cell hosts several projects, and now
+refuses to guess.
 
 Unattributed rows are readable by any authenticated user. `usage_records_read`
 admits a row whose `project_id IS NULL` to anyone with a session — the same rule
