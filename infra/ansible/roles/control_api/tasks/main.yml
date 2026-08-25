@@ -28,6 +28,7 @@
     mode: "0755"
     owner: root
     group: root
+  when: control_api_local_binary | length > 0
   notify: Restart control-api
 
 # Credential source files. systemd reads these at start and copies them into a

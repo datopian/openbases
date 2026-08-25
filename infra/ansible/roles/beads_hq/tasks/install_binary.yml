@@ -8,9 +8,36 @@
   register: installed
   changed_when: false
   failed_when: false
+  # A read-only probe, so it must run in check mode too.
+  #
+  # Without this it is SKIPPED under --check, `installed.stdout` is undefined,
+  # the default('') makes the version look absent, and the install block runs
+  # against a download that check mode only simulated:
+  #
+  #   TASK [beads_hq : Unpack dolt]
+  #   FAILED: Source '/tmp/dolt.tar.gz' does not exist
+  #
+  # The run stops there — which is well before monitor, backup, costimport and
+  # execution_registry. scripts/ansible_check.sh exists to prove that a second
+  # run changes nothing, and it had never reached any of them (wg-4h3).
+  check_mode: false
+
+# In check mode the block below cannot run: its download is simulated, so every
+# step after it works on a file that is not there. Reporting the intent is the
+# useful thing instead, and reporting it as a CHANGE is correct — a host missing
+# a pinned tool is a host that has not converged.
+- name: "Report that {{ tool.name }} {{ tool.version }} would be installed"
+  ansible.builtin.debug:
+    msg: "{{ tool.name }} {{ tool.version }} is not installed; a real run would install it"
+  when:
+    - ansible_check_mode
+    - tool.version | replace('v','') not in (installed.stdout | default(''))
+  changed_when: true
 
 - name: "Install {{ tool.name }} {{ tool.version }}"
-  when: tool.version | replace('v','') not in (installed.stdout | default(''))
+  when:
+    - not ansible_check_mode
+    - tool.version | replace('v','') not in (installed.stdout | default(''))
   block:
     - name: "Download {{ tool.name }}"
       ansible.builtin.get_url:

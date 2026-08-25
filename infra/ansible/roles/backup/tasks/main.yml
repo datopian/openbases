@@ -96,9 +96,24 @@
   changed_when: false
   failed_when: false
   when: backup_offsite_enabled | bool
+  # A read-only probe, so it must run in check mode too. Skipped there, the
+  # default('') makes rclone look absent and the install block runs against a
+  # download that check mode only simulated — "Source '/tmp/rclone-v1.73.0.zip'
+  # does not exist". Same shape as the dolt install in beads_hq (wg-4h3).
+  check_mode: false
+
+- name: Report that rclone would be installed
+  ansible.builtin.debug:
+    msg: "rclone {{ backup_rclone_version }} is not installed; a real run would install it"
+  when:
+    - ansible_check_mode
+    - backup_offsite_enabled | bool
+    - backup_rclone_version not in (backup_rclone_installed.stdout | default(''))
+  changed_when: true
 
 - name: Install the pinned rclone
   when:
+    - not ansible_check_mode
     - backup_offsite_enabled | bool
     - backup_rclone_version not in (backup_rclone_installed.stdout | default(''))
   block:
@@ -509,6 +524,16 @@
 # nothing to restore from, and the monitor is correctly alerting that there is
 # no backup — leaving that true overnight after deploying the fix for it would
 # be an odd definition of done.
+# These two are ACTIONS, not convergence, and they run on every deploy on
+# purpose: forcing a backup is what proves the whole path still works. It is not
+# theoretical — the deploy that added the execution registry is what discovered
+# the offsite work-graph copy had been failing for two days.
+#
+# `changed_when: not ansible_check_mode` because in CHECK mode nothing is
+# started, so reporting a change there is simply untrue — and it made the
+# check-mode answer useless: a one-shot action is never converged by definition,
+# so scripts/ansible_check.sh could never report changed=0 however clean the
+# host was. Apply-mode behaviour is unchanged (wg-4h3).
 - name: Take the first backups now
   ansible.builtin.systemd_service:
     name: "{{ item }}"
@@ -517,14 +542,14 @@
     - wg-backup-postgres.service
     - wg-backup-beads.service
   register: backup_first_run
-  changed_when: true
+  changed_when: not ansible_check_mode
 
 - name: Copy them off the machine now
   ansible.builtin.systemd_service:
     name: wg-backup-offsite.service
     state: started
   when: backup_offsite_enabled | bool
-  changed_when: true
+  changed_when: not ansible_check_mode
 
 - name: Confirm both receipts exist
   ansible.builtin.stat:

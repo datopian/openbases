@@ -1,6 +1,18 @@
 ---
 control_api_port: 8080
 control_api_user: workgraph
+# Left empty, the binary is not deployed and the installed one is left alone, so
+# a run without a locally built binary changes nothing rather than failing.
+#
+# It had no default at all, so `ansible-playbook site.yml` without an explicit
+# -e control_api_local_binary=... died with "'control_api_local_binary' is
+# undefined" — which is what scripts/ansible_check.sh does, and one of the
+# reasons the idempotence check it exists to perform had never run (wg-4h3).
+#
+# Build with `make build-linux`: ./bin/linux-amd64/control-api. A macOS binary
+# from `make build` installs without complaint and then fails to exec.
+control_api_local_binary: ""
+
 control_api_binary: /usr/local/bin/workgraph-control-api
 control_api_reconcile_binary: /usr/local/bin/workgraph-reconcile
 # The App private key on the control node. Deployed only when a local source is
