@@ -97,6 +97,27 @@
     HOME: "{{ beads_hq_root }}/{{ beads_hq_name }}"
     PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
 
+# Reassert ownership of the whole graph on every run.
+#
+# `bd` writes the Dolt manifest as whoever runs it. One `bd stats` as root
+# rewrote /srv/graphs/company-hq/.beads/embeddeddolt/wg/.dolt/noms/manifest as
+# root:root 0600, and the service user could no longer open the database at all:
+#
+#   failed to load database "wg": open .../noms/manifest: permission denied
+#
+# Everything that touches the graph runs as {{ beads_hq_user }} — the snapshot
+# timer, the export, the tasks above — so a single root-run command locks all of
+# them out. It IS caught: the snapshot unit fails, the receipt goes stale and the
+# monitor alerts on it. But being caught an hour later by an alert is worse than
+# being repaired here, and the repair costs a walk over a hundred small files.
+- name: Own the graph, whatever last wrote it
+  ansible.builtin.file:
+    path: "{{ beads_hq_root }}/{{ beads_hq_name }}"
+    state: directory
+    owner: "{{ beads_hq_user }}"
+    group: "{{ beads_hq_user }}"
+    recurse: true
+
 - name: Confirm the graph answers
   ansible.builtin.command:
     cmd: bd ready --json
