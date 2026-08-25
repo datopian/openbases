@@ -48,6 +48,13 @@ OWNER_ONLY = {
         "asserts the approval triggers — self-approval, digest binding, "
         "one-vote-per-approver, append-only decisions. It reads `projects` "
         "only to resolve a fixture id; no assertion concerns visibility.",
+    "execution_registry.sql":
+        "asserts the deploy-time registration functions and that attribution "
+        "refuses to guess when a cell hosts two projects. Every write goes "
+        "through a SECURITY DEFINER function that runs WITHOUT a user by "
+        "design, and the reads verify what those functions wrote, not what a "
+        "user may see. usage_records visibility IS covered, under a real "
+        "non-superuser role, by test/acceptance/cost_import.sh.",
     "hq_graph.sql":
         "asserts work_refs identity when execution_cell_id IS NULL and the "
         "link-layer constraints. Uniqueness and triggers, not visibility.",

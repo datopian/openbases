@@ -1,0 +1,27 @@
+---
+# Which project's work runs in which execution cell (wg-38w).
+#
+# Policy, not infrastructure, which is why it lives beside the inventory rather
+# than in a migration: a migration cannot know that staging has a cell called
+# client-nged, and the assignment can differ between environments.
+#
+# The assignments come from docs/pilot/registry.md, which describes them as
+# "proposed rather than specified, and accepted as a starting point".
+#
+# datopian-products is deliberately ABSENT. It has no cell of its own, and the
+# obvious move — put it in the oss cell alongside portaljs-oss — has a cost that
+# is easy to miss: a cell hosting two projects cannot attribute its spend to
+# either, because system_record_usage resolves a cell tag to a project only when
+# exactly one matches and refuses to guess otherwise. Leaving it unassigned says
+# "not decided yet", which is true, instead of quietly making the oss cell's
+# spend unattributable.
+project_cell_assignments:
+  - project: portaljs-oss
+    cell: oss
+
+  # The tightening 0009 deferred, in its own words: "the schema refuses a
+  # restricted project without one, so nged is created as confidential and
+  # tightened to restricted when its cell exists". This is when.
+  - project: nged
+    cell: client-nged
+    visibility: restricted

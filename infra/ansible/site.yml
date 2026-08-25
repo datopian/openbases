@@ -39,6 +39,19 @@
     - execution_cell
     - gastown
 
+# A play of its own, on the control node, AFTER the execution play.
+#
+# The registry records the limits actually APPLIED to each cell, and those are
+# derived from the node's real CPU and memory as a set_fact during the play
+# above. Running this earlier would record the declared numbers instead, which on
+# this hardware were ceilings above the machine and could never be reached.
+- name: Record the execution registry
+  hosts: control
+  become: false
+  gather_facts: false
+  roles:
+    - execution_registry
+
 - name: Verify compliance
   hosts: all
   become: false

@@ -1,0 +1,71 @@
+---
+# Record the execution nodes and cells in the registry (wg-38w).
+#
+# This runs on the CONTROL node, in its own play, AFTER the execution play. Both
+# halves of that matter:
+#
+#   on the control node, because that is where the database, the DSN and the
+#   credential are — the execution nodes have none of them, by design;
+#
+#   after the execution play, because the limits recorded here are the ones
+#   actually APPLIED. execution_cell derives them from each node's real CPU and
+#   memory (WP-I3), as a set_fact during that play. Registering before it would
+#   record the DECLARED numbers, which on this hardware were 200% CPU and 8192 MB
+#   on a two-core, 3819 MB node — ceilings that can never be reached. Putting
+#   that fiction in the database is worse than leaving the table empty, because
+#   it looks like an answer.
+
+- name: Install the registry binary
+  ansible.builtin.copy:
+    src: "{{ registry_local_binary }}"
+    dest: "{{ registry_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: registry_local_binary | length > 0
+
+- name: Check whether the registry binary is present
+  ansible.builtin.stat:
+    path: "{{ registry_binary }}"
+  register: registry_binary_stat
+
+- name: Register each execution node, its cells and the projects that run there
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --pipe
+      - --wait
+      # --collect so a failed run is garbage-collected. Without it the unit
+      # lingers and the NEXT run fails with "unit was already loaded", which
+      # reads like a different problem entirely.
+      - --collect
+      - --unit=wg-registry-{{ item }}
+      - --property=Type=oneshot
+      - --property=User={{ registry_user }}
+      - --property=EnvironmentFile=/etc/workgraph/control-api.env
+      - --property=LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+      - "{{ registry_binary }}"
+      - -f
+      - "-"
+    stdin: "{{ lookup('template', 'document.json.j2') | trim }}"
+  vars:
+    node: "{{ item }}"
+  register: registry_run
+  # The command runs on every play; whether it CHANGED anything is what the
+  # registration functions report, line by line. WP-B2's acceptance criterion is
+  # that a second Ansible run reports no changes, so this has to be derived from
+  # the output rather than assumed.
+  changed_when: "'(updated)' in registry_run.stdout"
+  loop: "{{ groups['execution'] | default([]) }}"
+  when: registry_binary_stat.stat.exists
+
+- name: Report the registry
+  ansible.builtin.debug:
+    var: item.stdout_lines
+  loop: "{{ registry_run.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when:
+    - registry_binary_stat.stat.exists
+    - item.stdout_lines is defined

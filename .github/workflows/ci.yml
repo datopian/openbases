@@ -179,6 +179,11 @@ jobs:
       - name: platform alerts reach an operator with a runbook
         run: psql -v ON_ERROR_STOP=1 -f test/integration/platform_alerts.sql
 
+      # Registering the nodes and cells that exist on disk, and the refusal to
+      # guess which project a shared cell belongs to.
+      - name: execution nodes and cells register, and attribution refuses to guess
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/execution_registry.sql
+
       # The cost importer, end to end against a stub gateway: paging, the
       # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
       # the real binary rather than SQL alone, because the decisions being

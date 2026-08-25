@@ -218,12 +218,71 @@ fi
 # ---------------------------------------------------------------------------
 # The work graph
 # ---------------------------------------------------------------------------
+#
+# One immutable archive per run, NOT a file-by-file copy of the snapshot
+# directory. That directory is Dolt storage: the .darc chunks are
+# content-addressed and never change, but `manifest` is rewritten on every
+# snapshot and `LOCK` is a lock file.
+#
+# The file-by-file copy worked until the bucket lock was applied, and then failed
+# on every run with
+#
+#   ObjectLockedByBucketPolicy: The object is locked by the bucket policy
+#
+# because a locked object cannot be overwritten and `manifest` has to be. The
+# chunks kept uploading, so the failure was not a missing backup — it was worse
+# than that and harder to see: the off-machine manifest froze at the moment the
+# lock was applied, pinning the restorable state to that day while the archive
+# appeared to keep growing. Found by the deployment failing, not by a check.
+#
+# An archive per run cannot collide with a locked object because its name is new
+# every time, which is the same reason the PostgreSQL base backups are stored
+# that way. The graph is under a megabyte, the offsite job is daily, and
+# beads-hq/ already has a 30-day lifecycle rule, so the whole history costs a few
+# tens of megabytes.
 if [ -d "$BEADS_DIR" ] && [ -n "$(ls -A "$BEADS_DIR" 2>/dev/null)" ]; then
-  if rclone copy "$BEADS_DIR" "r2:$BUCKET/beads-hq/" "${RC[@]}"; then
-    echo "  work graph copied off-machine"
+  graph_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  graph_target="r2:$BUCKET/beads-hq/$graph_stamp.tar.gz"
+  if [ "$DRY_RUN" = 1 ]; then
+    echo "  would copy the work graph as $graph_stamp.tar.gz"
   else
-    echo "  failed to copy the work graph" >&2
-    fail=1
+    tmp="$(mktemp)"
+    # LOCK is excluded: it is a lock file, not data, and restoring one would
+    # leave the recovered graph looking as though another process holds it.
+    # tar, then READ IT BACK, then upload, then compare sizes. The freeze this
+    # replaces was invisible for two days because nothing ever checked that what
+    # was off-machine could be used; an archive that lists and matches is not a
+    # restore, but it is the difference between a check and a hope.
+    # grep -c rather than grep -q, and not inside the && chain.
+    #
+    # `tar tzf ... | grep -q` exits as soon as it matches, closes the pipe, and
+    # tar dies of SIGPIPE — so the archive was fine and the check reported
+    # "tar: stdout: write error" and failed the run. Counting reads the whole
+    # listing, so tar finishes writing it.
+    manifests=0
+    if tar czf "$tmp" -C "$BEADS_DIR" --exclude=./LOCK .; then
+      manifests="$(tar tzf "$tmp" | grep -c '^\./manifest$' || true)"
+    fi
+
+    if [ "$manifests" -ge 1 ] && rclone copyto "$tmp" "$graph_target" "${RC[@]}"; then
+      local_size="$(stat -c %s "$tmp" 2>/dev/null || echo 0)"
+      remote_size="$(rclone lsf "$graph_target" --format s "${RC[@]}" 2>/dev/null | head -1)"
+      if [ -n "$remote_size" ] && [ "$remote_size" = "$local_size" ]; then
+        echo "  work graph copied off-machine as $graph_stamp.tar.gz ($(du -h "$tmp" | cut -f1), manifest present)"
+      else
+        echo "  SIZE MISMATCH for the work graph: local $local_size, remote ${remote_size:-0}" >&2
+        fail=1
+      fi
+    elif [ "$manifests" -lt 1 ]; then
+      # An archive with no manifest is Dolt chunks with nothing to interpret
+      # them. Uploading it would look exactly like a working backup.
+      echo "  the work-graph archive contains no manifest; refusing to upload it" >&2
+      fail=1
+    else
+      echo "  failed to copy the work graph" >&2
+      fail=1
+    fi
+    rm -f "$tmp"
   fi
 else
   echo "  no work-graph snapshot to copy yet" >&2

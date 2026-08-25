@@ -1,0 +1,54 @@
+{#
+  The desired state of one execution node, built from what Ansible already knows.
+
+  Everything here comes from a fact rather than a literal: the cells from
+  group_vars/execution.yml, the limits from the set_fact the execution_cell role
+  computed on that node, the system username from the same expression the user
+  was created with. A literal would be a second copy free to drift from the
+  machine it describes.
+
+  Only the project assignments whose cell lives on THIS node are included, so a
+  document never references a cell it does not declare — which wg-registry
+  refuses, and which is how a typo is caught before anything is written.
+#}
+{% set cells = hostvars[node].execution_cells | default([]) %}
+{% set slugs = cells | map(attribute='name') | list %}
+{
+  "node": {
+    "hostname": {{ node | to_json }},
+    "environment": {{ (control_api_environment | default('staging')) | to_json }}
+  },
+  "cells": [
+    {% for c in cells %}
+    {
+      "slug": {{ c.name | to_json }},
+      "system_username": {{ ('wgcell_' ~ (c.name | replace('-', '_'))) | to_json }},
+      "trust_domain": {{ c.trust_domain | to_json }},
+      {#
+        max_concurrent_agents is deliberately NOT sent.
+
+        Nothing enforces it. The cell slice sets TasksMax, which bounds
+        processes rather than agents, and no role or unit limits how many agents
+        run at once. Sending a number would record an aspiration as a fact, next
+        to CPU and memory limits that are real — and the whole reason those are
+        derived rather than declared is that a ceiling nobody enforces reads as
+        protective and protects nothing. Omitted, the column takes its schema
+        default, and the gap stays a gap.
+      #}
+      "cpu_quota_percent": {{ hostvars[node].cell_cpu_percent | default(0) | int }},
+      "memory_limit_mb": {{ hostvars[node].cell_memory_mb | default(0) | int }}
+    }{{ "," if not loop.last }}
+    {% endfor %}
+  ],
+  "projects": [
+    {% for a in (project_cell_assignments | default([]) | selectattr('cell', 'in', slugs) | list) %}
+    {
+      "slug": {{ a.project | to_json }},
+      "cell": {{ a.cell | to_json }}
+      {%- if a.visibility is defined %},
+      "visibility": {{ a.visibility | to_json }}
+      {%- endif %}
+    }{{ "," if not loop.last }}
+    {% endfor %}
+  ]
+}

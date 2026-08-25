@@ -60,6 +60,21 @@ The graph is backed up on the node because that is where WP-D2 put it. wg-ohk
 recorded the previous state: the graph existed only in a working copy on one
 laptop, backed up when somebody remembered.
 
+**Off-machine it is one immutable `.tar.gz` per run, not a file-by-file copy of
+the snapshot directory.** That directory is Dolt storage: the `.darc` chunks are
+content-addressed and never change, but `manifest` is rewritten every time. The
+file-by-file copy worked until the bucket lock was applied and then failed on
+every run with `ObjectLockedByBucketPolicy`, because a locked object cannot be
+overwritten and the manifest has to be.
+
+The failure was worse than a missing backup and harder to see. The chunks kept
+uploading, so the archive appeared to keep growing — while the off-machine
+manifest was frozen at the moment the lock was applied, pinning the restorable
+state to that day. It was found by a deployment failing, not by a check, and it
+had been that way for two days. Each run now writes `beads-hq/<UTC>.tar.gz`,
+whose name is new every time and so can never collide with a locked object, and
+the run refuses to upload an archive that does not contain a manifest.
+
 ## Restoring
 
 `scripts/restore_postgres.sh` restores into a directory you name and starts a
@@ -213,7 +228,7 @@ wg-ohk first would leave nothing off-machine at all.
 | --- | --- | --- |
 | `postgres/` | one gzipped tar per base backup | 8 objects, 18.9 MB each |
 | `wal/` | the compressed WAL archive | 63 segments, 2.3 MB |
-| `beads-hq/` | the work-graph snapshot | 18 objects, 0.1 MB |
+| `beads-hq/` | one gzipped tar of the work graph per run | 72 KB each |
 
 Fifteen minutes because **the WAL sync is what sets the off-machine recovery
 point**. If the node is lost, the recovery point is the newest segment that

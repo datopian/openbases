@@ -1,0 +1,12 @@
+---
+# Recording which execution nodes and cells exist (wg-38w).
+#
+# Left empty, the binary is not deployed and nothing is registered, so a run
+# without a locally built binary changes nothing rather than half-registering.
+# Build with `make build-linux`.
+registry_local_binary: ""
+registry_binary: /usr/local/bin/wg-registry
+
+# It shares the control API's identity because it needs exactly that identity's
+# database access — EXECUTE on three SECURITY DEFINER functions — and no more.
+registry_user: "{{ control_api_user | default('workgraph') }}"
