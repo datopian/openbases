@@ -1,0 +1,20 @@
+# Managed by Ansible (wg-2a0).
+[Unit]
+Description=Import AI Gateway spend periodically
+Documentation=https://github.com/datopian/company-workgraph#wg-2a0
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ costimport_interval }}
+
+# Larger than the monitor's, because nothing is waiting on this and an hourly
+# job that fires on the hour across every node makes a thundering herd out of an
+# API that rate-limits.
+RandomizedDelaySec=5min
+
+# A missed run executes once on the next boot. With the overlap window the
+# catch-up is automatic, but running promptly keeps the gap short.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

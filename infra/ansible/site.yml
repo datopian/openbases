@@ -24,6 +24,9 @@
     # After control_api: the monitor reads its environment file and its database
     # credential, and probes its health endpoint.
     - monitor
+    # After control_api for the same reason: it reads that environment file for
+    # the DSN and that credential directory for the database password.
+    - costimport
     # After postgresql (it reconfigures WAL archiving) and beads_hq (it backs up
     # the graph that role creates).
     - backup

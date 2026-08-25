@@ -70,7 +70,14 @@ build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 		-o $(BIN)/linux-amd64/control-api ./cmd/control-api
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
 		-o $(BIN)/linux-amd64/reconcile ./cmd/reconcile
-	@echo "built: $(BIN)/linux-amd64/{witness,monitor,worker,control-api,reconcile}"
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+		-o $(BIN)/linux-amd64/costimport ./cmd/costimport
+	@# migrate belongs here for the same reason, and for one more: it embeds the
+	@# migrations, so a stale hand-built copy on a node applies a stale schema
+	@# while reporting success.
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+		-o $(BIN)/linux-amd64/migrate ./cmd/migrate
+	@echo "built: $(BIN)/linux-amd64/{witness,monitor,worker,control-api,reconcile,costimport,migrate}"
 
 verify-versions: ## Check installed gt/bd/dolt against versions.lock
 	@bash scripts/verify_versions.sh

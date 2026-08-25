@@ -96,6 +96,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Go, because this job now builds the cost importer and runs it against
+      # the service database.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
       - name: structural migration checks
         run: bash scripts/check_migrations.sh
 
@@ -172,6 +178,17 @@ jobs:
       # of the code that computes the alert.
       - name: platform alerts reach an operator with a runbook
         run: psql -v ON_ERROR_STOP=1 -f test/integration/platform_alerts.sql
+
+      # The cost importer, end to end against a stub gateway: paging, the
+      # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
+      # the real binary rather than SQL alone, because the decisions being
+      # asserted — what is skipped, what is flagged, how dollars become cents —
+      # live in Go and would otherwise only be checked by hand on a node.
+      - name: build the cost importer
+        run: go build -o bin/costimport ./cmd/costimport
+
+      - name: gateway spend becomes a durable, joinable, exact record
+        run: bash test/acceptance/cost_import.sh bin/costimport
 
   toolchain:
     name: toolchain

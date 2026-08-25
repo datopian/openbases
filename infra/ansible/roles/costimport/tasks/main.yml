@@ -1,0 +1,134 @@
+---
+# The AI Gateway cost importer (wg-2a0). Runs on the control node, on a timer.
+
+- name: Decide whether the importer can run
+  ansible.builtin.set_fact:
+    # Both are required. Without a token there is nothing to read; without an
+    # account id there is nowhere to read it from.
+    costimport_enabled: >-
+      {{ (costimport_cf_token | default('') | length > 0)
+         and (costimport_account_id | default('') | length > 0) }}
+
+- name: Install the cost importer binary
+  ansible.builtin.copy:
+    src: "{{ costimport_local_binary }}"
+    dest: "{{ costimport_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: costimport_local_binary | length > 0
+  notify: Restart the cost import timer
+
+- name: Ensure the credential directory exists
+  ansible.builtin.file:
+    path: /etc/workgraph/credentials
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the Cloudflare API token
+  ansible.builtin.copy:
+    dest: /etc/workgraph/credentials/cf_api_token
+    content: "{{ costimport_cf_token }}"
+    owner: root
+    group: root
+    # 0400 root-only. systemd loads it as root and hands the unit a copy in its
+    # private $CREDENTIALS_DIRECTORY, so the service never reads this file.
+    mode: "0400"
+  no_log: true
+  when: costimport_enabled | bool
+  notify: Restart the cost import timer
+
+# A token no longer configured must not linger. systemd would keep loading a
+# stale file, and a revoked token still on disk is what revocation removes.
+- name: Remove the Cloudflare API token when it is not configured
+  ansible.builtin.file:
+    path: /etc/workgraph/credentials/cf_api_token
+    state: absent
+  when: not (costimport_enabled | bool)
+
+- name: Install the cost import units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - wg-costimport.service
+    - wg-costimport.timer
+  notify:
+    - Reload systemd
+    - Restart the cost import timer
+
+- name: Check whether the cost importer binary is present
+  ansible.builtin.stat:
+    path: "{{ costimport_binary }}"
+  register: costimport_binary_stat
+
+# A timer with no token would fail every hour, which reads exactly like a real
+# problem and is how the failed-units list stops being worth looking at. The
+# units are installed either way so that supplying the token is the only step
+# left.
+- name: Enable the cost import timer
+  ansible.builtin.systemd_service:
+    name: wg-costimport.timer
+    enabled: "{{ costimport_enabled | bool }}"
+    state: "{{ 'started' if (costimport_enabled | bool) else 'stopped' }}"
+    daemon_reload: true
+  when: costimport_binary_stat.stat.exists
+
+- name: Say why the importer is not running
+  ansible.builtin.debug:
+    msg: >-
+      wg-costimport is installed but stopped: no
+      {{ 'Cloudflare API token (set WG_COST_CF_TOKEN to one scoped to AI Gateway Read)'
+         if (costimport_cf_token | default('') | length == 0)
+         else 'Cloudflare account id' }}.
+  when:
+    - costimport_binary_stat.stat.exists
+    - not (costimport_enabled | bool)
+
+# Proof that it can actually run here, rather than the assumption that installing
+# a unit means a working import.
+#
+# --dry-run so an Ansible run does not write rows as a side effect of deploying.
+# It exercises the credential load, the database connection, the API token and the
+# paging, which is where the failures are.
+- name: Verify the cost importer runs
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --pipe
+      - --wait
+      - --unit=wg-costimport-verify
+      - --property=Type=oneshot
+      - --property=User={{ costimport_user }}
+      - --property=EnvironmentFile=/etc/workgraph/control-api.env
+      - --property=LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+      - --property=LoadCredential=cf_api_token:/etc/workgraph/credentials/cf_api_token
+      - --property=Environment=CLOUDFLARE_ACCOUNT_ID={{ costimport_account_id }}
+      - "{{ costimport_binary }}"
+      - --dry-run
+      - -gateways
+      - "{{ costimport_gateways }}"
+      - -max
+      - "50"
+  register: costimport_verify
+  changed_when: false
+  # The output is asserted rather than the exit code, for the same reason as the
+  # monitor: a gateway that has been deleted is a configuration problem worth
+  # seeing, not a reason to fail a deployment of everything else.
+  failed_when: costimport_verify.stdout is not search('fetched=')
+  when:
+    - costimport_binary_stat.stat.exists
+    - costimport_enabled | bool
+
+- name: Report what the importer sees
+  ansible.builtin.debug:
+    var: costimport_verify.stdout_lines
+  when:
+    - costimport_binary_stat.stat.exists
+    - costimport_enabled | bool
