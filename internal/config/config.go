@@ -249,3 +249,19 @@ func databaseURL() string {
 	// wrong host or database rather than failing.
 	return strings.Replace(tmpl, "{password}", url.QueryEscape(password), 1)
 }
+
+// CloudflareAPIToken is the token the cost importer reads AI Gateway logs with.
+//
+// A systemd credential first, the environment second, on the same reasoning as
+// every other secret here: an environment variable is visible to anything that
+// can read the process's environment, and `systemctl show -p Environment` prints
+// it. The env fallback keeps a local run working without systemd.
+func CloudflareAPIToken() string {
+	return credential("cf_api_token", "CLOUDFLARE_API_TOKEN")
+}
+
+// CloudflareAPITokenSource says where the token came from, so a deployment can
+// prove it is using the credential rather than assuming it.
+func CloudflareAPITokenSource() string {
+	return CredentialSource("cf_api_token", "CLOUDFLARE_API_TOKEN")
+}

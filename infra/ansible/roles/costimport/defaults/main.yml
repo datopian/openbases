@@ -1,0 +1,58 @@
+---
+# The AI Gateway cost importer (wg-2a0).
+#
+# Left empty, the binary is not deployed and the units are not installed, so a
+# run without a locally built binary changes nothing rather than removing a
+# working service. Build with `make build-linux`.
+costimport_local_binary: ""
+costimport_binary: /usr/local/bin/wg-costimport
+
+# It shares the control API's identity because it needs exactly that identity's
+# database access — EXECUTE on two SECURITY DEFINER functions — and no more.
+costimport_user: "{{ control_api_user | default('workgraph') }}"
+
+# Which gateways to import.
+#
+# All three trust tiers, derived from the same prefix the gateways are created
+# under so that adding an environment does not mean editing two places. Listing
+# them explicitly rather than discovering them is deliberate: a gateway that
+# stops being imported should be a visible removal from this line, not a silent
+# absence from an API response.
+costimport_gateways: >-
+  {{ ai_gateway_prefix | default('workgraph-staging') }}-oss,{{
+     ai_gateway_prefix | default('workgraph-staging') }}-client,{{
+     ai_gateway_prefix | default('workgraph-staging') }}-internal
+
+# The Cloudflare API token used to READ gateway logs.
+#
+# Deliberately its own variable rather than reusing cloudflare_api_token. That
+# token can edit DNS, R2, Tunnels and Access; this one needs "AI Gateway: Read"
+# on one account and nothing else, and putting the broad token on the control
+# node would hand every one of those powers to a process whose whole job is
+# reading a log.
+#
+# Empty by default. With no token the units install but the timer stays stopped,
+# the same as an absent binary: a timer that fails every hour is indistinguishable
+# from a real problem, and it is how an alerting channel gets muted.
+costimport_cf_token: "{{ lookup('env', 'WG_COST_CF_TOKEN') }}"
+
+costimport_account_id: "{{ cloudflare_account_id | default('') }}"
+
+# How often to import. Hourly rather than continuously: the gateway log is not a
+# stream anyone is waiting on, an hour of lag costs nothing in a spend report,
+# and each run is a handful of API calls.
+costimport_interval: 1h
+
+# How far back to re-read behind the watermark. Two hours because a log entry can
+# arrive out of order and an import that resumes exactly at the watermark would
+# skip it forever. The write is idempotent, so the only cost of overlap is a few
+# wasted round trips.
+costimport_overlap: 2h
+
+# How far back to go for a gateway that has never been imported. 90 days covers
+# the retained log; the entries older than that are already gone.
+costimport_backfill: 2160h
+
+# A ceiling on one pass, so a first import of a busy gateway cannot page for
+# hours. A run that hits it reports complete=false and the next run continues.
+costimport_max: 20000

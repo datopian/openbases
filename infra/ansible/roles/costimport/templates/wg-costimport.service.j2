@@ -1,0 +1,54 @@
+# Managed by Ansible (wg-2a0).
+[Unit]
+Description=Import AI Gateway spend into usage_records
+Documentation=https://github.com/datopian/company-workgraph#wg-2a0
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ costimport_user }}
+Group={{ costimport_user }}
+# The DSN without its password, shared with the API so the two cannot disagree
+# about how to build one.
+EnvironmentFile=/etc/workgraph/control-api.env
+
+LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+# The Cloudflare token as a credential rather than in the environment: an
+# environment variable is printed by `systemctl show -p Environment` and dumped
+# by anything that reports a crash.
+LoadCredential=cf_api_token:/etc/workgraph/credentials/cf_api_token
+
+Environment=CLOUDFLARE_ACCOUNT_ID={{ costimport_account_id }}
+
+ExecStart={{ costimport_binary }} \
+  -gateways {{ costimport_gateways }} \
+  -overlap {{ costimport_overlap }} \
+  -backfill {{ costimport_backfill }} \
+  -max {{ costimport_max }}
+
+# A failed import must stand as a failed unit. The whole point of the work is
+# that spend stops being answerable only by an API call, and an import that has
+# been silently failing for a week leaves exactly the gap it was meant to close.
+SuccessExitStatus=0
+
+# It makes outbound HTTPS requests and talks to PostgreSQL over a local socket.
+# Nothing else on the node is its business.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

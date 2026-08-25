@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart the cost import timer
+  ansible.builtin.systemd_service:
+    name: wg-costimport.timer
+    state: restarted
+    daemon_reload: true
+  when: costimport_enabled | default(false)
