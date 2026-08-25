@@ -310,3 +310,24 @@ variable "r2_monthly_retention_days" {
   type        = number
   default     = 30
 }
+
+variable "ai_gateway_store_id" {
+  description = <<-EOT
+    The AI Gateway log store the gateways write to.
+
+    Assigned by Cloudflare on create, not by us, which is why it is recorded
+    rather than generated. Undeclared it reads as a removal on every plan, and
+    applying that detaches the logs the cost report and the evidence pack are
+    built from.
+
+    All three gateways currently share ONE store, which means the client
+    domain's prompts and responses sit alongside the OSS ones. That is the same
+    non-isolation wg-4r2 records for tokens, now visible in logging; separating
+    them is a change worth making on its own rather than inside a drift fix.
+
+    Empty means unmanaged, for an environment where Cloudflare has not assigned
+    one yet.
+  EOT
+  type        = string
+  default     = ""
+}

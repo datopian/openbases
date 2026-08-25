@@ -74,6 +74,21 @@ resource "cloudflare_ai_gateway" "cell" {
   log_management_strategy = "DELETE_OLDEST"
   logpush                 = false
 
+  # The log store, declared for exactly the reason the block above is declared.
+  #
+  # Cloudflare assigns a store on create and this attribute was never declared,
+  # so every plan wanted to set it to null — which would DETACH the log store.
+  # Those logs are what scripts/cost_by_role.py reads and what the evidence pack
+  # depends on to answer "what did this agent actually ask for", so the change
+  # nobody intended was also the expensive one. It sat in the plan for weeks,
+  # riding along with any unrelated apply.
+  #
+  # An empty value leaves it unmanaged, which is the state a NEW environment is
+  # in before Cloudflare has assigned one. After the first apply, read the
+  # assigned id and record it here — otherwise the same silent removal comes
+  # back on the next plan.
+  store_id = var.ai_gateway_store_id != "" ? var.ai_gateway_store_id : null
+
   # Logs are the spend and behaviour record for the evidence pack. They are also
   # the only way to answer "what did this agent actually ask for" after the
   # fact (plan section 20.2).

@@ -79,3 +79,13 @@ variable "ai_budget_shares" {
   description = "How the shared monthly pool is divided between security domains. Must sum to 1."
   default     = {}
 }
+
+variable "ai_gateway_store_id" {
+  description = <<-EOT
+    The AI Gateway log store, assigned by Cloudflare and recorded here so that
+    plans stop proposing to remove it. See the module variable for why that
+    removal was dangerous rather than cosmetic.
+  EOT
+  type        = string
+  default     = "10ba352dd98c4f2db387148e7313e451"
+}

@@ -506,15 +506,21 @@ resource "cloudflare_r2_bucket_lifecycle" "backups" {
   bucket_name = cloudflare_r2_bucket.this["backups"].name
 
   rules = [
+    # ORDERED BY ID, and the order is not cosmetic. R2 returns the rules sorted
+    # by id, the provider treats `rules` as an ordered list, and a config in any
+    # other order produces a plan that permutes them — apply it, the API
+    # re-sorts, and the next plan wants to permute them back. A diff that never
+    # converges is not just noise: it is where a real change hides, which is how
+    # store_id sat in this plan for weeks waiting to detach the gateway logs.
     for r in [
-      { key = "postgres-daily", prefix = "postgres/", days = var.r2_daily_retention_days },
-      { key = "wal", prefix = "wal/", days = var.r2_daily_retention_days },
       { key = "beads-hq", prefix = "beads-hq/", days = var.r2_daily_retention_days },
       # The prefix the workstation script wrote to before the graph moved to the
-      # control node. Expired on the monthly schedule rather than deleted here,
-      # so the history is not destroyed by a refactor.
+      # control node. Kept rather than deleted here, so a refactor does not
+      # destroy the history.
       { key = "beads-legacy", prefix = "beads/", days = var.r2_monthly_retention_days },
+      { key = "postgres-daily", prefix = "postgres/", days = var.r2_daily_retention_days },
       { key = "postgres-monthly", prefix = "postgres-monthly/", days = var.r2_monthly_retention_days },
+      { key = "wal", prefix = "wal/", days = var.r2_daily_retention_days },
       ] : {
       id         = "workgraph-${r.key}"
       enabled    = true
