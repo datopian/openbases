@@ -122,6 +122,26 @@ fi
 SEED="${WG_SEED_PATH:-$ROOT/../company-workgraph/beads-bootstrap/seed/go-live-plan.jsonl}"
 if [ -d "$(dirname "$SEED")" ]; then
   bd export -o "$SEED" >/dev/null 2>&1
-  echo "  refreshed the reviewable export at $SEED"
-  echo "  commit it in company-workgraph; it is not a backup, it is the shape of the plan"
+  echo "  refreshed the reviewable export at $SEED ($(grep -c . "$SEED" 2>/dev/null) beads)"
+
+  # Refreshing it on disk was never the problem. It is refreshed here on every
+  # run and it still fell four days and thirteen beads behind, because the file
+  # sat modified-and-uncommitted and nothing said so — the working tree showed
+  # `M beads-bootstrap/seed/go-live-plan.jsonl` and that is not a thing anybody
+  # reads. So this says it out loud, every time, until it is committed.
+  seed_repo="$(cd "$(dirname "$SEED")" && git rev-parse --show-toplevel 2>/dev/null)"
+  if [ -n "$seed_repo" ]; then
+    if [ -n "$(git -C "$seed_repo" status --porcelain -- "$SEED" 2>/dev/null)" ]; then
+      echo
+      echo "  THE REVIEWABLE EXPORT IS NOT COMMITTED." >&2
+      echo "  It is refreshed on disk and uncommitted, which is where it goes stale:" >&2
+      echo "    cd $seed_repo && git add ${SEED#$seed_repo/} && git commit" >&2
+      echo "  It is not a backup — it is the only copy of the plan's shape that a" >&2
+      echo "  reviewer, or a second machine, can see." >&2
+    else
+      echo "  the reviewable export is committed and current"
+    fi
+  else
+    echo "  commit it in company-workgraph; it is not a backup, it is the shape of the plan"
+  fi
 fi
