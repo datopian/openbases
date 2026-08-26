@@ -62,14 +62,24 @@ echo
 # ---------------------------------------------------------------------------
 # 1. The naive probe is theatre, which is why the token exists
 # ---------------------------------------------------------------------------
+# The property that matters: an unauthenticated probe must NOT be able to report
+# success. It is asserted rather than merely recorded, because this is the whole
+# reason the token exists.
+#
+# Before this application existed, the hostname's general Access app answered an
+# unauthenticated request with a login redirect — and following redirects, as any
+# health checker does, gave HTTP 200 from the login PAGE. A check written that
+# way passes with the machine switched off.
+#
+# Now the path has its own application with a service-token policy, so an
+# anonymous request is refused outright with 403. Either answer is acceptable
+# here; 200 is not, and that is the assertion.
 echo "== why a token is needed"
 naive="$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 25 "$URL" 2>/dev/null || echo 000)"
 if [ "$naive" = "200" ]; then
-  ok "an unauthenticated probe reports 200 — from the Access LOGIN PAGE, not the node"
-  note "a health check written that way passes with the machine switched off"
+  bad "an unauthenticated probe reported 200 — a tokenless health check would pass with the node switched off"
 else
-  note "an unauthenticated probe returned $naive"
-  ok "recorded"
+  ok "an unauthenticated probe cannot report success (HTTP $naive)"
 fi
 
 # ---------------------------------------------------------------------------
