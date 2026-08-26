@@ -14,6 +14,20 @@ the piece of work, and a per-bead budget has nothing to compare against.
   wg-tag-bead <rig-dir> <bead-id>   add or replace the bead
   wg-tag-bead <rig-dir> --clear     remove it
 
+It tags the per-role settings under the rig AND the cell-level settings at
+$HOME/.claude/settings.json, and the second one is the one that matters.
+
+A polecat does not run where its role's settings file lives. `gt sling` creates
+polecats/<name>/sandbox/.claude per session, containing commands/ and no
+settings.json, and the session runs there — two directories below
+polecats/.claude/settings.json, which Claude Code never reads from that depth.
+So the only settings a polecat sees are the cell-level ones, which carried
+cf-aig-authorization and no cf-aig-metadata at all.
+
+That is why 98.3% of measured spend was untagged and no polecat traffic had ever
+appeared with a role: not a timing problem with the deploy-time tagger, but the
+tagged file being invisible to the agent that does the work (wg-7yo).
+
 Five keys is the AI Gateway maximum and extras are dropped SILENTLY, so with
 role, cell, rig and bead this sits at four and must stay there. A fifth key
 added later would not fail; it would just quietly stop one of these arriving.
@@ -31,8 +45,14 @@ HEADER_KEY = "ANTHROPIC_CUSTOM_HEADERS"
 METADATA_PREFIX = "cf-aig-metadata: "
 
 
-def rewrite(path, bead):
-    """Return True when the file changed."""
+def rewrite(path, bead, defaults=None):
+    """Return True when the file changed.
+
+    `defaults` allows a metadata line to be CREATED where none exists, which is
+    what the cell-level settings need: they carry an authorization header and
+    nothing else. Where a metadata line is already present it is edited in
+    place, so a role's own tags are never overwritten by a default.
+    """
     try:
         with open(path) as fh:
             settings = json.load(fh)
@@ -45,9 +65,9 @@ def rewrite(path, bead):
     env = settings.get("env") or {}
     headers = env.get(HEADER_KEY)
     if not headers:
-        # No metadata line at all means this agent is not routed through the
-        # gateway with attribution, and inventing one here would be guessing at
-        # a token this script does not have.
+        # No headers at all means this agent is not routed through the gateway,
+        # and inventing an authorization line here would be guessing at a token
+        # this script does not have.
         return False
 
     lines = headers.split("\n")
@@ -69,7 +89,15 @@ def rewrite(path, bead):
         out.append(METADATA_PREFIX + json.dumps(metadata, separators=(",", ":")))
 
     if not found:
-        return False
+        if bead is None or not defaults:
+            # Nothing to clear, or nothing to create it from.
+            return False
+        # Create the line. Only for files we were told to seed — the cell-level
+        # settings — so a role file that genuinely has no metadata is left as it
+        # is rather than acquiring one from nowhere.
+        metadata = dict(defaults)
+        metadata["bead"] = bead
+        out.append(METADATA_PREFIX + json.dumps(metadata, separators=(",", ":")))
 
     new_headers = "\n".join(out)
     if new_headers == headers:
@@ -117,6 +145,24 @@ def main() -> int:
         seen += 1
         if rewrite(os.path.join(dirpath, "settings.json"), bead):
             changed += 1
+
+    # The cell-level settings, which is what a polecat actually reads.
+    #
+    # Seeded with cell and rig rather than a role: this one file is inherited by
+    # everything in the cell that has no settings of its own, so a role here
+    # would be a guess applied to all of them. Agents that DO have their own
+    # file keep their own role, because that file is edited in place above.
+    home = os.environ.get("HOME", "")
+    cell_settings = os.path.join(home, ".claude", "settings.json")
+    if home and os.path.isfile(cell_settings):
+        seen += 1
+        defaults = {"cell": os.path.basename(home.rstrip("/")),
+                    "rig": os.path.basename(os.path.abspath(root))}
+        if rewrite(cell_settings, bead, defaults):
+            changed += 1
+    elif home:
+        print(f"no cell-level settings at {cell_settings}; polecat spend will be untagged",
+              file=sys.stderr)
 
     if seen == 0:
         # Loud, because a dispatch that tags nothing produces spend that cannot

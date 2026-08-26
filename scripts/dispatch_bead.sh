@@ -48,6 +48,36 @@ if [ -f "/etc/systemd/system/${SLICE}" ]; then
       --working-directory="$CELL/town" \
       /bin/bash -lc "$1" 2>&1
   }
+
+  # Daemons need a unit of their own, and it must not be --wait --collect.
+  #
+  # `run` finishes when its command finishes, and systemd then tears down the
+  # unit's whole cgroup — taking with it anything the command forked. So
+  # `run "gt dolt start"` started a Dolt server and killed it a moment later:
+  #
+  #   ✓ Dolt server started (PID 2807261, port 3307)
+  #   ...
+  #   ○ Dolt server is not running
+  #
+  # After which `gt dolt status` never reports running, the sixty-second wait
+  # below expires, and `gt sling` fails with a usage message — which reads like
+  # a wrong argument rather than like a missing database. Dispatch could not
+  # have worked on any node that has the slice, which is every node since WP-I3
+  # introduced it; the `su` fallback below is what used to keep it alive.
+  #
+  # Type=forking, because that is exactly what these programs do: the process
+  # systemd starts exits, and systemd tracks the child it left behind. The unit
+  # persists until the teardown stops it, and it still runs inside the cell's
+  # slice, so the CPU and memory limits apply to the daemon too.
+  daemon() {  # name command
+    systemd-run --quiet --unit="$1" --property=Type=forking \
+      --uid="wgcell_${CELL_NAME}" --slice="$SLICE" \
+      --setenv=PATH=/usr/local/bin:/usr/bin:/bin \
+      --setenv=HOME="$CELL" \
+      --working-directory="$CELL/town" \
+      /bin/bash -lc "$2" 2>&1
+  }
+  stop_daemon() { systemctl stop "$1" >/dev/null 2>&1; systemctl reset-failed "$1" >/dev/null 2>&1; }
 else
   echo "!! ${SLICE} is absent; falling back to su, and the per-cell resource"
   echo "!! limits will NOT apply to these agents. Re-run the execution_cell role."
@@ -55,7 +85,14 @@ else
     su -s /bin/bash -c "export PATH=/usr/local/bin:\$PATH HOME=$CELL
 cd $CELL/town && $1" "wgcell_${CELL_NAME}" 2>&1
   }
+  # Without the slice there is no cgroup to be torn down, so a daemon started
+  # this way simply survives.
+  daemon()      { run "$2"; }
+  stop_daemon() { :; }
 fi
+
+DOLT_UNIT="gt-dolt-${CELL_NAME}"
+GT_DAEMON_UNIT="gt-daemon-${CELL_NAME}"
 
 teardown() {
   echo "  tearing down..."
@@ -64,6 +101,12 @@ teardown() {
   # this bead, and the budget that then trips would be the wrong one.
   run "wg-tag-bead $RIG --clear 2>&1 | tail -1" || true
   run "gt down >/dev/null 2>&1"
+  # The daemons outlive their starting command by design now, so they have to be
+  # stopped explicitly. Leaving them would leave a Dolt server and a Gas Town
+  # daemon polling in the cell after every dispatch — which is the cost this
+  # script exists to avoid.
+  stop_daemon "$GT_DAEMON_UNIT"
+  stop_daemon "$DOLT_UNIT"
   sleep 3
   pkill -u wgcell_oss -f claude 2>/dev/null
   pkill -u wgcell_oss -f "gt daemon" 2>/dev/null
@@ -132,12 +175,39 @@ fi
 
 echo "Dispatching $BEAD to $RIG (deadline ${DEADLINE}s)"
 
-run "gt dolt start >/dev/null 2>&1"
+stop_daemon "$DOLT_UNIT"
+daemon "$DOLT_UNIT" "gt dolt start" >/dev/null 2>&1
+dolt_up=0
 for _ in $(seq 1 12); do
-  run "gt dolt status 2>/dev/null" | grep -qi running && break
+  # Captured into a variable, then matched. NOT piped into `grep -q`.
+  #
+  # Two bugs met here and each hid the other. `gt dolt status` writes its answer
+  # to STDERR, so the original `2>/dev/null` threw the answer away. And piping
+  # into `grep -q` makes grep exit at the first match, which closes the pipe,
+  # which SIGPIPEs systemd-run — and under `set -o pipefail` the pipeline then
+  # reports 141, so a SUCCESSFUL match was read as a failure.
+  #
+  # That is the third time today the `grep -q` half has bitten: it also produced
+  # "tar: stdout: write error" on a perfectly good archive in backup_offsite.sh.
+  # The rule that survives: never pipe into `grep -q` under pipefail when the
+  # left-hand side matters.
+  dolt_status="$(run "gt dolt status 2>&1")"
+  case "$dolt_status" in
+    *"server is running"*) dolt_up=1; break ;;
+  esac
   sleep 5
 done
-run "gt daemon start >/dev/null 2>&1"
+if [ "$dolt_up" != 1 ]; then
+  # Said plainly rather than left to surface as a confusing `gt sling` usage
+  # message sixty seconds later.
+  echo "!! the rig's Dolt server did not come up; nothing can be slung"
+  printf '%s\n' "$dolt_status" | sed 's/^/!! /' | head -4
+  exit 1
+fi
+echo "  dolt: up"
+
+stop_daemon "$GT_DAEMON_UNIT"
+daemon "$GT_DAEMON_UNIT" "gt daemon start" >/dev/null 2>&1
 sleep 8
 
 # Tag every agent in the rig with this bead, so the spend it makes carries the
