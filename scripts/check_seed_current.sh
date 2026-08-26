@@ -25,9 +25,21 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SEED="${WG_SEED_PATH:-$ROOT/../company-workgraph/beads-bootstrap/seed/go-live-plan.jsonl}"
 FIX=0
-[ "${1:-}" = "--fix" ] && FIX=1
+LOCAL=0
+for arg in "$@"; do
+  case "$arg" in
+    --fix)   FIX=1 ;;
+    --local) LOCAL=1 ;;
+    *) echo "usage: check_seed_current.sh [--fix] [--local]" >&2; exit 2 ;;
+  esac
+done
 
-command -v bd >/dev/null || { echo "bd is not on PATH" >&2; exit 2; }
+# The company graph lives on the control node (wg-22k), so that is what the
+# committed export must match. --local compares a working copy instead, which is
+# only meaningful while one is still being used as a source of truth.
+if [ "$LOCAL" = 1 ]; then
+  command -v bd >/dev/null || { echo "bd is not on PATH" >&2; exit 2; }
+fi
 if [ ! -d "$(dirname "$SEED")" ]; then
   # Not an error: the implementation repository is often cloned without the
   # planning repository beside it, and failing there would make this check
@@ -38,9 +50,29 @@ fi
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-if ! bd export -o "$tmp" >/dev/null 2>&1; then
-  echo "bd export failed; cannot tell whether the seed is current" >&2
-  exit 2
+
+if [ "$LOCAL" = 1 ]; then
+  if ! bd export -o "$tmp" >/dev/null 2>&1; then
+    echo "bd export failed; cannot tell whether the seed is current" >&2
+    exit 2
+  fi
+else
+  # Exported on the node and copied back, rather than streamed: bd export writes
+  # a file and reports, and -o /dev/stdout produces nothing.
+  remote="/tmp/wg-seed-check.$$.jsonl"
+  if ! "$ROOT/scripts/hq.sh" export -o "$remote" >/dev/null 2>&1; then
+    echo "could not export the company graph from the control node" >&2
+    echo "if the node is unreachable, compare a working copy with --local" >&2
+    exit 2
+  fi
+  ssh -o ProxyCommand="cloudflared access ssh --hostname %h" \
+      -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+      "root@${WG_CONTROL_HOST:-ssh-staging.openbases.com}" \
+      "cat $remote; rm -f $remote" > "$tmp" 2>/dev/null
+  if [ ! -s "$tmp" ]; then
+    echo "the export from the control node came back empty" >&2
+    exit 2
+  fi
 fi
 
 if [ ! -f "$SEED" ]; then

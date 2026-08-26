@@ -192,6 +192,29 @@ func importOne(ctx context.Context, db *sql.DB, g gatewayClient, name string, ov
 			s.Duplicate++
 		}
 	}
+
+	// Record the pass, so "is the spend I am reading current" can be answered
+	// from the import rather than from the data.
+	//
+	// The budget check used to measure staleness as the age of the newest usage
+	// record, which is wrong on a healthy system: a gateway nobody has used for
+	// a week looks a week stale however punctually this ran, and every dispatch
+	// gets refused for a reason that has nothing to do with the importer
+	// (0033_import_runs.sql).
+	//
+	// Only on a real pass, never a dry run: a dry run wrote nothing, and
+	// recording it would claim freshness the data does not have. Failure to
+	// record is logged by the caller through the returned error rather than
+	// silently swallowed, because an import whose runs are not recorded looks
+	// exactly like an import that is not running.
+	if !dryRun {
+		if _, rErr := db.ExecContext(ctx,
+			`SELECT system_record_import_run($1, $2, $3)`,
+			name, int64(s.Fetched), s.Complete); rErr != nil && err == nil {
+			err = fmt.Errorf("recording the import run: %w", rErr)
+		}
+	}
+
 	return s, err
 }
 

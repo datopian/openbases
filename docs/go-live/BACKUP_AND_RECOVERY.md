@@ -60,6 +60,15 @@ The graph is backed up on the node because that is where WP-D2 put it. wg-ohk
 recorded the previous state: the graph existed only in a working copy on one
 laptop, backed up when somebody remembered.
 
+**And until 2026-08-26 that was still true of the graph that mattered.** The node
+held a graph of two issues while the actual go-live backlog — 95 beads, every
+work package, every blocker, every finding — lived in a laptop working copy whose
+`bd backup` destination was another directory on the same laptop. Losing that
+machine lost the backlog. wg-22k migrated it; `/srv/graphs/company-hq` is now
+canonical, `scripts/hq.sh` is how anything reads or writes it, and it inherits
+everything on this page: a snapshot every fifteen minutes, an immutable archive
+in R2 on every offsite run, and the restore drill in wg-uh9.
+
 **Off-machine it is one immutable `.tar.gz` per run, not a file-by-file copy of
 the snapshot directory.** That directory is Dolt storage: the `.darc` chunks are
 content-addressed and never change, but `manifest` is rewritten every time. The

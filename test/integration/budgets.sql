@@ -174,18 +174,63 @@ END
 $$;
 
 -- ---------------------------------------------------------------------------
--- Staleness is reported, because the caller has to be able to distrust this
+-- Staleness measures the IMPORT, not the data
 -- ---------------------------------------------------------------------------
+--
+-- The distinction is the whole point. A gateway nobody has used for a week has a
+-- newest record a week old however punctually the importer ran, and measuring
+-- the record would refuse every dispatch in a quiet environment while the
+-- importer was working perfectly. Observed on staging before it was fixed.
 DO $$
 DECLARE stale bigint; newest timestamptz;
 BEGIN
+  -- No import has been recorded yet, which is NOT freshness: NULL says "this
+  -- cannot be judged" and the decision layer refuses on it.
+  SELECT staleness_seconds INTO stale
+    FROM system_budget_status('wg-test-a', 'wg-test-budget-cell');
+  IF stale IS NOT NULL THEN
+    RAISE EXCEPTION 'staleness was % with no import ever recorded, expected NULL', stale;
+  END IF;
+
+  PERFORM system_record_import_run('g', 400, true);
+
   SELECT staleness_seconds, newest_record_at INTO stale, newest
     FROM system_budget_status('wg-test-a', 'wg-test-budget-cell');
   IF stale IS NULL THEN
-    RAISE EXCEPTION 'staleness came back NULL when records exist';
+    RAISE EXCEPTION 'staleness came back NULL after an import was recorded';
   END IF;
   IF stale > 300 THEN
-    RAISE EXCEPTION 'a record written seconds ago reported % seconds of staleness', stale;
+    RAISE EXCEPTION 'an import recorded seconds ago reported % seconds of staleness', stale;
+  END IF;
+
+  -- And the decisive case: the two must be INDEPENDENT. Move the recorded import
+  -- back by an hour without touching a single usage record; staleness must
+  -- follow the import and newest_record_at must not move.
+  UPDATE usage_import_runs SET ran_at = now() - interval '1 hour' WHERE gateway = 'g';
+
+  SELECT staleness_seconds, newest_record_at INTO stale, newest
+    FROM system_budget_status('wg-test-a', 'wg-test-budget-cell');
+  IF stale < 3500 OR stale > 3700 THEN
+    RAISE EXCEPTION 'an import an hour old reported % seconds of staleness', stale;
+  END IF;
+  IF newest < now() - interval '1 minute' THEN
+    RAISE EXCEPTION 'newest_record_at moved when only the import time changed: %', newest;
+  END IF;
+
+  UPDATE usage_import_runs SET ran_at = now() WHERE gateway = 'g';
+END
+$$;
+
+-- The least recent gateway governs: one gateway unread for a day makes the total
+-- wrong however promptly the others were read.
+DO $$
+DECLARE stale bigint;
+BEGIN
+  INSERT INTO usage_import_runs (gateway, ran_at) VALUES ('g-behind', now() - interval '6 hours');
+  SELECT staleness_seconds INTO stale
+    FROM system_budget_status('wg-test-a', 'wg-test-budget-cell');
+  IF stale < 21000 THEN
+    RAISE EXCEPTION 'a gateway six hours behind reported only % seconds of staleness', stale;
   END IF;
 END
 $$;

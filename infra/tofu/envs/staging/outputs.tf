@@ -37,3 +37,7 @@ output "cell_token_mint_aud" {
 output "cell_agent_health_aud" {
   value = module.environment.cell_agent_health_aud
 }
+
+output "cell_budget_check_aud" {
+  value = module.environment.cell_budget_check_aud
+}
