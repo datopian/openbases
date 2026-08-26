@@ -64,6 +64,10 @@ export GITHUB_APP_INSTALLATION_ID="$(read_key github_app_installation_id | tr -d
 export GITHUB_APP_CLIENT_ID="$(read_key github_app_client_id)"
 export GITHUB_WEBHOOK_SECRET="$(read_key github_webhook_secret)"
 export WG_AI_GATEWAY_TOKEN="$(read_key ai_gateway_token)"
+# Read-only, and deliberately NOT cloudflare_api_token. That one can edit DNS,
+# R2, Tunnels and Access; the cost importer needs "AI Gateway: Read" and nothing
+# else, and it runs unattended on the control node (wg-oku).
+export WG_COST_CF_TOKEN="$(read_key cost_import_cf_token)"
 export WG_ACCESS_AUD_STAGING="$(read_key access_aud_staging)"
 export TF_VAR_google_workspace_client_secret="$(read_key google_workspace_client_secret)"
 export R2_ACCESS_KEY_ID="$(read_key r2_access_key_id)"
