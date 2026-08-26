@@ -54,65 +54,82 @@ jobs:
 
           # Whether one commit arrived through a merged pull request.
           #
-          # Asked twice, and retried, because BOTH answers race the merge.
+          # Both available answers race the merge, and the race is longer than it
+          # looks. commits/{sha}/pulls is served by an index populated some time
+          # after a squash merge lands, and pulls/{n}.merge_commit_sha holds a
+          # TEST merge commit while the pull request is open. This job starts on
+          # the push, three seconds after the merge; measured, both were still
+          # negative a hundred seconds later and both were correct by the time
+          # anyone looked.
           #
-          # commits/{sha}/pulls is served by an index that is not populated the
-          # instant a squash merge lands. And pulls/{n}.merge_commit_sha holds a
-          # TEST merge commit while the pull request is open, becoming the real
-          # one shortly after it is merged. This job runs on the push, seconds
-          # later, so at that moment both can still disagree with reality: the
-          # guard reported BYPASS for its own merge, seventeen seconds after it,
-          # while the API served the correct values a minute afterwards.
+          # So this distinguishes two different things that were previously one:
           #
-          # A guard that fires on every merge is a guard nobody reads, which
-          # would leave ADR-0016 with no compensating control at all while
-          # appearing to have one. So it waits instead of guessing.
-          arrived_by_pr() {
+          #   a commit with NO pull request number in its subject cannot acquire
+          #   one, and is a bypass now and for ever — reported immediately, and
+          #   fails the job;
+          #
+          #   a commit that names a pull request the API has not caught up with
+          #   yet is UNCONFIRMED, not proven innocent and not proven guilty. It
+          #   is reported as a warning and does not fail the job.
+          #
+          # Failing on the second would mean failing on every merge, and a guard
+          # that fires every time is a guard nobody reads — which would leave
+          # ADR-0016 with no compensating control at all while appearing to have
+          # one. Warning on it keeps the signal honest in both directions.
+          confirm() {  # sha subject -> 0 confirmed, 1 unconfirmed
             local sha="$1" subject="$2" attempt prs number merged_sha
-            for attempt in 1 2 3 4 5 6; do
+            number="$(printf '%s' "$subject" | sed -n 's/.*(#\([0-9][0-9]*\))$/\1/p')"
+            for attempt in 1 2 3 4 5 6 7 8; do
               prs="$(gh api "repos/$REPO/commits/$sha/pulls" \
                        -H "Accept: application/vnd.github+json" \
                        --jq '[.[] | select(.merged_at != null)] | length' 2>/dev/null || echo 0)"
-              if [ "${prs:-0}" -gt 0 ]; then
-                return 0
-              fi
+              [ "${prs:-0}" -gt 0 ] && return 0
 
-              # The number a squash merge writes into the subject. On its own it
-              # proves nothing — anyone can type "(#1)" into a commit message —
-              # so the pull request it names must ALSO be merged and its merge
-              # commit must be this commit.
-              number="$(printf '%s' "$subject" | sed -n 's/.*(#\([0-9][0-9]*\))$/\1/p')"
+              # The number alone proves nothing — anyone can type "(#1)" into a
+              # commit message — so the pull request it names must ALSO be merged
+              # and its merge commit must be this commit.
               if [ -n "$number" ]; then
                 merged_sha="$(gh api "repos/$REPO/pulls/$number" \
                                 -H "Accept: application/vnd.github+json" \
                                 --jq 'select(.merged_at != null) | .merge_commit_sha' 2>/dev/null || true)"
-                if [ "$merged_sha" = "$sha" ]; then
-                  return 0
-                fi
+                [ "$merged_sha" = "$sha" ] && return 0
               fi
 
-              # Only worth waiting if there is something that might yet resolve.
-              # A commit with no pull request number in its subject and no
-              # association will not grow one, so a real bypass is reported at
-              # once rather than after a minute of politeness.
-              if [ -z "$number" ]; then
-                return 1
+              if [ "$attempt" -lt 8 ]; then
+                sleep 15
               fi
-              [ "$attempt" -lt 6 ] && sleep 10
             done
             return 1
           }
 
           bypassed=0
+          unconfirmed=0
           for sha in $commits; do
             subject="$(git log -1 --format=%s "$sha")"
-            if arrived_by_pr "$sha" "$subject"; then
-              echo "  ok       $(git rev-parse --short "$sha")  $subject"
-            else
-              echo "  BYPASS   $(git rev-parse --short "$sha")  $subject"
+            short="$(git rev-parse --short "$sha")"
+
+            if ! printf '%s' "$subject" | grep -qE '\(#[0-9]+\)$'; then
+              # No pull request number at all. Nothing to wait for.
+              echo "  BYPASS       $short  $subject"
               bypassed=1
+              continue
+            fi
+
+            if confirm "$sha" "$subject"; then
+              echo "  ok           $short  $subject"
+            else
+              echo "  UNCONFIRMED  $short  $subject"
+              echo "               names a pull request the API has not yet associated;"
+              echo "               re-run this job to confirm, or check it by hand."
+              unconfirmed=1
             fi
           done
+
+          if [ "$unconfirmed" -ne 0 ]; then
+            echo
+            echo "::warning::A commit names a pull request that could not be confirmed"
+            echo "within the wait. This is usually the API lagging a squash merge."
+          fi
 
           if [ "$bypassed" -ne 0 ]; then
             echo
