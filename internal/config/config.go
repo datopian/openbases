@@ -275,3 +275,13 @@ func CloudflareAPIToken() string {
 func CloudflareAPITokenSource() string {
 	return CredentialSource("cf_api_token", "CLOUDFLARE_API_TOKEN")
 }
+
+// AIGatewayToken authorises a request through the AI Gateway.
+//
+// A systemd credential first, the environment second, on the same reasoning as
+// every other secret here. It matters more than most: without it a run does not
+// fail, it succeeds straight against the provider — untagged, unmetered and
+// outside every budget (ADR-0021, ADR-0022).
+func AIGatewayToken() string {
+	return credential("ai_gateway_token", "WG_AI_GATEWAY_TOKEN")
+}

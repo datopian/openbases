@@ -1,0 +1,40 @@
+# Managed by Ansible (ADR-0023).
+#
+# The rig's Dolt server, which holds the beads an agent reads and closes. It is a
+# database, not an agent: it costs no tokens, so there is no reason to start and
+# stop it around each dispatch the way the agents are.
+#
+# It used to be started by scripts/dispatch_bead.sh through `systemd-run --wait
+# --collect`, which tears down the unit's cgroup when the command returns — so
+# the server was killed a moment after it started, every time, and no bead could
+# be read. Type=forking is what that needed: `gt dolt start` forks a server and
+# exits, and systemd tracks the child.
+#
+# One unit per cell rather than a template instance. A template gets one %i, and
+# two different spellings of the cell are needed: the directory keeps the cell's
+# name and the Linux user replaces hyphens with underscores. Instantiating
+# wg-rig-dolt@client-nged gave User=wgcell_client-nged, which does not exist —
+# "Failed to determine user credentials: No such process", status 217/USER.
+[Unit]
+Description=Rig Dolt server for cell {{ cell.name }}
+Documentation=https://github.com/datopian/company-workgraph#adr-0023
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=wgcell_{{ cell.name | replace('-', '_') }}
+Group=wgcell_{{ cell.name | replace('-', '_') }}
+# Inside the cell's slice, so the WP-I3 CPU and memory limits cover the database
+# as well as the agents.
+Slice=wgcell-{{ cell.name }}.slice
+WorkingDirectory={{ cells_root }}/{{ cell.name }}/town
+Environment=HOME={{ cells_root }}/{{ cell.name }}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/gt dolt start
+ExecStop=/usr/local/bin/gt dolt stop
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
