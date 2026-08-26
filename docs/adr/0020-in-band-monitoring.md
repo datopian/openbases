@@ -117,9 +117,20 @@ different project, so nothing on the control node participates in noticing that
 the control node is gone.
 
 The naive version of this really is theatre, and it was measured rather than
-assumed. An unauthenticated request to the public hostname, following redirects
-as any health checker does, returns **HTTP 200** — from the Access login page.
-A check written that way passes with the machine switched off.
+assumed. Before the probe application existed, an unauthenticated request to the
+public hostname — following redirects as any health checker does — returned
+**HTTP 200**, from the Access login page. A check written that way passes with
+the machine switched off.
+
+Giving the path its own application closed that as a side effect: an anonymous
+request is now refused outright with 403 rather than redirected somewhere that
+answers 200. The acceptance test asserts only that an unauthenticated probe
+cannot report success, since either answer is fine and 200 is the one that is
+not.
+
+Verified on staging by stopping `control-api`: the probe reported HTTP 502 from
+outside the node, and cleared when the service came back. The scheduled workflow
+was run for real and reported `attempt 1: 200 ready`.
 
 What this does NOT close: the runner is a Hetzner VM, so a provider-wide outage
 takes the prober and the node together. Closing that needs a prober at a
