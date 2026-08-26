@@ -38,10 +38,17 @@ concurrency:
   group: shared-zones
   cancel-in-progress: false
 
+# Runs on Datopian's own runner rather than GitHub's hosted fleet, for the same
+# reason ci.yml does: a hosted runner is billed per minute, a busy month hits the
+# spending limit, and every hosted job then fails in about four seconds with
+# nothing useful in the log. This workflow was left behind when ci.yml moved, and
+# had been failing on every run since — silently, because a guard that always
+# fails stops being read.
+
 jobs:
   smoke:
     name: shared production zones still serving
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 

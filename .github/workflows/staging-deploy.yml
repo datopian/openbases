@@ -16,11 +16,18 @@ concurrency:
   group: staging-deploy
   cancel-in-progress: false
 
+# Runs on Datopian's own runner rather than GitHub's hosted fleet, for the same
+# reason ci.yml does: a hosted runner is billed per minute, a busy month hits the
+# spending limit, and every hosted job then fails in about four seconds with
+# nothing useful in the log. This workflow was left behind when ci.yml moved, and
+# had been failing on every run since — silently, because a guard that always
+# fails stops being read.
+
 jobs:
   deploy:
     name: deploy to staging
     if: vars.STAGING_PROVISIONED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     environment: staging
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +50,7 @@ jobs:
   not-provisioned:
     name: staging not provisioned
     if: vars.STAGING_PROVISIONED != 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: explain
         run: |

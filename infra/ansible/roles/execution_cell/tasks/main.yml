@@ -265,6 +265,57 @@
     # thing that kills it is not being limited by it.
     mode: "0755"
 
+# The runner, which replaces the Gas Town polecat lifecycle (ADR-0023).
+- name: Install the agent runner
+  ansible.builtin.copy:
+    src: "{{ runner_local_binary }}"
+    dest: "{{ runner_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: runner_local_binary | length > 0
+
+# Only cells that actually have a town. A cell without one has no graph to
+# serve, and starting a server there fails on every boot for a reason that has
+# nothing to do with the cell being unhealthy.
+- name: Find which cells have a town
+  ansible.builtin.stat:
+    path: "{{ cells_root }}/{{ item.name }}/town"
+  register: cell_towns
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install the rig Dolt unit for each cell with a town
+  ansible.builtin.template:
+    src: wg-rig-dolt.service.j2
+    dest: "/etc/systemd/system/wg-rig-dolt-{{ item.item.name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    cell: "{{ item.item }}"
+  loop: "{{ cell_towns.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.stat.exists
+  notify: Reload systemd
+
+# A database rather than an agent: it costs no tokens, so it stays up instead of
+# being started and stopped around each dispatch — which is what dispatch used to
+# attempt, and could not do, because the transient unit it used killed the server
+# as soon as the command returned.
+- name: Enable the rig Dolt server for each cell with a town
+  ansible.builtin.systemd_service:
+    name: "wg-rig-dolt-{{ item.item.name }}.service"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: "{{ cell_towns.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.stat.exists
+
 - name: Install the reaper timer units
   ansible.builtin.copy:
     dest: "/etc/systemd/system/{{ item.name }}"

@@ -23,6 +23,11 @@ agent_max_runtime_minutes: 45
 # the node: ./bin/linux-amd64/witness. A macOS binary from `make build` will
 # install without complaint and then fail to exec.
 witness_local_binary: ""
+
+# The agent runner (ADR-0023). Left empty, it is not deployed and a run without
+# a locally built binary changes nothing rather than removing a working one.
+runner_local_binary: ""
+runner_binary: /usr/local/bin/wg-runner
 witness_binary: /usr/local/bin/wg-witness
 # How often to look at the event channel. This is a readdir, not a model call,
 # so the interval is chosen for responsiveness rather than cost.
