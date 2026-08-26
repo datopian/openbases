@@ -665,6 +665,64 @@ resource "cloudflare_zero_trust_access_application" "cell_budget_check" {
   }]
 }
 
+# ---------------------------------------------------------------------------
+# The external probe (wg-vft)
+# ---------------------------------------------------------------------------
+#
+# WP-I1's monitor runs ON the control node and delivers alerts THROUGH the
+# database. That leaves one blind spot it cannot cover by construction: if the
+# node is down, or PostgreSQL is unreachable, there is nothing left to notice and
+# nothing to deliver with (ADR-0020 says so in as many words).
+#
+# The naive closure is theatre. A Cloudflare Health Check against the public
+# hostname is answered by the EDGE with an Access login redirect and never
+# reaches the origin, so it would report the node healthy with the machine
+# switched off.
+#
+# What actually works is an Access application admitting a service token on
+# /health/ready and nothing else, and a prober outside the node that presents
+# that token. /health/ready is the right endpoint rather than /health/live: it
+# pings the database, so it distinguishes "the node is up but broken" from "the
+# node is gone", and a probe that would pass through a database outage is not
+# worth running.
+resource "cloudflare_zero_trust_access_service_token" "probe" {
+  account_id = var.cloudflare_account_id
+  name       = "workgraph-${var.environment}-probe"
+  duration   = "8760h"
+}
+
+# Its own token, not the cells one.
+#
+# The cells token mints git credentials, writes to inboxes and asks about
+# budgets. A prober needs to read one health endpoint, and the whole point of
+# this credential living outside the node is that it also lives outside our
+# control — in a CI secret store. Giving that copy the cells token's powers
+# would trade a monitoring blind spot for a much worse exposure.
+resource "cloudflare_zero_trust_access_policy" "probe_service" {
+  account_id = var.cloudflare_account_id
+  name       = "workgraph-${var.environment}-probe"
+  decision   = "non_identity"
+
+  include = [{
+    service_token = {
+      token_id = cloudflare_zero_trust_access_service_token.probe.id
+    }
+  }]
+}
+
+resource "cloudflare_zero_trust_access_application" "health_probe" {
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-health-probe"
+  domain           = "${var.hostname}/health/ready"
+  type             = "self_hosted"
+  session_duration = "0s"
+
+  policies = [{
+    id         = cloudflare_zero_trust_access_policy.probe_service.id
+    precedence = 1
+  }]
+}
+
 resource "cloudflare_zero_trust_access_policy" "cells_service" {
   account_id = var.cloudflare_account_id
   name       = "workgraph-${var.environment}-cells-service"

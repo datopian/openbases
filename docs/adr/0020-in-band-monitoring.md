@@ -105,3 +105,22 @@ backup owner that differ, because full-cycle ownership must not be a single poin
 of failure. Satisfying those columns would have meant a migration silently
 inventing an owner for the platform. `attention_items.project_id` is nullable, so a
 platform alert simply has no project — which is the truth.
+
+## Addendum, 2026-08-26 (wg-vft)
+
+The blind spot named above now has something outside the node watching it.
+
+`.github/workflows/external-probe.yml` probes `/health/ready` every fifteen
+minutes, presenting a Cloudflare Access service token minted for that one path
+and nothing else. It runs on the CI runner, which is a different machine in a
+different project, so nothing on the control node participates in noticing that
+the control node is gone.
+
+The naive version of this really is theatre, and it was measured rather than
+assumed. An unauthenticated request to the public hostname, following redirects
+as any health checker does, returns **HTTP 200** — from the Access login page.
+A check written that way passes with the machine switched off.
+
+What this does NOT close: the runner is a Hetzner VM, so a provider-wide outage
+takes the prober and the node together. Closing that needs a prober at a
+different vendor, which is a procurement decision rather than a code change.

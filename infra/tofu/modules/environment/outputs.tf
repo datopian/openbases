@@ -84,3 +84,14 @@ output "cell_budget_check_aud" {
   description = "AUD of the Access application fronting the budget-check endpoint (wg-qw1)."
   value       = cloudflare_zero_trust_access_application.cell_budget_check.aud
 }
+
+output "probe_client_id" {
+  description = "Access service token id for the external health probe (wg-vft)."
+  value       = cloudflare_zero_trust_access_service_token.probe.client_id
+}
+
+output "probe_client_secret" {
+  description = "Access service token secret for the external health probe (wg-vft)."
+  value       = cloudflare_zero_trust_access_service_token.probe.client_secret
+  sensitive   = true
+}

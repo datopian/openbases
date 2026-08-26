@@ -1,0 +1,110 @@
+name: external-probe
+
+# The one failure WP-I1's monitor cannot report (wg-vft).
+#
+# wg-monitor runs ON the control node and delivers alerts THROUGH the database.
+# If the node is down or PostgreSQL is unreachable there is nothing left to
+# notice and nothing to deliver with — ADR-0020 states that blind spot rather
+# than hiding it. This is the thing outside the node that notices.
+#
+# It probes /health/ready, not /health/live. Readiness pings the database, so it
+# tells "the node is up and broken" apart from "the node is gone"; a probe that
+# would pass through a database outage is not worth running.
+#
+# And it presents an Access service token. A plain request to the public
+# hostname is answered by the Cloudflare EDGE with a login redirect and never
+# reaches the origin, so it would report 200 with the machine switched off — the
+# naive version of this check is theatre.
+
+on:
+  schedule:
+    # Every fifteen minutes, matching the recovery-point cadence the rest of the
+    # platform is built around. Tighter would mean more notifications during one
+    # outage without shortening it.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: the control node answers from outside itself
+    # Self-hosted, like everything else here: a hosted runner cannot start once
+    # the Actions spending limit is reached, and a prober that silently stops is
+    # worse than no prober.
+    #
+    # It is a different machine in a different Hetzner project, so it satisfies
+    # "nothing on the node participates". It is not a different PROVIDER, and a
+    # Hetzner-wide outage would take both. That residual gap is stated here
+    # rather than left to be discovered: closing it needs a prober somewhere
+    # else entirely, which is a vendor decision rather than a code change.
+    runs-on: self-hosted
+    steps:
+      - name: probe /health/ready through Access
+        env:
+          HOSTNAME: ${{ vars.WG_STAGING_HOSTNAME || 'work-staging.openbases.com' }}
+          CLIENT_ID: ${{ secrets.PROBE_ACCESS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.PROBE_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${CLIENT_ID:-}" ] || [ -z "${CLIENT_SECRET:-}" ]; then
+            # Refused rather than skipped. A probe that quietly does nothing
+            # because a secret is missing is indistinguishable from a probe that
+            # is passing, which is the failure mode this whole job exists to
+            # avoid.
+            echo "::error::PROBE_ACCESS_CLIENT_ID / PROBE_ACCESS_CLIENT_SECRET are not set."
+            echo "Set them from the OpenTofu outputs:"
+            echo "  scripts/with_secrets.sh staging scripts/tofu.sh staging output -raw probe_client_id"
+            echo "  scripts/with_secrets.sh staging scripts/tofu.sh staging output -raw probe_client_secret"
+            exit 1
+          fi
+
+          url="https://${HOSTNAME}/health/ready"
+
+          # Three attempts. One failed request is a network blip somewhere
+          # between here and the edge; three over ninety seconds is the node.
+          # Retrying is not softening the check — an alert that fires on a
+          # single dropped packet gets muted, and then the real outage is
+          # invisible too.
+          for attempt in 1 2 3; do
+            body="$(mktemp)"
+            code="$(curl -sS -o "$body" -w '%{http_code}' --max-time 20 \
+                      -H "CF-Access-Client-Id: ${CLIENT_ID}" \
+                      -H "CF-Access-Client-Secret: ${CLIENT_SECRET}" \
+                      "$url" 2>"$body.err" || echo 000)"
+
+            if [ "$code" = "200" ] && grep -q '"status":"ready"' "$body"; then
+              echo "attempt ${attempt}: 200 ready"
+              exit 0
+            fi
+
+            echo "attempt ${attempt}: HTTP ${code}"
+            head -c 400 "$body" 2>/dev/null; echo
+            head -c 200 "$body.err" 2>/dev/null; echo
+
+            # A redirect means Access did not accept the token and answered at
+            # the edge, so the origin was never reached. Said explicitly,
+            # because it looks like a server problem and is a credential one.
+            case "$code" in
+              301|302|303|307|308)
+                echo "::warning::Access answered with a redirect, so the request never reached the node."
+                echo "The service token is wrong, expired, or not admitted on this path."
+                ;;
+              503)
+                echo "::warning::The node answered but is NOT ready — usually PostgreSQL unreachable."
+                ;;
+            esac
+
+            [ "$attempt" -lt 3 ] && sleep 30
+          done
+
+          echo "::error::${url} did not answer 200/ready in three attempts over ninety seconds."
+          echo
+          echo "This check runs outside the control node on purpose: it is the only"
+          echo "thing that can report the node being gone, because wg-monitor runs on"
+          echo "the node and delivers through the database (ADR-0020, wg-vft)."
+          echo
+          echo "Runbook: docs/runbooks/api-unavailable.md"
+          exit 1
