@@ -361,6 +361,18 @@
     group: root
     mode: "0755"
 
+# The per-dispatch half of the same idea. role, cell and rig are properties of
+# the cell and are written above at deploy time; the bead is a property of one
+# dispatch, so scripts/dispatch_bead.sh writes it immediately before slinging
+# and clears it in the teardown (wg-qw1).
+- name: Install the per-dispatch bead tagger
+  ansible.builtin.copy:
+    src: wg-tag-bead
+    dest: /usr/local/bin/wg-tag-bead
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Tag each agent role's requests with its identity
   ansible.builtin.command:
     argv:

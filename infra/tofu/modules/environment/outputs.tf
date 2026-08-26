@@ -79,3 +79,8 @@ output "cell_agent_health_aud" {
   description = "AUD of the Access application fronting the agent-health endpoint (ADR-0019)."
   value       = cloudflare_zero_trust_access_application.cell_agent_health.aud
 }
+
+output "cell_budget_check_aud" {
+  description = "AUD of the Access application fronting the budget-check endpoint (wg-qw1)."
+  value       = cloudflare_zero_trust_access_application.cell_budget_check.aud
+}

@@ -48,6 +48,11 @@ OWNER_ONLY = {
         "asserts the approval triggers — self-approval, digest binding, "
         "one-vote-per-approver, append-only decisions. It reads `projects` "
         "only to resolve a fixture id; no assertion concerns visibility.",
+    "budgets.sql":
+        "asserts budget resolution and summation through SECURITY DEFINER "
+        "functions that run WITHOUT a user by design, and reads back what they "
+        "wrote. usage_records visibility IS covered, under a real non-superuser "
+        "role, by test/acceptance/cost_import.sh.",
     "execution_registry.sql":
         "asserts the deploy-time registration functions and that attribution "
         "refuses to guess when a cell hosts two projects. Every write goes "

@@ -184,6 +184,12 @@ jobs:
       - name: execution nodes and cells register, and attribution refuses to guess
         run: psql -v ON_ERROR_STOP=1 -f test/integration/execution_registry.sql
 
+      # Budget resolution and summation: the most specific budget wins, and
+      # spend is summed at that same level. If those two ever disagree, ten
+      # beads can each spend the project's whole budget and nothing trips.
+      - name: per-bead budgets resolve and sum at the same level
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/budgets.sql
+
       # The cost importer, end to end against a stub gateway: paging, the
       # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
       # the real binary rather than SQL alone, because the decisions being

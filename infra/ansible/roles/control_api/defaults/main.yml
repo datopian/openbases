@@ -14,6 +14,15 @@ control_api_user: workgraph
 control_api_local_binary: ""
 
 control_api_binary: /usr/local/bin/workgraph-control-api
+
+# wg-budget, the operator's side of per-bead budgets (wg-qw1). It lives here
+# rather than in a role of its own because it needs exactly this role's identity
+# and database access: the same DSN, the same credential, one more binary.
+#
+# The dispatcher on an execution node does NOT use it. It asks the control API,
+# which has the same answer and no database credential to hand out.
+budget_local_binary: ""
+budget_binary: /usr/local/bin/wg-budget
 control_api_reconcile_binary: /usr/local/bin/workgraph-reconcile
 # The App private key on the control node. Deployed only when a local source is
 # given; reconciliation's resync half is skipped without it, while replay still

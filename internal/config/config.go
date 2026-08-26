@@ -61,6 +61,15 @@ type ControlAPI struct {
 	// own audience keeps a token minted for one from working on the other.
 	CellHealthAccessAudience string
 
+	// CellBudgetAccessAudience is the AUD of the Access application that fronts
+	// the budget-check endpoint (wg-qw1).
+	//
+	// A third value, for the same reason there is a second. This one only reads
+	// — it answers "may this bead be dispatched" — which is a smaller power than
+	// either of the others, and giving it its own audience is what keeps it
+	// smaller. A token minted for the budget check cannot mint a git credential.
+	CellBudgetAccessAudience string
+
 	// GitHubWebhookSecret authenticates inbound webhooks. GitHub cannot pass a
 	// Cloudflare Access challenge, so this shared secret is the only thing
 	// standing between the endpoint and anyone who learns its URL.
@@ -105,6 +114,7 @@ func LoadControlAPI() (ControlAPI, error) {
 
 		CellAccessAudience:       os.Getenv("WG_CELL_ACCESS_AUD"),
 		CellHealthAccessAudience: os.Getenv("WG_CELL_HEALTH_ACCESS_AUD"),
+		CellBudgetAccessAudience: os.Getenv("WG_CELL_BUDGET_ACCESS_AUD"),
 
 		GitHubWebhookSecret:         credential("github_webhook_secret", "WG_GITHUB_WEBHOOK_SECRET"),
 		GitHubWebhookSecretPrevious: credential("github_webhook_secret_previous", "WG_GITHUB_WEBHOOK_SECRET_PREVIOUS"),

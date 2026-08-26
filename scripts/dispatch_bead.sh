@@ -17,7 +17,7 @@
 # Run ON the execution node as root.
 set -uo pipefail
 
-BEAD="${1:?usage: dispatch_bead.sh <bead-id> [rig] [timeout-seconds]}"
+BEAD="${1:?usage: dispatch_bead.sh <bead-id> [rig] [timeout-seconds] [--no-budget-check]}"
 RIG="${2:-sandbox}"
 DEADLINE="${3:-900}"
 CELL_DEFAULT_NAME="oss"
@@ -59,6 +59,10 @@ fi
 
 teardown() {
   echo "  tearing down..."
+  # Untag first, while the town is still up and the files are still there. A
+  # bead left in cf-aig-metadata would attribute the NEXT dispatch's spend to
+  # this bead, and the budget that then trips would be the wrong one.
+  run "wg-tag-bead $RIG --clear 2>&1 | tail -1" || true
   run "gt down >/dev/null 2>&1"
   sleep 3
   pkill -u wgcell_oss -f claude 2>/dev/null
@@ -67,6 +71,64 @@ teardown() {
   echo "  agents still running: $(pgrep -u wgcell_oss -c -f claude 2>/dev/null || echo 0)"
 }
 trap teardown EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Budget: ask before spending, not after (wg-qw1)
+# ---------------------------------------------------------------------------
+#
+# The control plane answers, not this script. The spend it compares against
+# lives in the control database, and giving an execution node a database
+# credential to read it would be a much larger grant than the question deserves.
+# The cell already holds an Access service token; this uses it on a third narrow
+# application that only answers this one question.
+#
+# --no-budget-check exists and is deliberately awkward to type. There are real
+# reasons to override — the importer is down, or the work is an incident
+# response — and an override that has to be argued for in the moment gets
+# replaced by commenting out the check.
+BUDGET_CHECK="${WG_BUDGET_CHECK:-1}"
+[ "${4:-}" = "--no-budget-check" ] && BUDGET_CHECK=0
+
+if [ "$BUDGET_CHECK" = 1 ]; then
+  CREDS="$CELL/.credentials/control-api.env"
+  if [ -r "$CREDS" ]; then
+    # shellcheck disable=SC1090
+    . "$CREDS"
+    budget_json="$(curl -fsS --max-time 20 \
+      -H "CF-Access-Client-Id: ${WG_ACCESS_CLIENT_ID:-}" \
+      -H "CF-Access-Client-Secret: ${WG_ACCESS_CLIENT_SECRET:-}" \
+      "${WG_CONTROL_API:-}/v1/budget/check?bead=${BEAD}&cell=${CELL_NAME}" 2>&1)" || budget_json=""
+
+    if [ -z "$budget_json" ]; then
+      # Reaching the control plane is part of being allowed to spend. Failing
+      # open here would mean the budget silently stops existing exactly when
+      # the platform is unwell, which is the least convenient moment to
+      # discover that it had.
+      echo "!! the budget check could not be reached; refusing to dispatch $BEAD"
+      echo "!! override with: $0 $BEAD $RIG $DEADLINE --no-budget-check"
+      exit 1
+    fi
+
+    allow="$(printf '%s' "$budget_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("allow"))' 2>/dev/null || echo "")"
+    reason="$(printf '%s' "$budget_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason",""))' 2>/dev/null || echo "")"
+    warning="$(printf '%s' "$budget_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("warning",""))' 2>/dev/null || echo "")"
+
+    [ -n "$warning" ] && echo "!! $warning"
+    if [ "$allow" != "True" ]; then
+      echo "!! REFUSED: $reason"
+      echo "!! raise it with: wg-budget set bead $BEAD <cents>   (on the control node)"
+      echo "!! or override:   $0 $BEAD $RIG $DEADLINE --no-budget-check"
+      exit 1
+    fi
+    echo "  budget: $reason"
+  else
+    echo "!! no control-api credentials at $CREDS; the budget cannot be checked"
+    echo "!! override with: $0 $BEAD $RIG $DEADLINE --no-budget-check"
+    exit 1
+  fi
+else
+  echo "!! budget check SKIPPED for $BEAD"
+fi
 
 echo "Dispatching $BEAD to $RIG (deadline ${DEADLINE}s)"
 
@@ -77,6 +139,12 @@ for _ in $(seq 1 12); do
 done
 run "gt daemon start >/dev/null 2>&1"
 sleep 8
+
+# Tag every agent in the rig with this bead, so the spend it makes carries the
+# bead into the gateway log and out again through the importer. Without this,
+# usage_records knows the cell and the role and not the piece of work, and a
+# per-bead budget has nothing to compare against.
+echo "  $(run "wg-tag-bead $RIG $BEAD 2>&1 | tail -1")"
 
 run "gt sling respawn-reset $BEAD >/dev/null 2>&1"
 slung=$(run "gt sling $BEAD $RIG 2>&1 | tail -2")
