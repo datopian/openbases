@@ -41,3 +41,12 @@ output "cell_agent_health_aud" {
 output "cell_budget_check_aud" {
   value = module.environment.cell_budget_check_aud
 }
+
+output "probe_client_id" {
+  value = module.environment.probe_client_id
+}
+
+output "probe_client_secret" {
+  value     = module.environment.probe_client_secret
+  sensitive = true
+}
