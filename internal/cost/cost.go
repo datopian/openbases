@@ -55,7 +55,13 @@ type Record struct {
 	Role      string
 	Cell      string
 	Rig       string
-	Occurred  time.Time
+	// Bead is the piece of work the request was made for, where the dispatcher
+	// tagged it. Written into cf-aig-metadata at sling time rather than at
+	// deploy time, because a role belongs to a cell and a bead belongs to one
+	// dispatch (wg-qw1). Empty for anything not dispatched through
+	// scripts/dispatch_bead.sh, which is all historical traffic.
+	Bead     string
+	Occurred time.Time
 }
 
 // ErrSkip reports an entry that is deliberately not recorded.
@@ -80,7 +86,7 @@ func FromEntry(e Entry, gateway string) (Record, error) {
 		return Record{}, fmt.Errorf("entry %s has an unparseable created_at %q: %w", e.ID, e.CreatedAt, err)
 	}
 
-	role, cell, rig := attribution(e.Metadata)
+	role, cell, rig, bead := attribution(e.Metadata)
 
 	return Record{
 		ExternalID: e.ID,
@@ -103,6 +109,7 @@ func FromEntry(e Entry, gateway string) (Record, error) {
 		Role:      role,
 		Cell:      cell,
 		Rig:       rig,
+		Bead:      bead,
 		Occurred:  occurred,
 	}, nil
 }
@@ -119,15 +126,15 @@ func centsOf(dollars float64) string {
 	return cents.Text('f', 8)
 }
 
-// attribution reads role, cell and rig out of cf-aig-metadata.
+// attribution reads role, cell, rig and bead out of cf-aig-metadata.
 //
 // Everything is optional and stays empty when absent. Most historical traffic
 // carries no metadata at all — 98.3% of it, measured on the staging oss gateway
 // — and an empty value that means "we do not know" is worth more than a default
 // that quietly attributes the spend to somebody.
-func attribution(md map[string]any) (role, cell, rig string) {
+func attribution(md map[string]any) (role, cell, rig, bead string) {
 	if md == nil {
-		return "", "", ""
+		return "", "", "", ""
 	}
 	get := func(k string) string {
 		v, ok := md[k]
@@ -142,5 +149,5 @@ func attribution(md map[string]any) (role, cell, rig string) {
 		}
 		return strings.TrimSpace(s)
 	}
-	return get("role"), get("cell"), get("rig")
+	return get("role"), get("cell"), get("rig"), get("bead")
 }

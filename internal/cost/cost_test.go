@@ -55,13 +55,18 @@ func TestManySmallCostsSumToSomething(t *testing.T) {
 func TestAttribution(t *testing.T) {
 	r, err := FromEntry(Entry{
 		ID: "a", CreatedAt: "2026-08-17T07:45:36Z",
-		Metadata: map[string]any{"role": "polecat", "cell": "oss", "rig": "sandbox"},
+		Metadata: map[string]any{"role": "polecat", "cell": "oss", "rig": "sandbox", "bead": "wg-qw1"},
 	}, "g")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Role != "polecat" || r.Cell != "oss" || r.Rig != "sandbox" {
 		t.Fatalf("attribution lost: %+v", r)
+	}
+	// The bead is what makes a per-bead budget possible at all: without it the
+	// spend knows the cell and the role and not the piece of work (wg-qw1).
+	if r.Bead != "wg-qw1" {
+		t.Fatalf("the bead tag was dropped: %+v", r)
 	}
 
 	// Untagged must stay empty rather than acquiring a default. Most historical
@@ -71,7 +76,7 @@ func TestAttribution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Role != "" || r.Cell != "" || r.Rig != "" {
+	if r.Role != "" || r.Cell != "" || r.Rig != "" || r.Bead != "" {
 		t.Fatalf("an untagged entry acquired attribution: %+v", r)
 	}
 }
@@ -79,6 +84,26 @@ func TestAttribution(t *testing.T) {
 // Cached and failed requests are recorded, not dropped. A cached hit is the
 // evidence the cache is working; a failed request often cost money before it
 // failed, which is exactly the spend worth finding.
+// Most traffic carries role, cell and rig but no bead: those three are written
+// into every agent's settings at deploy time, and the bead only appears on work
+// dispatched through scripts/dispatch_bead.sh. An entry missing it must keep the
+// attribution it does have rather than being treated as untagged.
+func TestAnEntryWithNoBeadKeepsItsOtherAttribution(t *testing.T) {
+	r, err := FromEntry(Entry{
+		ID: "no-bead", CreatedAt: "2026-08-17T07:45:36Z",
+		Metadata: map[string]any{"role": "mayor", "cell": "oss"},
+	}, "g")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Role != "mayor" || r.Cell != "oss" {
+		t.Fatalf("attribution lost when the bead was absent: %+v", r)
+	}
+	if r.Bead != "" {
+		t.Fatalf("a bead was invented: %q", r.Bead)
+	}
+}
+
 func TestCachedAndFailedAreRecorded(t *testing.T) {
 	for _, tc := range []struct {
 		name string

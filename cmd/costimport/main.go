@@ -179,9 +179,10 @@ func importOne(ctx context.Context, db *sql.DB, g gatewayClient, name string, ov
 			continue
 		}
 		var isNew bool
-		if wErr := db.QueryRowContext(ctx, `SELECT system_record_usage($1,$2,$3,$4,$5,$6,$7::numeric,$8,$9,$10,$11,$12,$13)`,
+		if wErr := db.QueryRowContext(ctx, `SELECT system_record_usage($1,$2,$3,$4,$5,$6,$7::numeric,$8,$9,$10,$11,$12,$13,$14)`,
 			r.ExternalID, r.Gateway, r.Provider, r.Model, r.InputTok, r.OutputTok,
-			r.CostCents, r.Cached, r.Succeeded, nullable(r.Role), nullable(r.Cell), nullable(r.Rig), r.Occurred,
+			r.CostCents, r.Cached, r.Succeeded, nullable(r.Role), nullable(r.Cell), nullable(r.Rig),
+			r.Occurred, nullable(r.Bead),
 		).Scan(&isNew); wErr != nil {
 			return s, fmt.Errorf("writing entry %s: %w", r.ExternalID, wErr)
 		}
