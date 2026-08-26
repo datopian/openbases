@@ -67,6 +67,43 @@ monitor_disk_percent: 85
 monitor_webhook_backlog_age: 45m
 monitor_agent_health_silence: 30m
 
+# The units that must be running (wg-95y).
+#
+# DECLARED rather than discovered, like the backup streams: a check that reports
+# on the units it can find treats one that has vanished entirely as nothing to
+# say, and vanishing entirely is a failure.
+#
+# workgraph-worker is why this exists. Event freshness depends on it, and when it
+# dies the reconcile timer still drains the backlog every fifteen minutes — so
+# deliveries keep being processed, the webhook check stays green because the
+# backlog never gets old enough to trip it, and freshness silently returns to its
+# old p50 of 459s against a 60s target.
+#
+# wg-monitor.timer is in the list on purpose. If it is not running, nothing here
+# runs at all — including this check — so the alert cannot fire from the node. It
+# is listed anyway because a pass that ran late still reports it, and because the
+# absence of any monitor output is then a documented signal rather than a
+# puzzle.
+monitor_services: >-
+  control-api.service,workgraph-worker.service,workgraph-reconcile.timer,
+  postgresql.service,wg-monitor.timer,wg-backup-postgres.timer,wg-backup-beads.timer
+  {{ ',wg-costimport.timer' if (costimport_cf_token | default('') | length > 0) else '' }}
+
+# The AI Gateways whose import must stay fresh (wg-7jz).
+#
+# Derived from the same prefix wg-costimport uses, so the two cannot disagree
+# about which gateways exist.
+#
+# Empty when the importer is not configured: a permanently red alert for a thing
+# that is deliberately switched off is how the whole channel gets muted.
+monitor_gateways: >-
+  {{ (costimport_gateways | default(''))
+     if (costimport_cf_token | default('') | length > 0) else '' }}
+
+# Three hourly import periods. One missed run is normal; three consecutive
+# misses means it is not running.
+monitor_cost_import_max_age: 3h
+
 # How many execution cells should be reporting agent health.
 #
 # Zero means none is expected, and silence is then correct rather than an alert —

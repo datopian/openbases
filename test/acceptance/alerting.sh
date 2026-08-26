@@ -10,13 +10,15 @@
 # the real staging database: an acceptance test that writes into people's real
 # inboxes is one that gets run once.
 #
-# The five inductions:
+# The seven inductions:
 #
 #   api          point the health probe at a closed port
+#   service      declare a unit that does not exist
 #   webhook      insert a delivery that has been unprocessed for two hours
 #   agent stall  claim a cell is deployed and let the silence threshold expire
 #   disk         set the threshold below the filesystem's real usage
 #   backup       point the receipt directory at one with no receipts
+#   cost import  declare a gateway that has never been imported
 #
 # Two of those are threshold moves rather than physically inducing the condition.
 # Filling a real disk on a live node to test an alert would risk the outage the
@@ -105,14 +107,17 @@ runbook_of() {
 }
 
 # ---------------------------------------------------------------------------
-# 1..5: induce each failure and require the matching alert to be delivered.
+# 1..7: induce each failure and require the matching alert to be delivered.
 # ---------------------------------------------------------------------------
 
 # Baseline the healthy conditions so each case changes exactly one thing.
 date -u +%Y-%m-%dT%H:%M:%SZ > "$RECEIPTS/beads.receipt"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$RECEIPTS/postgres.receipt"
+# A unit that certainly IS running, so the service check is green in the
+# baseline. init is the one unit every Linux system has.
 HEALTHY=(-receipts "$RECEIPTS" -backup-streams "beads:24h,postgres:24h"
          -disk-percent 100 -expect-cells 0
+         -services "init.scope" -gateways ""
          -health-url "http://127.0.0.1:8080/health/ready")
 
 echo "1. API unavailable"
@@ -123,7 +128,16 @@ n=$(alerted api)
 if [ "$n" = "$admins" ]; then ok "delivered to $n inbox(es), runbook $(runbook_of api)"
 else bad "expected $admins alert(s), found $n"; note "$OUT"; fi
 
-echo "2. Webhook backlog"
+echo "2. A declared service is not running"
+# A unit that does not exist rather than stopping a real one: the acceptance
+# test must not take the platform down to prove it would notice. systemd reports
+# an unknown unit as inactive, which is the same answer and the same code path.
+run "${HEALTHY[@]}" -services "init.scope,wg-acceptance-absent.service"
+n=$(alerted service)
+if [ "$n" = "$admins" ]; then ok "delivered to $n inbox(es), runbook $(runbook_of service)"
+else bad "expected $admins alert(s), found $n"; note "$OUT"; fi
+
+echo "3. Webhook backlog"
 "${PSQL_SUPER[@]}" -d "$DB" -c "
   INSERT INTO github_deliveries (delivery_id, event_type, received_at, processed_at, payload)
   VALUES ('acceptance-stuck', 'push', now() - interval '2 hours', NULL, '{}'::jsonb)" >/dev/null
@@ -132,22 +146,33 @@ n=$(alerted webhook)
 if [ "$n" = "$admins" ]; then ok "delivered to $n inbox(es), runbook $(runbook_of webhook)"
 else bad "expected $admins alert(s), found $n"; note "$OUT"; fi
 
-echo "3. Agent stall (the witness has gone quiet)"
+echo "4. Agent stall (the witness has gone quiet)"
 run "${HEALTHY[@]}" -expect-cells 1 -agent-health-silence 1s
 n=$(alerted agent_stall)
 if [ "$n" = "$admins" ]; then ok "delivered to $n inbox(es), runbook $(runbook_of agent_stall)"
 else bad "expected $admins alert(s), found $n"; note "$OUT"; fi
 
-echo "4. Disk pressure"
+echo "5. Disk pressure"
 run "${HEALTHY[@]}" -disk-percent 1
 n=$(alerted disk)
 if [ "$n" = "$admins" ]; then ok "delivered to $n inbox(es), runbook $(runbook_of disk)"
 else bad "expected $admins alert(s), found $n"; note "$OUT"; fi
 
-echo "5. Backup stale"
+echo "6. Backup stale"
 run "${HEALTHY[@]}" -receipts "$EMPTY_RECEIPTS"
 n=$(alerted backup)
 if [ "$n" = "$admins" ]; then ok "delivered to $n inbox(es), runbook $(runbook_of backup)"
+else bad "expected $admins alert(s), found $n"; note "$OUT"; fi
+
+echo "7. Spend is no longer being imported"
+# A gateway that has never been imported, which is the state a fresh install and
+# a stopped importer share. Keyed off the last RUN and not the newest usage
+# record: a gateway nobody has used has an old record however punctually the
+# importer ran, so measuring the record would alert loudest on the quietest
+# system — the mistake 0033 had to undo for the budget check.
+run "${HEALTHY[@]}" -gateways "wg-acceptance-never-imported"
+n=$(alerted cost_import)
+if [ "$n" = "$admins" ]; then ok "delivered to $n inbox(es), runbook $(runbook_of cost_import)"
 else bad "expected $admins alert(s), found $n"; note "$OUT"; fi
 echo
 
@@ -156,12 +181,17 @@ echo
 # ---------------------------------------------------------------------------
 echo "Alert quality"
 
-# Each class alerted on its OWN rule. Five checks that all raise one rule would
-# have passed every assertion above.
+# Each class alerted on its OWN rule. Checks that all raise one rule would have
+# passed every assertion above.
+#
+# The expected count is derived from the inductions rather than written as a
+# literal. The literal said five while seven classes existed, so adding a class
+# left this assertion failing for a reason unrelated to the class that was added.
+CLASSES=$(grep -cE '^echo "[0-9]+\. ' "$0")
 rules=$("${PSQL_SUPER[@]}" -d "$DB" -tAc \
   "SELECT count(DISTINCT rule) FROM attention_items WHERE dedupe_key LIKE 'monitor:%'")
-if [ "$rules" = "5" ]; then ok "five distinct rules, one per class"
-else bad "expected 5 distinct rules, found $rules"; fi
+if [ "$rules" = "$CLASSES" ]; then ok "$rules distinct rules, one per induction"
+else bad "expected $CLASSES distinct rules, found $rules"; fi
 
 # Every runbook the operator was handed must exist in the repository. A link to a
 # missing file satisfies the code and fails the person reading it at 3am.

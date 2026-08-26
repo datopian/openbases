@@ -183,8 +183,23 @@ func TestClassesAreDistinct(t *testing.T) {
 			t.Errorf("class %s scores %v, outside the 0..1 scale the other inbox rules use", c.Name, c.Score)
 		}
 	}
-	if len(Classes) != 5 {
-		t.Errorf("got %d classes, want the 5 the work package requires", len(Classes))
+	// The five WP-I1 required, plus service (wg-95y) and cost_import (wg-7jz),
+	// which cover failures found by running the platform rather than planning
+	// it. Asserted as a count so that adding one is a deliberate edit here
+	// rather than something that slips in.
+	if len(Classes) != 7 {
+		t.Errorf("got %d classes, want 7", len(Classes))
+	}
+	for _, required := range []string{"api", "webhook", "agent_stall", "disk", "backup", "service", "cost_import"} {
+		found := false
+		for _, c := range Classes {
+			if c.Name == required {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("class %q is missing", required)
+		}
 	}
 }
 
@@ -227,5 +242,133 @@ func repoRoot(t *testing.T) string {
 			t.Fatal("could not find the repository root")
 		}
 		dir = parent
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Service liveness (wg-95y)
+// ---------------------------------------------------------------------------
+
+// The failure this class exists for: the worker dies, reconciliation keeps
+// draining the backlog, every downstream signal stays green, and freshness
+// silently degrades. Only asking about the unit catches it.
+func TestADeadWorkerIsReportedEvenWhenNothingElseLooksWrong(t *testing.T) {
+	f := EvaluateServices([]ServiceState{
+		{Name: "control-api.service", Active: true, Detail: "active"},
+		{Name: "workgraph-worker.service", Active: false, Detail: "failed"},
+		{Name: "wg-monitor.timer", Active: true, Detail: "active"},
+	})
+	if !f.Failing {
+		t.Fatal("a dead worker was reported as healthy")
+	}
+	if !strings.Contains(f.Summary, "workgraph-worker.service") {
+		t.Errorf("the summary must name the unit, or an operator looks at the wrong one: %s", f.Summary)
+	}
+	if !strings.Contains(f.Summary, "failed") {
+		t.Errorf("systemd's own word distinguishes crashed from never started: %s", f.Summary)
+	}
+}
+
+func TestAllServicesRunningPasses(t *testing.T) {
+	f := EvaluateServices([]ServiceState{
+		{Name: "control-api.service", Active: true, Detail: "active"},
+		{Name: "workgraph-worker.service", Active: true, Detail: "active"},
+	})
+	if f.Failing {
+		t.Fatalf("healthy services reported as failing: %s", f.Summary)
+	}
+}
+
+// Consistent with the backup check: nothing declared means nothing is watched,
+// and reporting that as healthy is how a broken check becomes invisible.
+func TestNoDeclaredServiceIsAFailure(t *testing.T) {
+	if f := EvaluateServices(nil); !f.Failing {
+		t.Fatal("an empty service list passed, so nothing is being watched and nothing says so")
+	}
+}
+
+// A unit systemd does not know about is not running. "unknown" is reported
+// rather than an empty string, because a blank in an inbox item is not an answer.
+func TestAnAbsentUnitIsDownAndSaysSo(t *testing.T) {
+	f := EvaluateServices([]ServiceState{{Name: "wg-ghost.service", Active: false}})
+	if !f.Failing {
+		t.Fatal("a unit that does not exist was treated as running")
+	}
+	if !strings.Contains(f.Summary, "unknown") {
+		t.Errorf("expected the state to read as unknown: %s", f.Summary)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cost import freshness (wg-7jz)
+// ---------------------------------------------------------------------------
+
+func importThresholds() Thresholds {
+	t := DefaultThresholds()
+	t.CostImportMaxAge = 3 * time.Hour
+	return t
+}
+
+// The distinction this check turns on: a QUIET gateway is not a STOPPED
+// importer. Measuring the newest usage record instead alerts loudest on the
+// most idle environment, which is what made the budget check refuse every
+// dispatch on staging while the importer ran perfectly.
+func TestAQuietGatewayIsNotAStoppedImporter(t *testing.T) {
+	now := time.Now()
+	f := EvaluateCostImport([]GatewayImport{
+		{Name: "workgraph-staging-oss", Last: now.Add(-10 * time.Minute), Complete: true},
+		// Imported minutes ago; its newest usage record is a week old because
+		// nobody has used it. That must not be an alert.
+		{Name: "workgraph-staging-client", Last: now.Add(-12 * time.Minute), Complete: true},
+	}, now, importThresholds())
+	if f.Failing {
+		t.Fatalf("a quiet but freshly imported gateway was reported as stale: %s", f.Summary)
+	}
+}
+
+func TestAStoppedImporterIsReported(t *testing.T) {
+	now := time.Now()
+	f := EvaluateCostImport([]GatewayImport{
+		{Name: "workgraph-staging-oss", Last: now.Add(-9 * time.Hour), Complete: true},
+	}, now, importThresholds())
+	if !f.Failing {
+		t.Fatal("a nine-hour-old import passed a three-hour threshold")
+	}
+	if !strings.Contains(f.Summary, "workgraph-staging-oss") {
+		t.Errorf("the summary must name the gateway: %s", f.Summary)
+	}
+}
+
+func TestAGatewayNeverImportedIsReported(t *testing.T) {
+	now := time.Now()
+	f := EvaluateCostImport([]GatewayImport{
+		{Name: "workgraph-staging-internal"},
+	}, now, importThresholds())
+	if !f.Failing {
+		t.Fatal("a gateway that has never been imported passed")
+	}
+	if !strings.Contains(f.Summary, "never") {
+		t.Errorf("never-imported and stale are different states: %s", f.Summary)
+	}
+}
+
+// Running but not caught up. Fresh by age and still wrong to trust, because a
+// budget decision resting on a partial read is resting on the wrong number.
+func TestAnIncompleteImportIsReportedEvenThoughItIsRecent(t *testing.T) {
+	now := time.Now()
+	f := EvaluateCostImport([]GatewayImport{
+		{Name: "workgraph-staging-oss", Last: now.Add(-2 * time.Minute), Complete: false},
+	}, now, importThresholds())
+	if !f.Failing {
+		t.Fatal("an import that had not caught up was reported as healthy")
+	}
+	if !strings.Contains(f.Summary, "caught up") {
+		t.Errorf("the summary should distinguish incomplete from stale: %s", f.Summary)
+	}
+}
+
+func TestNoImportRecordedAtAllIsAFailure(t *testing.T) {
+	if f := EvaluateCostImport(nil, time.Now(), importThresholds()); !f.Failing {
+		t.Fatal("no import record at all was treated as healthy")
 	}
 }

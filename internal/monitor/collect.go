@@ -3,9 +3,11 @@ package monitor
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -26,6 +28,10 @@ type Collector struct {
 	ReceiptDir  string
 	Streams     []BackupStream
 	ExpectCells int
+	// Services are the systemd units that must be running (wg-95y).
+	Services []string
+	// Gateways are the AI Gateways whose import must be fresh (wg-7jz).
+	Gateways []string
 }
 
 // ProbeAPI asks the control API whether it can serve traffic.
@@ -151,6 +157,11 @@ func (c Collector) ReadBackupReceipts() []BackupStream {
 func (c Collector) Run(ctx context.Context, now time.Time, t Thresholds) []Finding {
 	findings := []Finding{EvaluateAPI(c.ProbeAPI(ctx))}
 
+	// Needs no database, so it runs in both paths and is the one check that
+	// still works when everything else is ungatherable — which is when knowing
+	// what is running matters most.
+	findings = append(findings, EvaluateServices(c.ObserveServices(ctx)))
+
 	if o, err := c.ObserveWebhooks(ctx); err != nil {
 		findings = append(findings, gatherFailed(ClassWebhook, err))
 	} else {
@@ -167,6 +178,12 @@ func (c Collector) Run(ctx context.Context, now time.Time, t Thresholds) []Findi
 		findings = append(findings, gatherFailed(ClassDisk, err))
 	} else {
 		findings = append(findings, EvaluateDisk(fs, t))
+	}
+
+	if imports, err := c.ObserveCostImports(ctx); err != nil {
+		findings = append(findings, gatherFailed(ClassCostImport, err))
+	} else {
+		findings = append(findings, EvaluateCostImport(imports, now, t))
 	}
 
 	findings = append(findings, EvaluateBackup(c.ReadBackupReceipts(), now))
@@ -197,8 +214,13 @@ func (c Collector) RunWithoutDatabase(ctx context.Context, now time.Time, t Thre
 	noDB := fmt.Errorf("the database is unreachable")
 	findings := []Finding{
 		EvaluateAPI(c.ProbeAPI(ctx)),
+		// Asking systemd needs no database, and a database outage is exactly
+		// when "which units are actually running" is the useful question —
+		// postgresql.service being one of them.
+		EvaluateServices(c.ObserveServices(ctx)),
 		gatherFailed(ClassWebhook, noDB),
 		gatherFailed(ClassAgentStall, noDB),
+		gatherFailed(ClassCostImport, noDB),
 	}
 	if fs, err := c.MeasureDisk(); err != nil {
 		findings = append(findings, gatherFailed(ClassDisk, err))
@@ -209,4 +231,69 @@ func (c Collector) RunWithoutDatabase(ctx context.Context, now time.Time, t Thre
 	// having: a database outage during a backup window is exactly when you want
 	// to know the backups are current.
 	return append(findings, EvaluateBackup(c.ReadBackupReceipts(), now))
+}
+
+// ObserveServices asks systemd whether each declared unit is running (wg-95y).
+//
+// systemctl rather than a D-Bus client: the monitor already runs on the node as
+// a systemd oneshot, `is-active` is a stable interface, and a dependency on a
+// D-Bus library to answer a question a shell command answers is not worth
+// carrying.
+//
+// A non-zero exit is the ANSWER, not an error. `is-active` exits 3 for an
+// inactive unit and prints its state, which is precisely what is being asked;
+// treating that as a failure to check would turn every real outage into "could
+// not be evaluated".
+func (c Collector) ObserveServices(ctx context.Context) []ServiceState {
+	out := make([]ServiceState, 0, len(c.Services))
+	for _, name := range c.Services {
+		cmd := exec.CommandContext(ctx, "systemctl", "is-active", name)
+		raw, _ := cmd.Output()
+		state := strings.TrimSpace(string(raw))
+		out = append(out, ServiceState{
+			Name:   name,
+			Active: state == "active",
+			Detail: state,
+		})
+	}
+	return out
+}
+
+// ObserveCostImports reads the last successful import per gateway (wg-7jz).
+//
+// usage_import_runs holds no project data — only "gateway X was read at time T"
+// — so it carries no row-level security and needs no system function to read,
+// unlike almost everything else the monitor touches.
+//
+// Gateways are DECLARED and then looked up, rather than being discovered from
+// the table. A gateway that has never been imported has no row at all, and
+// discovery would report that as nothing to say — which is the failure that
+// matters most, exactly as with the backup streams.
+func (c Collector) ObserveCostImports(ctx context.Context) ([]GatewayImport, error) {
+	if c.DB == nil {
+		return nil, errors.New("no database")
+	}
+	out := make([]GatewayImport, 0, len(c.Gateways))
+	for _, name := range c.Gateways {
+		g := GatewayImport{Name: name}
+		var ran sql.NullTime
+		var complete sql.NullBool
+		err := c.DB.QueryRowContext(ctx,
+			`SELECT ran_at, complete FROM usage_import_runs WHERE gateway = $1`, name).
+			Scan(&ran, &complete)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Left zero: never imported, which the evaluator reports as its own
+			// state rather than as staleness.
+		case err != nil:
+			return nil, err
+		default:
+			if ran.Valid {
+				g.Last = ran.Time
+			}
+			g.Complete = complete.Bool
+		}
+		out = append(out, g)
+	}
+	return out, nil
 }

@@ -2,6 +2,8 @@ package runner
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -362,5 +364,53 @@ func TestThePlanNamesTheTrustFile(t *testing.T) {
 	}
 	if strings.HasPrefix(p.TrustFile, p.RunDir) {
 		t.Error("the trust file is inside the run directory, so it would be deleted with it")
+	}
+}
+
+// max_concurrent_agents was stored from the day budget_limits existed and read
+// by nothing (wg-726). The cell slice bounds PROCESSES through TasksMax, which
+// is not the same thing and never was.
+func TestConcurrencyCountsLiveRunsOnly(t *testing.T) {
+	root := t.TempDir()
+	runs := filepath.Join(root, "runs")
+	if err := os.MkdirAll(filepath.Join(runs, "wg-a"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runs, "wg-b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A live run's settings file is a SIBLING of the run directories. Counting
+	// it would double every run and halve the effective limit.
+	if err := os.WriteFile(filepath.Join(runs, ".wg-a.settings.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := Concurrency(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("counted %d live runs, want 2 — the settings file is not a run", n)
+	}
+}
+
+// A cell that has never run anything has no runs directory. That is zero, not an
+// error, or the very first dispatch into a cell would be refused.
+func TestConcurrencyOnAFreshCellIsZero(t *testing.T) {
+	n, err := Concurrency(t.TempDir())
+	if err != nil {
+		t.Fatalf("a cell with no runs directory reported an error: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("counted %d, want 0", n)
+	}
+}
+
+func TestTooManyAgentsSaysTheNumbers(t *testing.T) {
+	err := ErrTooManyAgents{Cell: "oss", Running: 2, Limit: 2}
+	for _, want := range []string{"oss", "2"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal should say %q: %v", want, err)
+		}
 	}
 }

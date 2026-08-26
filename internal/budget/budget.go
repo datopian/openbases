@@ -36,9 +36,18 @@ type Status struct {
 	SpentCents     string `json:"spent_cents"`
 	RemainingCents string `json:"remaining_cents,omitempty"`
 	Exceeded       bool   `json:"exceeded"`
-	// StalenessSeconds is how old the newest imported usage record is. Negative
+	// StalenessSeconds is how old the least recent gateway import is. Negative
 	// means nothing has ever been imported, which is not the same as fresh.
 	StalenessSeconds int64 `json:"staleness_seconds"`
+	// MaxAgents and MaxRuntimeMinutes are the operational limits the budget
+	// carries. Zero means the budget sets none.
+	//
+	// They are returned so a caller can enforce them, which nothing did for the
+	// first two months they existed: wg-budget set them, budget_limits stored
+	// them, and no code read either (wg-726). Two numbers that looked like
+	// controls and were not.
+	MaxAgents         int `json:"max_agents,omitempty"`
+	MaxRuntimeMinutes int `json:"max_runtime_minutes,omitempty"`
 }
 
 // Decision is the answer, with the reason a person will read at the moment they
@@ -49,7 +58,13 @@ type Decision struct {
 	// Warning is set on an allowed decision that the caller should still see —
 	// an allow granted on stale data, or one that is nearly at the ceiling.
 	Warning string `json:"warning,omitempty"`
-	Status  Status `json:"status"`
+	// MaxAgents and MaxRuntimeMinutes are the governing budget's operational
+	// limits, for the caller to enforce where it can see them. Concurrency is a
+	// property of the node, not of the control plane, so the control plane can
+	// only say what the ceiling is (wg-726).
+	MaxAgents         int    `json:"max_agents,omitempty"`
+	MaxRuntimeMinutes int    `json:"max_runtime_minutes,omitempty"`
+	Status            Status `json:"status"`
 }
 
 // Policy is what the operator can tune without a release.
@@ -162,6 +177,10 @@ func Decide(s Status, p Policy) Decision {
 	d.Allow = true
 	d.Reason = fmt.Sprintf("%s cents of the %s budget for %s remain",
 		trim(s.RemainingCents), s.SubjectKind, s.SubjectKey)
+	// Carried onto the decision so the caller does not have to reach back into
+	// the status for them, and so a transport that only forwards the decision
+	// still forwards the limits.
+	d.MaxAgents, d.MaxRuntimeMinutes = s.MaxAgents, s.MaxRuntimeMinutes
 
 	if p.WarnAtPercent > 0 {
 		if used, ok := percent(s.SpentCents, s.DailyCents); ok && used >= p.WarnAtPercent {

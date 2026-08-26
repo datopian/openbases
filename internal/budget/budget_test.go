@@ -183,3 +183,33 @@ func TestZeroStalenessIsRespectedAsADeliberateChoice(t *testing.T) {
 		t.Errorf("MaxStaleness = %s, want 0 — an explicit 0 disables the check", got)
 	}
 }
+
+// The operational limits must reach the caller, because the caller is the only
+// one who can enforce them: concurrency is a property of the node, not of the
+// control plane. Stored since 0006 and read by nothing until wg-726.
+func TestTheDecisionCarriesTheOperationalLimits(t *testing.T) {
+	s := fresh("project", "portaljs-oss", "5000", "10", false)
+	s.RemainingCents = "4990"
+	s.MaxAgents = 2
+	s.MaxRuntimeMinutes = 45
+
+	d := Decide(s, DefaultPolicy())
+	if !d.Allow {
+		t.Fatalf("refused: %s", d.Reason)
+	}
+	if d.MaxAgents != 2 || d.MaxRuntimeMinutes != 45 {
+		t.Fatalf("the limits did not reach the decision: agents=%d runtime=%d",
+			d.MaxAgents, d.MaxRuntimeMinutes)
+	}
+}
+
+// A budget that sets no limits must report none rather than zero-as-a-ceiling,
+// which the caller would read as "no agents may run".
+func TestABudgetWithNoLimitsCarriesNone(t *testing.T) {
+	s := fresh("cell", "oss", "10000", "0", false)
+	s.RemainingCents = "10000"
+	d := Decide(s, DefaultPolicy())
+	if d.MaxAgents != 0 || d.MaxRuntimeMinutes != 0 {
+		t.Fatalf("limits were invented: agents=%d runtime=%d", d.MaxAgents, d.MaxRuntimeMinutes)
+	}
+}

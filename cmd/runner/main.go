@@ -36,18 +36,19 @@ import (
 
 func main() {
 	var (
-		bead     = flag.String("bead", "", "the bead to work")
-		cell     = flag.String("cell", getenv("WG_CELL", ""), "execution cell slug")
-		rig      = flag.String("rig", getenv("WG_RIG", "sandbox"), "rig within the cell")
-		role     = flag.String("role", "polecat", "agent role, which decides the model tier")
-		cellRoot = flag.String("cell-root", "", "the cell's home, e.g. /srv/cells/oss")
-		instr    = flag.String("instructions", "", "what the agent is asked to do")
-		model    = flag.String("model", "", "override the role's model tier")
-		effort   = flag.String("effort", "", "override the role's reasoning effort")
-		deadline = flag.Duration("deadline", 15*time.Minute, "how long the run may take")
-		keep     = flag.Bool("keep", false, "leave the run directory behind for inspection")
-		dryRun   = flag.Bool("dry-run", false, "plan and print, running nothing")
-		jsonOut  = flag.Bool("json", false, "print the result as JSON")
+		bead      = flag.String("bead", "", "the bead to work")
+		cell      = flag.String("cell", getenv("WG_CELL", ""), "execution cell slug")
+		rig       = flag.String("rig", getenv("WG_RIG", "sandbox"), "rig within the cell")
+		role      = flag.String("role", "polecat", "agent role, which decides the model tier")
+		cellRoot  = flag.String("cell-root", "", "the cell's home, e.g. /srv/cells/oss")
+		instr     = flag.String("instructions", "", "what the agent is asked to do")
+		model     = flag.String("model", "", "override the role's model tier")
+		effort    = flag.String("effort", "", "override the role's reasoning effort")
+		deadline  = flag.Duration("deadline", 15*time.Minute, "how long the run may take")
+		maxAgents = flag.Int("max-agents", 0, "refuse if the cell already has this many runs (0 disables; wg-726)")
+		keep      = flag.Bool("keep", false, "leave the run directory behind for inspection")
+		dryRun    = flag.Bool("dry-run", false, "plan and print, running nothing")
+		jsonOut   = flag.Bool("json", false, "print the result as JSON")
 	)
 	flag.Parse()
 
@@ -61,6 +62,28 @@ func main() {
 	// the cell's auth.
 	if *cellRoot != "" {
 		_ = os.Setenv("HOME", *cellRoot)
+	}
+
+	// Concurrency, before anything is created (wg-726).
+	//
+	// budget_limits has carried max_concurrent_agents since 0006 and nothing
+	// ever read it: the cell slice bounds PROCESSES through TasksMax, which is
+	// not the same thing and never was. The ceiling comes from the governing
+	// budget and is passed in by the dispatcher, because the control plane knows
+	// the limit and only the node can count what is running.
+	if *maxAgents > 0 && *cellRoot != "" {
+		running, cErr := runner.Concurrency(*cellRoot)
+		if cErr != nil {
+			log.Error("could not count running agents; refusing rather than exceeding the limit",
+				"cell", *cell, "error", cErr)
+			os.Exit(1)
+		}
+		if running >= *maxAgents {
+			err := runner.ErrTooManyAgents{Cell: *cell, Running: running, Limit: *maxAgents}
+			fmt.Fprintln(os.Stderr, err)
+			// Exit 2: this is a refusal of the request, not a run that failed.
+			os.Exit(2)
+		}
 	}
 
 	plan, err := runner.New(runner.Spec{

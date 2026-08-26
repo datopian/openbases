@@ -56,8 +56,9 @@ type Class struct {
 // teaches people to ignore it.
 func (c Class) DedupeKey() string { return "monitor:" + c.Name }
 
-// The five classes this package covers, which are the five the work package
-// requires: API, webhook, agent stall, disk and backup.
+// The classes this package covers. The first five are the ones WP-I1 required —
+// API, webhook, agent stall, disk and backup — and the two after them cover
+// failures found by running the platform rather than by planning it.
 var (
 	// ClassAPI is the control API being unable to serve traffic. Highest score
 	// because everything else the platform does is reached through it.
@@ -115,10 +116,52 @@ var (
 		Runbook: "docs/runbooks/backup-stale.md",
 		Score:   0.8,
 	}
+
+	// ClassService is a unit that is supposed to be running and is not.
+	//
+	// Scored just below the API because it covers the API, and because of the
+	// failure that prompted it (wg-95y). Event freshness depends on
+	// workgraph-worker, which projects deliveries on a five-second poll. If the
+	// worker dies, the fifteen-minute reconciliation timer still drains the
+	// backlog — so deliveries keep being processed, nothing looks broken, and
+	// freshness silently returns to its old p50 of 459s against a 60s target.
+	// The webhook check cannot see it, because the backlog never gets old
+	// enough to trip it.
+	//
+	// Degraded rather than broken, and invisible because the fallback is good
+	// enough to hide it. That is exactly the shape WP-I1 exists to catch, and
+	// the only honest way to catch it is to ask whether the unit is running
+	// rather than to infer it from a downstream symptom.
+	ClassService = Class{
+		Name:    "service",
+		Rule:    "platform_service_down",
+		Runbook: "docs/runbooks/service-down.md",
+		Score:   0.95,
+	}
+
+	// ClassCostImport is spend no longer being imported (wg-7jz).
+	//
+	// Quiet by construction: a stopped importer leaves usage_records simply not
+	// growing, which looks exactly like a quiet week. Everything built on top
+	// then degrades silently — a budget check refuses on stale data, and a cost
+	// report is confidently wrong.
+	//
+	// Scored below disk and backup. Nothing is failing for a user, and the
+	// budget check already refuses rather than guessing when the data is stale,
+	// so this is the alert that explains why that is happening.
+	ClassCostImport = Class{
+		Name:    "cost_import",
+		Rule:    "platform_cost_import_stale",
+		Runbook: "docs/runbooks/cost-import-stale.md",
+		Score:   0.7,
+	}
 )
 
 // Classes is every class, in the order a report prints them.
-var Classes = []Class{ClassAPI, ClassWebhook, ClassAgentStall, ClassDisk, ClassBackup}
+var Classes = []Class{
+	ClassAPI, ClassService, ClassWebhook, ClassAgentStall,
+	ClassDisk, ClassBackup, ClassCostImport,
+}
 
 // Finding is the verdict on one class.
 //
@@ -156,6 +199,15 @@ type Thresholds struct {
 	AgentHealthSilence time.Duration
 	// DiskUsedPercent is the fullest a filesystem may get.
 	DiskUsedPercent float64
+	// CostImportMaxAge is how long since the least recent gateway import before
+	// the importer is presumed stopped.
+	//
+	// Measured from the last successful RUN, not from the newest usage record.
+	// A gateway nobody has used for a week has a newest record a week old
+	// however punctually the importer ran — the same distinction 0033 had to
+	// make for the budget check, which was refusing every dispatch on a quiet
+	// environment.
+	CostImportMaxAge time.Duration
 }
 
 // DefaultThresholds are the values the deployment uses unless overridden.
@@ -168,5 +220,8 @@ func DefaultThresholds() Thresholds {
 		WebhookBacklogAge:  45 * time.Minute,
 		AgentHealthSilence: 30 * time.Minute,
 		DiskUsedPercent:    85,
+		// Three hourly import periods, matching the reasoning above: one missed
+		// run is normal, three consecutive misses means it is not running.
+		CostImportMaxAge: 3 * time.Hour,
 	}
 }

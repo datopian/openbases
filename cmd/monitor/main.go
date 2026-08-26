@@ -40,6 +40,8 @@ func main() {
 		mounts     = flag.String("mounts", getenv("WG_MONITOR_MOUNTS", "/"), "comma-separated mount points to measure")
 		receiptDir = flag.String("receipts", getenv("WG_MONITOR_RECEIPT_DIR", "/var/lib/workgraph/backups"), "directory holding backup receipts")
 		streams    = flag.String("backup-streams", getenv("WG_MONITOR_BACKUP_STREAMS", "beads:24h"), "comma-separated name:max-age backup obligations")
+		services   = flag.String("services", getenv("WG_MONITOR_SERVICES", ""), "comma-separated systemd units that must be running")
+		gateways   = flag.String("gateways", getenv("WG_MONITOR_GATEWAYS", ""), "comma-separated AI Gateways whose import must be fresh")
 		cells      = flag.Int("expect-cells", getenvInt("WG_MONITOR_EXPECT_CELLS", 0), "how many execution cells should be reporting agent health")
 		dryRun     = flag.Bool("dry-run", false, "evaluate and print, raising nothing")
 		// Thresholds are flags, not constants. The right value differs between
@@ -49,6 +51,7 @@ func main() {
 		diskPct    = flag.Float64("disk-percent", getenvFloat("WG_MONITOR_DISK_PERCENT", monitor.DefaultThresholds().DiskUsedPercent), "alert when a filesystem is this full")
 		backlogAge = flag.Duration("webhook-backlog-age", getenvDur("WG_MONITOR_WEBHOOK_BACKLOG_AGE", monitor.DefaultThresholds().WebhookBacklogAge), "alert when a delivery is unprocessed for this long")
 		silence    = flag.Duration("agent-health-silence", getenvDur("WG_MONITOR_AGENT_SILENCE", monitor.DefaultThresholds().AgentHealthSilence), "alert when no agent-health report arrives for this long")
+		importAge  = flag.Duration("cost-import-max-age", getenvDur("WG_MONITOR_COST_IMPORT_MAX_AGE", monitor.DefaultThresholds().CostImportMaxAge), "alert when a gateway has not been imported for this long")
 		jsonOut    = flag.Bool("json", false, "print findings as JSON")
 	)
 	flag.Parse()
@@ -86,6 +89,8 @@ func main() {
 	}
 
 	c := monitor.Collector{
+		Services:    splitList(*services),
+		Gateways:    splitList(*gateways),
 		DB:          db,
 		HTTP:        &http.Client{Timeout: 10 * time.Second},
 		HealthURL:   *healthURL,
@@ -99,6 +104,7 @@ func main() {
 		WebhookBacklogAge:  *backlogAge,
 		AgentHealthSilence: *silence,
 		DiskUsedPercent:    *diskPct,
+		CostImportMaxAge:   *importAge,
 	}
 
 	now := time.Now()
@@ -191,6 +197,18 @@ func parseStreams(s string) ([]monitor.BackupStream, error) {
 }
 
 func splitNonEmpty(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// splitList turns a comma-separated flag into a list, dropping blanks so a
+// trailing comma does not become an empty unit name that can never be active.
+func splitList(s string) []string {
 	var out []string
 	for _, p := range strings.Split(s, ",") {
 		if p = strings.TrimSpace(p); p != "" {

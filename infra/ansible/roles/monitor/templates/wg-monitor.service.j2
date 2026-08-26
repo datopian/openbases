@@ -27,7 +27,10 @@ ExecStart={{ monitor_binary }} \
   -expect-cells {{ monitor_expect_cells }} \
   -disk-percent {{ monitor_disk_percent }} \
   -webhook-backlog-age {{ monitor_webhook_backlog_age }} \
-  -agent-health-silence {{ monitor_agent_health_silence }}
+  -agent-health-silence {{ monitor_agent_health_silence }} \
+  -services "{{ monitor_services | replace('\n', '') | replace(' ', '') }}" \
+  -gateways "{{ monitor_gateways | replace('\n', '') | replace(' ', '') }}" \
+  -cost-import-max-age {{ monitor_cost_import_max_age }}
 
 # The monitor exits non-zero when an alert reached NOBODY, which is the one
 # failure it cannot report through the inbox. A failed unit in
