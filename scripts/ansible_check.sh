@@ -26,7 +26,15 @@ echo "$out" | tail -20
 
 # The recap line reads "changed=N"; anything above zero means the first run did
 # not converge, which is what idempotence means here.
-if echo "$out" | grep -qE 'changed=[1-9]'; then
+# Matched against a variable, not piped into `grep -q`.
+#
+# `echo "$out" | grep -q` makes grep exit at the first match, which closes the
+# pipe under the writer; with `set -o pipefail` the pipeline then reports a
+# failure and the `if` reads FALSE. This guard would have announced "idempotent"
+# precisely when it had found a change — silently passing the one thing it
+# exists to catch. A full playbook run is far larger than a pipe buffer, so the
+# writer really does block and really does get the signal.
+if printf '%s' "$out" | grep -cE 'changed=[1-9]' >/dev/null; then
   echo
   echo "NOT IDEMPOTENT — the second run still reports changes:" >&2
   echo "$out" | grep -E '^changed:|changed=[1-9]' >&2
