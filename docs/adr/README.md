@@ -40,3 +40,7 @@ old one, exactly as knowledge records are superseded rather than overwritten.
 | [0017](0017-not-adopting-paperclip.md) | Not adopting Paperclip as the execution and governance layer | accepted |
 - [ADR-0018](0018-tiered-model-routing.md) — Tiered model routing, with frontier models as an escalation path
 - [ADR-0019](0019-deterministic-witness.md) — A deterministic witness, with the model reserved for the one ambiguous case
+- [ADR-0020](0020-in-band-monitoring.md) — In-band monitoring, with the blind spot stated rather than hidden
+- [ADR-0021](0021-durable-cost-records.md) — Spend is recorded in the database, not read from the gateway
+- [ADR-0022](0022-per-bead-budgets.md) — Budgets are checked before dispatch, and refuse when they cannot be checked
+- [ADR-0023](0023-direct-agent-runner.md) — Running agents directly, not through Gas Town
