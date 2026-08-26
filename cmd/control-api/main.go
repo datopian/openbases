@@ -23,6 +23,7 @@ import (
 	"github.com/datopian/workgraph/internal/approvals"
 	"github.com/datopian/workgraph/internal/attention"
 	"github.com/datopian/workgraph/internal/authn"
+	"github.com/datopian/workgraph/internal/budget"
 	"github.com/datopian/workgraph/internal/chiefofstaff"
 	"github.com/datopian/workgraph/internal/config"
 	"github.com/datopian/workgraph/internal/domain"
@@ -98,6 +99,10 @@ func main() {
 				// and so its own audience: minting a git credential and
 				// writing to inboxes are different powers.
 				"/v1/agent-health": cfg.CellHealthAccessAudience,
+				// And its own again for the budget check, which only reads.
+				// Three narrow applications sharing one service token keeps
+				// each grant equal to the endpoint that was actually reviewed.
+				"/v1/budget/check": cfg.CellBudgetAccessAudience,
 			},
 		}
 	}
@@ -350,6 +355,60 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			"cell", report.Cell, "repository", report.Repository,
 			"recorded", out.Recorded, "escalated", out.Escalated, "notified", out.Notified)
 		writeJSON(w, http.StatusOK, out)
+	})
+
+	// May this bead be dispatched? Asked by scripts/dispatch_bead.sh on the
+	// execution node, before it slings anything (wg-qw1).
+	//
+	// A GET that changes nothing, deliberately. The dispatcher must be able to
+	// ask freely — including twice, or after a failure — and an endpoint that
+	// recorded an intent would turn "I checked" into state somebody has to
+	// clean up when the dispatch never happened.
+	//
+	// The answer carries its own staleness. Spend arrives by an hourly import,
+	// so an allow is only as good as the data behind it, and a caller that
+	// cannot see the age will treat an hour-old "you have room" as current.
+	authed.HandleFunc("GET /v1/budget/check", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			// Service callers only, like the endpoints beside it. A human
+			// browser session asking whether work may start is not a use case,
+			// and allowing it would make this a way to enumerate spend.
+			log.Warn("budget check refused for a human session", "subject", id.Subject)
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+
+		bead := strings.TrimSpace(r.URL.Query().Get("bead"))
+		if bead == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bead is required"})
+			return
+		}
+		cell := strings.TrimSpace(r.URL.Query().Get("cell"))
+
+		if db == nil {
+			// Refuse rather than allow. A budget check that fails open is a
+			// budget check that stops existing the moment the database is
+			// unreachable, which is not a state anybody would notice.
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"allow": false, "reason": "the budget cannot be checked: no database"})
+			return
+		}
+
+		status, err := budget.Read(r.Context(), db, bead, cell)
+		if err != nil {
+			log.Error("reading a budget", "bead", bead, "cell", cell, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"allow": false, "reason": "the budget cannot be checked: internal error"})
+			return
+		}
+
+		decision := budget.Decide(status, budget.PolicyFromEnv())
+		log.Info("budget check", "bead", bead, "cell", cell,
+			"allow", decision.Allow, "subject", status.SubjectKind,
+			"spent", status.SpentCents, "limit", status.DailyCents,
+			"staleness_seconds", status.StalenessSeconds)
+		writeJSON(w, http.StatusOK, decision)
 	})
 
 	// The registry. Every read runs inside a transaction carrying the caller's

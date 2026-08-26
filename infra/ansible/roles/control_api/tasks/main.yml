@@ -31,6 +31,15 @@
   when: control_api_local_binary | length > 0
   notify: Restart control-api
 
+- name: Install the budget tool
+  ansible.builtin.copy:
+    src: "{{ budget_local_binary }}"
+    dest: "{{ budget_binary }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: budget_local_binary | length > 0
+
 # Credential source files. systemd reads these at start and copies them into a
 # per-service tmpfs; the service user never needs to read them itself, which is
 # why they are root-only rather than group-readable like the env file.

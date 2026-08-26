@@ -641,6 +641,30 @@ resource "cloudflare_zero_trust_access_application" "cell_agent_health" {
   }]
 }
 
+# The dispatcher asks whether a bead may be dispatched before it slings
+# anything (wg-qw1).
+#
+# A third narrow application on the same policy and the same service token, for
+# the reason the comment above gives: an application matches one domain, and
+# widening one to a prefix would extend the token to every path underneath it.
+#
+# This endpoint only READS — it answers a question and records nothing — so it is
+# the smallest of the three powers the cells' token carries. Its own audience is
+# what keeps it that way: a token minted for the budget check cannot mint a git
+# credential or write to an inbox.
+resource "cloudflare_zero_trust_access_application" "cell_budget_check" {
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-cell-budget-check"
+  domain           = "${var.hostname}/v1/budget/check"
+  type             = "self_hosted"
+  session_duration = "0s"
+
+  policies = [{
+    id         = cloudflare_zero_trust_access_policy.cells_service.id
+    precedence = 1
+  }]
+}
+
 resource "cloudflare_zero_trust_access_policy" "cells_service" {
   account_id = var.cloudflare_account_id
   name       = "workgraph-${var.environment}-cells-service"

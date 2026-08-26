@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Tag a rig's agents with the bead they are working on, for the duration.
+
+AI Gateway accepts `cf-aig-metadata`: a JSON header that lands on the log entry
+and comes back out through the cost importer into usage_records. The gastown
+role writes role, cell and rig into it at DEPLOY time, because those are
+properties of the cell and do not change.
+
+A bead is not. It is a property of one dispatch, so it is written here, by
+scripts/dispatch_bead.sh, immediately before the sling and removed in the
+teardown. Without it, spend can be attributed to a cell and a role but not to
+the piece of work, and a per-bead budget has nothing to compare against.
+
+  wg-tag-bead <rig-dir> <bead-id>   add or replace the bead
+  wg-tag-bead <rig-dir> --clear     remove it
+
+Five keys is the AI Gateway maximum and extras are dropped SILENTLY, so with
+role, cell, rig and bead this sits at four and must stay there. A fifth key
+added later would not fail; it would just quietly stop one of these arriving.
+
+Run as the cell user, from the town directory, so the files keep their owner.
+Prints "changed" or "unchanged" as the first word, the same contract as
+wg-set-agent-metadata, so Ansible and shell callers can both test it cheaply.
+"""
+import json
+import os
+import sys
+import tempfile
+
+HEADER_KEY = "ANTHROPIC_CUSTOM_HEADERS"
+METADATA_PREFIX = "cf-aig-metadata: "
+
+
+def rewrite(path, bead):
+    """Return True when the file changed."""
+    try:
+        with open(path) as fh:
+            settings = json.load(fh)
+    except (OSError, ValueError) as err:
+        # A settings file we cannot read belongs to Gas Town. Rewriting it from
+        # scratch would silently drop whatever it held.
+        print(f"skip (unreadable, {err.__class__.__name__}): {path}", file=sys.stderr)
+        return False
+
+    env = settings.get("env") or {}
+    headers = env.get(HEADER_KEY)
+    if not headers:
+        # No metadata line at all means this agent is not routed through the
+        # gateway with attribution, and inventing one here would be guessing at
+        # a token this script does not have.
+        return False
+
+    lines = headers.split("\n")
+    out, found = [], False
+    for line in lines:
+        if not line.startswith(METADATA_PREFIX):
+            out.append(line)
+            continue
+        found = True
+        try:
+            metadata = json.loads(line[len(METADATA_PREFIX):])
+        except ValueError:
+            print(f"skip (unparseable metadata): {path}", file=sys.stderr)
+            return False
+        if bead is None:
+            metadata.pop("bead", None)
+        else:
+            metadata["bead"] = bead
+        out.append(METADATA_PREFIX + json.dumps(metadata, separators=(",", ":")))
+
+    if not found:
+        return False
+
+    new_headers = "\n".join(out)
+    if new_headers == headers:
+        return False
+
+    env[HEADER_KEY] = new_headers
+    settings["env"] = env
+
+    # Written through a temporary file in the same directory and renamed, so an
+    # interrupted dispatch cannot leave an agent with a truncated settings file
+    # — which would stop it starting at all, long after the dispatch that broke
+    # it has been forgotten.
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".settings-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(settings, fh, indent=2)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+    return True
+
+
+def main() -> int:
+    if len(sys.argv) != 3:
+        print("usage: wg-tag-bead <rig-dir> <bead-id|--clear>", file=sys.stderr)
+        return 2
+    root, arg = sys.argv[1], sys.argv[2]
+    bead = None if arg == "--clear" else arg
+    if bead is not None and not bead.strip():
+        print("a bead id cannot be blank; use --clear to remove it", file=sys.stderr)
+        return 2
+
+    if not os.path.isdir(root):
+        print(f"no such rig directory: {root}", file=sys.stderr)
+        return 1
+
+    changed = 0
+    seen = 0
+    for dirpath, _dirnames, filenames in os.walk(root):
+        if os.path.basename(dirpath) != ".claude" or "settings.json" not in filenames:
+            continue
+        seen += 1
+        if rewrite(os.path.join(dirpath, "settings.json"), bead):
+            changed += 1
+
+    if seen == 0:
+        # Loud, because a dispatch that tags nothing produces spend that cannot
+        # be attributed, and the budget for that bead will read as unspent
+        # forever.
+        print(f"unchanged (no agent settings found under {root})", file=sys.stderr)
+        return 1
+
+    what = "cleared" if bead is None else bead
+    print(f"{'changed' if changed else 'unchanged'} {changed}/{seen} agents: {what}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
