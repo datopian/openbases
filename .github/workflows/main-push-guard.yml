@@ -54,17 +54,46 @@ jobs:
 
           bypassed=0
           for sha in $commits; do
-            # A commit that arrived through a merged PR reports that PR here.
+            subject="$(git log -1 --format=%s "$sha")"
+
+            # Asked two ways, because the first one races.
+            #
+            # commits/{sha}/pulls is the obvious question and it is answered by
+            # an index that is not populated the instant a squash merge lands.
+            # This job runs on the push, seconds later, so the honest answer at
+            # that moment is often "no pull requests" — and the guard then
+            # reported a BYPASS for every squash merge, including the one that
+            # had just been reviewed and merged normally.
+            #
+            # A guard that fires on every merge is a guard nobody reads, which
+            # would leave ADR-0016 with no compensating control at all.
             prs="$(gh api "repos/$REPO/commits/$sha/pulls" \
                      -H "Accept: application/vnd.github+json" \
                      --jq '[.[] | select(.merged_at != null)] | length' 2>/dev/null || echo 0)"
-            subject="$(git log -1 --format=%s "$sha")"
-            if [ "$prs" -gt 0 ]; then
+
+            if [ "${prs:-0}" -gt 0 ]; then
               echo "  ok       $(git rev-parse --short "$sha")  $subject"
-            else
-              echo "  BYPASS   $(git rev-parse --short "$sha")  $subject"
-              bypassed=1
+              continue
             fi
+
+            # The second way does not depend on any index. A squash merge writes
+            # the pull request number into the subject, so ask about that pull
+            # request directly and require that it is merged AND that its merge
+            # commit is this one. The number alone would be trivial to forge by
+            # typing "(#1)" into a commit message.
+            number="$(printf '%s' "$subject" | sed -n 's/.*(#\([0-9][0-9]*\))$/\1/p')"
+            if [ -n "$number" ]; then
+              merged_sha="$(gh api "repos/$REPO/pulls/$number" \
+                              -H "Accept: application/vnd.github+json" \
+                              --jq 'select(.merged_at != null) | .merge_commit_sha' 2>/dev/null || true)"
+              if [ "$merged_sha" = "$sha" ]; then
+                echo "  ok       $(git rev-parse --short "$sha")  $subject"
+                continue
+              fi
+            fi
+
+            echo "  BYPASS   $(git rev-parse --short "$sha")  $subject"
+            bypassed=1
           done
 
           if [ "$bypassed" -ne 0 ]; then
