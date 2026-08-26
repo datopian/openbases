@@ -86,6 +86,13 @@ if [ "$BUDGET_CHECK" = 1 ]; then
     warning="$(printf '%s' "$budget_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("warning",""))' 2>/dev/null || echo "")"
 
     [ -n "$warning" ] && echo "!! $warning"
+
+    # The operational limits the governing budget carries (wg-726). They were
+    # stored from the day budget_limits existed and read by nothing: the only
+    # runtime ceiling in force was one node-wide systemd timer, and concurrency
+    # was not enforced at all.
+    MAX_AGENTS="$(printf '%s' "$budget_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("max_agents") or 0)' 2>/dev/null || echo 0)"
+    MAX_RUNTIME="$(printf '%s' "$budget_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("max_runtime_minutes") or 0)' 2>/dev/null || echo 0)"
     if [ "$allow" != "True" ]; then
       echo "!! REFUSED: $reason"
       echo "!! raise it with: wg-budget set bead $BEAD <cents>   (on the control node)"
@@ -100,6 +107,11 @@ if [ "$BUDGET_CHECK" = 1 ]; then
   fi
 else
   echo "!! budget check SKIPPED for $BEAD"
+  # No budget consulted means no limits to enforce. Stated rather than left to
+  # an unset variable, because --no-budget-check already loosens one control and
+  # should not silently loosen two more by accident.
+  MAX_AGENTS=0
+  MAX_RUNTIME=0
 fi
 
 # ---------------------------------------------------------------------------
@@ -134,6 +146,20 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
+# The budget's runtime ceiling wins when it is tighter than the argument.
+#
+# Tighter only, never looser: the argument is what a person asked for and the
+# budget is what the project agreed to, so the smaller of the two is the honest
+# answer. A budget that could RAISE the ceiling would let a forgotten row
+# override an operator standing at the terminal.
+if [ "${MAX_RUNTIME:-0}" -gt 0 ]; then
+  budget_seconds=$(( MAX_RUNTIME * 60 ))
+  if [ "$budget_seconds" -lt "$DEADLINE" ]; then
+    echo "  runtime ceiling: ${MAX_RUNTIME}m from the budget, tighter than the ${DEADLINE}s requested"
+    DEADLINE="$budget_seconds"
+  fi
+fi
+
 echo "Dispatching $BEAD to $RIG (deadline ${DEADLINE}s)"
 
 systemd-run --quiet --pipe --collect --wait \
@@ -147,7 +173,8 @@ systemd-run --quiet --pipe --collect --wait \
     -rig "$RIG" \
     -cell-root "$CELL" \
     -instructions "Work the bead $BEAD. Read it first, do what it asks, and close it when the work is done and not before. If you cannot complete it, leave it open and say why in a comment." \
-    -deadline "${DEADLINE}s"
+    -deadline "${DEADLINE}s" \
+    -max-agents "${MAX_AGENTS:-0}"
 rc=$?
 
 if [ "$rc" -eq 0 ]; then

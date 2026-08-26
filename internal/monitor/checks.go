@@ -3,6 +3,7 @@ package monitor
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -264,4 +265,148 @@ func joinAnd(items []string) string {
 		out += s
 	}
 	return out + ", and " + items[len(items)-1]
+}
+
+// ServiceState is one unit that is supposed to be running.
+//
+// DECLARED, like the backup streams and for the same reason: a check that
+// reports on the units it can find treats a unit that has vanished entirely as
+// nothing to say, and "vanished entirely" is a failure.
+type ServiceState struct {
+	Name string
+	// Active is what systemd says. A unit that is not loaded at all is not
+	// active, which is the correct answer to "is this running".
+	Active bool
+	// Detail carries systemd's own word — active, inactive, failed, unknown —
+	// because "not running" and "crashed" send an operator to different places.
+	Detail string
+}
+
+// EvaluateServices judges whether the declared units are running.
+//
+// This exists because a downstream symptom is not a liveness check. Event
+// freshness depends on workgraph-worker, and when the worker dies the
+// reconciliation timer keeps draining the backlog — so deliveries are still
+// processed, the webhook check stays green because the backlog never gets old
+// enough, and freshness silently degrades from under a minute to the old p50 of
+// 459 seconds (wg-95y).
+//
+// Tightening the webhook threshold would not have caught it either: with the
+// worker down the backlog age oscillates between zero and the reconciliation
+// period, so any threshold below fifteen minutes flaps and any threshold above
+// it never fires.
+func EvaluateServices(services []ServiceState) Finding {
+	f := Finding{Class: ClassService, Observed: map[string]any{}}
+	if len(services) == 0 {
+		// Consistent with the backup check: nothing declared means nothing is
+		// being watched, and that is worth saying rather than passing.
+		f.Failing = true
+		f.Summary = "no service is declared, so nothing is being checked"
+		return f
+	}
+
+	report := make([]map[string]any, 0, len(services))
+	var down []string
+	for _, s := range services {
+		report = append(report, map[string]any{
+			"name": s.Name, "active": s.Active, "state": s.Detail,
+		})
+		if !s.Active {
+			down = append(down, fmt.Sprintf("%s is %s", s.Name, orUnknown(s.Detail)))
+		}
+	}
+	f.Observed["services"] = report
+	f.Observed["checked"] = len(services)
+
+	if len(down) > 0 {
+		f.Failing = true
+		// Named, because "a service is down" without saying which sends an
+		// operator to look at the wrong one.
+		f.Summary = strings.Join(down, "; ")
+		return f
+	}
+	f.Summary = fmt.Sprintf("%d service(s) running", len(services))
+	return f
+}
+
+// GatewayImport is the last successful import for one gateway.
+type GatewayImport struct {
+	Name string
+	// Last is when the importer last completed a pass for this gateway. Zero
+	// means it never has.
+	Last time.Time
+	// Complete is false when the pass stopped at its per-run cap rather than
+	// reaching the start of its window. Such a run has not caught up, and a
+	// budget resting on it is resting on a partial read.
+	Complete bool
+}
+
+// EvaluateCostImport judges whether spend is still being imported.
+//
+// Keyed off the last successful RUN rather than the newest usage record. A
+// gateway nobody has used for a week has a newest record a week old however
+// punctually the importer ran, so measuring the record alerts loudest on the
+// quietest environments — the same mistake the budget check made until 0033, and
+// it made every dispatch refuse (wg-7jz).
+func EvaluateCostImport(imports []GatewayImport, now time.Time, t Thresholds) Finding {
+	f := Finding{Class: ClassCostImport, Observed: map[string]any{
+		"max_age_sec": int(t.CostImportMaxAge.Seconds()),
+	}}
+	if len(imports) == 0 {
+		f.Failing = true
+		f.Summary = "no gateway import has ever been recorded, so spend is not being imported at all"
+		return f
+	}
+
+	report := make([]map[string]any, 0, len(imports))
+	var stale []string
+	var partial []string
+	for _, g := range imports {
+		entry := map[string]any{"gateway": g.Name}
+		switch {
+		case g.Last.IsZero():
+			entry["last"] = nil
+			entry["state"] = "never"
+			stale = append(stale, fmt.Sprintf("%s has never been imported", g.Name))
+		default:
+			age := now.Sub(g.Last)
+			entry["last"] = g.Last.UTC().Format(time.RFC3339)
+			entry["age_sec"] = int(age.Seconds())
+			if age > t.CostImportMaxAge {
+				entry["state"] = "stale"
+				stale = append(stale, fmt.Sprintf("%s last imported %s ago (limit %s)",
+					g.Name, age.Round(time.Minute), t.CostImportMaxAge))
+			} else if !g.Complete {
+				// Not stale and not healthy: the importer is running and has
+				// not caught up. Reported, because a budget decision resting on
+				// a partial read is resting on the wrong number.
+				entry["state"] = "incomplete"
+				partial = append(partial, g.Name)
+			} else {
+				entry["state"] = "fresh"
+			}
+		}
+		report = append(report, entry)
+	}
+	f.Observed["gateways"] = report
+
+	if len(stale) > 0 {
+		f.Failing = true
+		f.Summary = strings.Join(stale, "; ")
+		return f
+	}
+	if len(partial) > 0 {
+		f.Failing = true
+		f.Summary = fmt.Sprintf("import has not caught up for %s", strings.Join(partial, ", "))
+		return f
+	}
+	f.Summary = fmt.Sprintf("%d gateway(s) imported within %s", len(imports), t.CostImportMaxAge)
+	return f
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	return s
 }

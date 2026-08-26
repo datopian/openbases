@@ -91,6 +91,10 @@
       - "{{ monitor_backup_streams }}"
       - -expect-cells
       - "{{ monitor_expect_cells }}"
+      - -services
+      - "{{ monitor_services | replace('\n', '') | replace(' ', '') }}"
+      - -gateways
+      - "{{ monitor_gateways | replace('\n', '') | replace(' ', '') }}"
   register: monitor_verify
   # A dry run exits 1 when a check is failing, which is a legitimate answer here
   # — a full disk should not fail the deployment. Only an inability to RUN is a
@@ -98,6 +102,7 @@
   failed_when: >-
     monitor_verify.stdout is not search('api\s')
     or monitor_verify.stdout is not search('backup\s')
+    or monitor_verify.stdout is not search('service\s')
   changed_when: false
   when: monitor_binary_stat.stat.exists
 

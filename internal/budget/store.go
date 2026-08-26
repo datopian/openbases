@@ -20,17 +20,23 @@ func Read(ctx context.Context, db *sql.DB, bead, cell string) (Status, error) {
 		remaining sql.NullString
 		newest    sql.NullTime
 		staleness sql.NullInt64
+		agents    sql.NullInt64
+		runtime   sql.NullInt64
 	)
 	err := db.QueryRowContext(ctx,
 		`SELECT subject_kind, subject_key, daily_cents::text, spent_cents::text,
-		        remaining_cents::text, exceeded, newest_record_at, staleness_seconds
+		        remaining_cents::text, exceeded, newest_record_at, staleness_seconds,
+		        max_agents, max_runtime_minutes
 		   FROM system_budget_status($1, $2)`,
 		bead, nullable(cell),
-	).Scan(&s.SubjectKind, &key, &daily, &s.SpentCents, &remaining, &s.Exceeded, &newest, &staleness)
+	).Scan(&s.SubjectKind, &key, &daily, &s.SpentCents, &remaining, &s.Exceeded, &newest, &staleness,
+		&agents, &runtime)
 	if err != nil {
 		return Status{}, fmt.Errorf("reading the budget for %s: %w", bead, err)
 	}
 
+	s.MaxAgents = int(agents.Int64)
+	s.MaxRuntimeMinutes = int(runtime.Int64)
 	s.SubjectKey = key.String
 	s.DailyCents = daily.String
 	s.RemainingCents = remaining.String

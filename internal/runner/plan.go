@@ -18,6 +18,7 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -365,4 +366,45 @@ func known(m map[string]string) string {
 	}
 	sort.Strings(out)
 	return strings.Join(out, ", ")
+}
+
+// Concurrency reports how many runs are live in a cell.
+//
+// Counted from the run directories, which the runner creates before it starts
+// an agent and removes on every teardown path. Counting processes instead would
+// depend on what the agent binary happens to be called; counting directories
+// depends only on this package's own behaviour.
+//
+// It races two dispatches starting at the same instant, which does not happen
+// today because dispatch is one bead at a time per cell. The honest fix when it
+// does is a lock, not a more careful count, and this is the place it would go.
+func Concurrency(cellRoot string) (int, error) {
+	entries, err := os.ReadDir(filepath.Join(cellRoot, "runs"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		// Directories only. The settings file for a live run is a sibling of
+		// these, and counting it would double every run.
+		if e.IsDir() {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ErrTooManyAgents reports a cell already at its concurrent-agent ceiling.
+type ErrTooManyAgents struct {
+	Cell    string
+	Running int
+	Limit   int
+}
+
+func (e ErrTooManyAgents) Error() string {
+	return fmt.Sprintf("cell %s already has %d agent(s) running and its budget allows %d",
+		e.Cell, e.Running, e.Limit)
 }

@@ -235,4 +235,35 @@ BEGIN
 END
 $$;
 
+-- ---------------------------------------------------------------------------
+-- The operational limits come back with the ceiling (wg-726)
+-- ---------------------------------------------------------------------------
+--
+-- max_concurrent_agents and max_runtime_minutes were stored from 0006 and read
+-- by nothing. They are returned from the SAME row as the money, so a caller
+-- deciding whether to dispatch gets one answer about one subject rather than
+-- resolving twice and possibly landing on different budgets.
+DO $$
+DECLARE kind text; agents integer; runtime integer;
+BEGIN
+  PERFORM system_set_budget('bead', 'wg-test-a', 250.5, 3, 45);
+
+  SELECT subject_kind, max_agents, max_runtime_minutes
+    INTO kind, agents, runtime
+    FROM system_budget_status('wg-test-a', 'wg-test-budget-cell');
+
+  IF kind <> 'bead' THEN RAISE EXCEPTION 'resolved to % not bead', kind; END IF;
+  IF agents <> 3 THEN RAISE EXCEPTION 'max_agents came back as %', agents; END IF;
+  IF runtime <> 45 THEN RAISE EXCEPTION 'max_runtime_minutes came back as %', runtime; END IF;
+
+  -- And a subject with no budget reports no limits rather than zero, which a
+  -- caller would read as "no agents may run".
+  SELECT max_agents, max_runtime_minutes INTO agents, runtime
+    FROM system_budget_status('wg-test-no-such-bead', NULL);
+  IF agents IS NOT NULL OR runtime IS NOT NULL THEN
+    RAISE EXCEPTION 'limits invented for an unbudgeted bead: % / %', agents, runtime;
+  END IF;
+END
+$$;
+
 ROLLBACK;

@@ -229,6 +229,18 @@
       # was '/bin/true', so seventeen segments were reported as archived and
       # discarded.
       before=$(psql -tAc "SELECT coalesce(archived_count, 0) FROM pg_stat_archiver")
+      # Write something first, then switch.
+      #
+      # pg_switch_wal() on an IDLE database returns the current position without
+      # starting a new segment, because there is nothing in the current one to
+      # close. Nothing is then archived, and this check waited its full two
+      # minutes and reported the backups broken — on a healthy system, for the
+      # sole reason that nobody had written to it recently.
+      #
+      # Observed on a deploy where archived_count was 1581 and the last archive
+      # was ninety seconds old. txid_current() assigns a transaction id, which
+      # is itself a WAL record, so the switch then has something to close.
+      psql -qc 'SELECT txid_current()' >/dev/null
       psql -qc 'SELECT pg_switch_wal()' >/dev/null
       # Up to two minutes, because PostgreSQL's archiver backs off after a
       # failure and retries roughly every 60 seconds. A 30-second window timed
