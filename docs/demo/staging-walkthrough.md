@@ -38,9 +38,16 @@ was issued for and grants nothing on its own.
 Then redeploy both nodes:
 
 ```bash
+make build-linux
 cd infra/ansible
 ../../scripts/with_secrets.sh staging ansible-playbook -i inventory/staging.yml site.yml
 ```
+
+**Give it fifteen minutes and do not interrupt it.** Copying a binary over the
+tunnel takes around fourteen of those on its own (wg-0lc); the run looks stalled
+and is not. If it does report the execution node `unreachable`, re-run with
+`--limit workgraph-staging-execution` — that is the same slowness timing out an
+SSH connection, not a broken node.
 
 The dispatcher on the execution node enables itself on that run. It stays off
 until the AUD is set, deliberately: started earlier it would just log a 401
