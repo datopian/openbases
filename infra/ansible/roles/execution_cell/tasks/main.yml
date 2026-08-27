@@ -316,6 +316,26 @@
     label: "{{ item.item.name }}"
   when: item.stat.exists
 
+- name: Ensure the workgraph configuration directory exists
+  ansible.builtin.file:
+    path: /etc/workgraph
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# World-readable, and that is correct: it holds no secret, and the cell users
+# that run agents have to read it. The credential lives in the cell's own
+# 0600 settings file, not here.
+- name: Install the role and model catalogue
+  ansible.builtin.template:
+    src: models.json.j2
+    dest: /etc/workgraph/models.json
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "python3 -c \"import json,sys; json.load(open(sys.argv[1]))\" %s"
+
 - name: Install the work dispatcher
   ansible.builtin.copy:
     src: "{{ dispatcher_local_binary }}"
@@ -388,7 +408,7 @@
 # cell user does not — so a bake-off run on a laptop measures the laptop.
 - name: Install the model bake-off script
   ansible.builtin.copy:
-    src: ../../../scripts/model_bakeoff.sh
+    src: "{{ playbook_dir }}/../../scripts/model_bakeoff.sh"
     dest: /usr/local/bin/wg-bakeoff
     owner: root
     group: root

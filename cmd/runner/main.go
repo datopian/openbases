@@ -37,14 +37,16 @@ import (
 
 func main() {
 	var (
-		bead      = flag.String("bead", "", "the bead to work")
-		cell      = flag.String("cell", getenv("WG_CELL", ""), "execution cell slug")
-		rig       = flag.String("rig", getenv("WG_RIG", "sandbox"), "rig within the cell")
-		role      = flag.String("role", "polecat", "agent role, which decides the model tier")
-		cellRoot  = flag.String("cell-root", "", "the cell's home, e.g. /srv/cells/oss")
-		instr     = flag.String("instructions", "", "what the agent is asked to do")
-		model     = flag.String("model", "", "override the role's model tier")
-		runtimeF  = flag.String("runtime", "", "override the role's agent runtime (claude|opencode)")
+		bead     = flag.String("bead", "", "the bead to work")
+		cell     = flag.String("cell", getenv("WG_CELL", ""), "execution cell slug")
+		rig      = flag.String("rig", getenv("WG_RIG", "sandbox"), "rig within the cell")
+		role     = flag.String("role", "polecat", "agent role, which decides the model tier")
+		cellRoot = flag.String("cell-root", "", "the cell's home, e.g. /srv/cells/oss")
+		instr    = flag.String("instructions", "", "what the agent is asked to do")
+		model    = flag.String("model", "", "override the role's model tier")
+		runtimeF = flag.String("runtime", "", "override the role's agent runtime (claude|opencode)")
+		catPath  = flag.String("catalogue", getenv("WG_MODEL_CATALOGUE", "/etc/workgraph/models.json"),
+			"role and model tables; absent means the built-in defaults")
 		effort    = flag.String("effort", "", "override the role's reasoning effort")
 		deadline  = flag.Duration("deadline", 15*time.Minute, "how long the run may take")
 		maxAgents = flag.Int("max-agents", 0, "refuse if the cell already has this many runs (0 disables; wg-726)")
@@ -88,12 +90,23 @@ func main() {
 		}
 	}
 
+	// A missing catalogue is not an error — the built-in tables run. A present
+	// one that is malformed IS, because that is somebody having configured
+	// something and got it wrong, and running on defaults there is how a
+	// deployment believes it changed a model and did not.
+	catalogue, err := runner.LoadCatalogue(*catPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+
 	plan, err := runner.New(runner.Spec{
 		Bead: *bead, Cell: *cell, Rig: *rig, Role: *role,
 		CellRoot: *cellRoot, Instructions: *instr,
 		GatewayToken:   config.AIGatewayToken(),
 		GatewayBaseURL: gatewayBaseURL(*cellRoot),
 		Runtime:        runner.Runtime(*runtimeF),
+		Catalogue:      catalogue,
 		Deadline:       *deadline, Model: *model, Effort: *effort,
 	})
 	if err != nil {
