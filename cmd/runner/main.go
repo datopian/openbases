@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,6 +44,7 @@ func main() {
 		cellRoot  = flag.String("cell-root", "", "the cell's home, e.g. /srv/cells/oss")
 		instr     = flag.String("instructions", "", "what the agent is asked to do")
 		model     = flag.String("model", "", "override the role's model tier")
+		runtimeF  = flag.String("runtime", "", "override the role's agent runtime (claude|opencode)")
 		effort    = flag.String("effort", "", "override the role's reasoning effort")
 		deadline  = flag.Duration("deadline", 15*time.Minute, "how long the run may take")
 		maxAgents = flag.Int("max-agents", 0, "refuse if the cell already has this many runs (0 disables; wg-726)")
@@ -89,8 +91,10 @@ func main() {
 	plan, err := runner.New(runner.Spec{
 		Bead: *bead, Cell: *cell, Rig: *rig, Role: *role,
 		CellRoot: *cellRoot, Instructions: *instr,
-		GatewayToken: config.AIGatewayToken(),
-		Deadline:     *deadline, Model: *model, Effort: *effort,
+		GatewayToken:   config.AIGatewayToken(),
+		GatewayBaseURL: gatewayBaseURL(*cellRoot),
+		Runtime:        runner.Runtime(*runtimeF),
+		Deadline:       *deadline, Model: *model, Effort: *effort,
 	})
 	if err != nil {
 		// Exit 2 for a bad request, distinct from a run that failed: a
@@ -101,8 +105,15 @@ func main() {
 	}
 
 	if *dryRun {
-		fmt.Printf("run dir   %s\nsettings  %s\nmodel     %s (effort %s)\ndeadline  %s\nmetadata  %s\n",
-			plan.RunDir, plan.SettingsPath, plan.Model, plan.Effort, plan.Deadline, mustJSON(plan.Metadata))
+		// The runtime is printed because it is now the thing that varies, and
+		// because reading it back out of Argv by position is how the first
+		// version of this printed the effort where the model should have been.
+		effort := plan.Effort
+		if _, ignored := plan.Env["WG_EFFORT_IGNORED"]; ignored {
+			effort += " (ignored: this runtime has no equivalent)"
+		}
+		fmt.Printf("runtime   %s\nrun dir   %s\nsettings  %s\nmodel     %s (effort %s)\ndeadline  %s\nmetadata  %s\n",
+			plan.Runtime, plan.RunDir, plan.SettingsPath, plan.Model, effort, plan.Deadline, mustJSON(plan.Metadata))
 		return
 	}
 
@@ -296,6 +307,36 @@ func trustWorkspace(path, dir string, trusted bool) error {
 		return err
 	}
 	return os.WriteFile(path, out, 0o600)
+}
+
+// gatewayBaseURL reads the cell's own gateway endpoint out of its agent
+// settings and strips the provider segment, leaving the prefix a runtime can
+// append its own to.
+//
+// Read from the cell rather than configured separately, on exactly the argument
+// scripts/dispatch_bead.sh makes about the token: a run must not reach a
+// different gateway than the cell's own agents use. Two places to configure one
+// endpoint is how they drift.
+//
+// Empty on any failure rather than an error, because only the opencode runtime
+// needs it — and that runtime refuses without it, with a message that says so.
+// Failing every claude run over a file it does not read would be worse.
+func gatewayBaseURL(cellRoot string) string {
+	if cellRoot == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(cellRoot, ".claude", "settings.json"))
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return ""
+	}
+	// .../<account>/<gateway>/anthropic -> .../<account>/<gateway>
+	return strings.TrimSuffix(strings.TrimSuffix(doc.Env["ANTHROPIC_BASE_URL"], "/"), "/anthropic")
 }
 
 func getenv(k, def string) string {
