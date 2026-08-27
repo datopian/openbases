@@ -46,6 +46,16 @@ type Spec struct {
 	GatewayToken string
 	// Deadline bounds the run.
 	Deadline time.Duration
+	// GatewayBaseURL is the gateway prefix WITHOUT the provider segment, e.g.
+	// https://gateway.ai.cloudflare.com/v1/<account>/workgraph-staging-oss.
+	//
+	// Required by the opencode runtime, which has to be told the whole endpoint;
+	// unused by claude, which gets it from the cell's own settings. Read from
+	// the cell rather than configured separately, on the same reasoning as the
+	// token: a run must not reach a different gateway than the cell's own agents.
+	GatewayBaseURL string
+	// Runtime is which agent CLI runs this. Empty means the role's default.
+	Runtime Runtime
 	// Model and Effort override the role defaults when set.
 	Model  string
 	Effort string
@@ -76,6 +86,8 @@ type Plan struct {
 	// model should have been, because it took the last argument.
 	Model  string
 	Effort string
+	// Runtime is which CLI Argv[0] is, stated rather than inferred from it.
+	Runtime Runtime
 	// AllowedTools is what the agent may do without being asked.
 	AllowedTools []string
 	// BeadsDir is the graph the agent reads and closes its bead in.
@@ -110,6 +122,65 @@ type Plan struct {
 var DefaultModels = map[string]string{
 	"polecat": "sonnet",
 	"crew":    "sonnet",
+}
+
+// Runtime is which agent CLI executes the run.
+//
+// A property of the RUN, not of the deployment (ADR-0024). The role picks the
+// default and a spec may override it, which is what makes trying another model
+// on one bead a flag rather than a project.
+type Runtime string
+
+const (
+	// RuntimeClaude is Claude Code, reaching Anthropic models through the
+	// gateway's /anthropic path. The default, and unchanged by ADR-0024.
+	RuntimeClaude Runtime = "claude"
+	// RuntimeOpenCode is OpenCode, reaching any gateway provider through
+	// /compat. Proven to carry attribution in wg-uhj.
+	RuntimeOpenCode Runtime = "opencode"
+)
+
+// DefaultRuntimes maps a role to the CLI that runs it.
+//
+// Both on claude, deliberately. ADR-0024 makes another runtime possible; it
+// does not migrate anything, because a runtime change is a change to what
+// executes model output against our repositories and deserves a bead of its
+// own.
+var DefaultRuntimes = map[string]Runtime{
+	"polecat": RuntimeClaude,
+	"crew":    RuntimeClaude,
+}
+
+// ModelLimits is what a model can take, which OpenCode requires to be told.
+//
+// Not a nicety: without a limit OpenCode asks for max_tokens=32000, and a model
+// that caps lower refuses the request before doing any work —
+//
+//	max_tokens=32000 cannot be greater than max_model_len=max_total_tokens=24000
+//
+// Context is also a hard filter on which models can be workers at all,
+// separately from how good they are. OpenCode's agent system prompt is roughly
+// 19,900 tokens, so a 24k model cannot host it: llama-3.3-70b is a capable T0
+// classifier and an unusable worker, and the two facts are unrelated.
+type ModelLimits struct {
+	Context int
+	Output  int
+}
+
+// GatewayModels is what we know about the models reachable through the gateway.
+//
+// A short table here rather than a lookup, because it is consulted while
+// planning and a planner that makes a network call has a new failure mode. It
+// moves to deployed configuration in wg-3tp; until then, adding a model is a
+// pull request, which for something that decides what executes against our
+// repositories is the right amount of friction.
+var GatewayModels = map[string]ModelLimits{
+	"workers-ai/@cf/moonshotai/kimi-k2.7-code":          {Context: 262144, Output: 8192},
+	"workers-ai/@cf/moonshotai/kimi-k2.6":               {Context: 262144, Output: 8192},
+	"workers-ai/@cf/moonshotai/kimi-k3":                 {Context: 262144, Output: 8192},
+	"workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731": {Context: 131072, Output: 8192},
+	"workers-ai/@cf/zai-org/glm-5.3-flash":              {Context: 131072, Output: 8192},
+	"workers-ai/@cf/qwen/qwen3-30b-a3b-fp8":             {Context: 32768, Output: 4096},
 }
 
 // DefaultTools is what each role may do unattended.
@@ -187,8 +258,32 @@ func New(s Spec) (Plan, error) {
 		role = "polecat"
 	}
 
+	// The role is checked once, here, against the runtime table — which is the
+	// table every role must appear in. Three lookups each reporting their own
+	// failure meant an unknown role was reported as a missing runtime, which
+	// says nothing about the actual mistake.
+	if _, ok := DefaultRuntimes[role]; !ok {
+		return p, fmt.Errorf("unknown role %q (known: %s)", role, knownRoles())
+	}
+
+	runtime := s.Runtime
+	if runtime == "" {
+		runtime = DefaultRuntimes[role]
+	}
+	if runtime != RuntimeClaude && runtime != RuntimeOpenCode {
+		return p, fmt.Errorf("unknown runtime %q; expected %q or %q", runtime, RuntimeClaude, RuntimeOpenCode)
+	}
+
 	model := s.Model
 	if model == "" {
+		if runtime == RuntimeOpenCode {
+			// No default, and deliberately not one borrowed from DefaultModels:
+			// those are Claude Code's spellings, and handing "sonnet" to the
+			// gateway's /compat endpoint would fail somewhere far from here.
+			// Naming models one way for every runtime is wg-8e0.
+			return p, fmt.Errorf("the %s runtime needs an explicit model, e.g. %s",
+				RuntimeOpenCode, "workers-ai/@cf/moonshotai/kimi-k2.7-code")
+		}
 		var ok bool
 		if model, ok = DefaultModels[role]; !ok {
 			// Not defaulted to something cheap and not to something capable:
@@ -237,7 +332,11 @@ func New(s Spec) (Plan, error) {
 	// covers its working directory and the rig, and nothing else — while still
 	// being a path the CLI can be pointed at.
 	p.SettingsPath = filepath.Join(s.CellRoot, "runs", "."+s.Bead+".settings.json")
-	p.TrustFile = filepath.Join(s.CellRoot, ".claude.json")
+	// Claude Code only. OpenCode has no trusted-workspace concept, and setting
+	// this for it would have the teardown remove an entry nothing wrote.
+	if runtime == RuntimeClaude {
+		p.TrustFile = filepath.Join(s.CellRoot, ".claude.json")
+	}
 
 	p.Metadata = map[string]string{
 		"role": role,
@@ -257,11 +356,6 @@ func New(s Spec) (Plan, error) {
 	}
 	p.AllowedTools = tools
 
-	headers, err := renderHeaders(s.GatewayToken, p.Metadata)
-	if err != nil {
-		return Plan{}, err
-	}
-
 	// The rig's graph, which is what the agent has to read and close.
 	//
 	// Without it the run is a no-op that costs money: the first agent to get
@@ -277,23 +371,211 @@ func New(s Spec) (Plan, error) {
 		p.Env["BEADS_DIR"] = filepath.Join(p.BeadsDir, ".beads")
 	}
 
+	p.Model, p.Effort, p.Runtime = model, effort, runtime
+
+	// From here the two runtimes diverge completely: different config file,
+	// different way of carrying the credential, different argv. What they share
+	// is above, and what they must both satisfy is that the credential ends up
+	// somewhere the agent cannot read it.
+	switch runtime {
+	case RuntimeClaude:
+		if err := planClaude(&p, s, tools); err != nil {
+			return Plan{}, err
+		}
+	case RuntimeOpenCode:
+		if err := planOpenCode(&p, s, tools); err != nil {
+			return Plan{}, err
+		}
+	}
+
+	p.Deadline = deadline
+	return p, nil
+}
+
+// planClaude fills in the Claude Code half. Unchanged behaviour; only moved.
+func planClaude(p *Plan, s Spec, tools []string) error {
+	headers, err := renderHeaders(s.GatewayToken, p.Metadata)
+	if err != nil {
+		return err
+	}
 	settings, err := renderSettings(headers, tools, p.BeadsDir)
 	if err != nil {
-		return Plan{}, err
+		return err
 	}
 	p.Settings = settings
-
-	p.Model, p.Effort = model, effort
-	p.Argv = []string{"claude", "-p", s.Instructions, "--model", model,
+	p.Argv = []string{"claude", "-p", s.Instructions, "--model", p.Model,
 		"--settings", p.SettingsPath}
-	if effort != "" {
+	if p.Effort != "" {
 		// --effort, not --reasoning-effort. The CLI rejects the latter with
 		// "unknown option", which a run reports as a plain exit 1 — indis-
 		// tinguishable from the agent failing at its actual work.
-		p.Argv = append(p.Argv, "--effort", effort)
+		p.Argv = append(p.Argv, "--effort", p.Effort)
 	}
-	p.Deadline = deadline
-	return p, nil
+	return nil
+}
+
+// planOpenCode fills in the OpenCode half (wg-uhj proved the shape).
+//
+// Three differences from Claude Code that are not cosmetic.
+//
+// The credential travels in a provider's options.headers rather than in an env
+// block, and the config file is named by OPENCODE_CONFIG rather than --settings.
+// The file still lives beside the run directory and not in it, for the same
+// reason: an agent with Read in its own working directory can read its own
+// gateway token, which has happened here once already.
+//
+// The model must carry its limits, because OpenCode otherwise asks for 32000
+// output tokens and a smaller model refuses the whole request.
+//
+// And the permission model is the opposite way round. OpenCode allows
+// everything by default, so the config denies "*" first and allows back the
+// short list — where Claude Code takes an allowlist and we add a deny list on
+// top of it. Same intent, expressed from the other end.
+func planOpenCode(p *Plan, s Spec, tools []string) error {
+	base := strings.TrimSuffix(strings.TrimSpace(s.GatewayBaseURL), "/")
+	if base == "" {
+		return fmt.Errorf("the %s runtime needs the gateway base URL", RuntimeOpenCode)
+	}
+	limits, ok := GatewayModels[p.Model]
+	if !ok {
+		return fmt.Errorf("no limits known for model %q; add it to GatewayModels, "+
+			"because without them OpenCode requests 32000 output tokens and the model refuses", p.Model)
+	}
+
+	cfg, err := renderOpenCodeConfig(base, s.GatewayToken, p.Model, limits, p.Metadata, tools, s.CellRoot)
+	if err != nil {
+		return err
+	}
+	p.Settings = cfg
+	// The provider id is ours, so the model reaching the CLI is
+	// <our-provider>/<gateway-provider>/<model>.
+	p.Argv = []string{"opencode", "run", "-m", openCodeProvider + "/" + p.Model, s.Instructions}
+	// Not --auto. Every permission below is an explicit allow or deny, so
+	// nothing is left to ask; --auto would additionally approve anything a
+	// future OpenCode version adds that we have not thought about.
+	p.Env["OPENCODE_CONFIG"] = p.SettingsPath
+	// Effort has no equivalent here. Saying so is better than silently dropping
+	// it, because a run that ignored the tier would look identical to one that
+	// honoured it.
+	if p.Effort != "" {
+		p.Env["WG_EFFORT_IGNORED"] = p.Effort
+	}
+	return nil
+}
+
+// openCodeProvider is the id of the provider block the runner writes. Ours, not
+// one of OpenCode's built-ins, because it points at OUR gateway with OUR
+// attribution headers and must not be confused with a stock cloudflare entry.
+const openCodeProvider = "wg-gateway"
+
+// renderOpenCodeConfig builds the config file OPENCODE_CONFIG points at.
+//
+// The permission block is the security boundary and is written from deny-all
+// upwards. OpenCode evaluates patterns with the LAST match winning, so the
+// catch-all comes first and the specific allows after it — the opposite order
+// reads the same and denies everything.
+func renderOpenCodeConfig(base, token, model string, limits ModelLimits,
+	metadata map[string]string, tools []string, cellRoot string) (string, error) {
+
+	if len(metadata) > 5 {
+		return "", fmt.Errorf("%d metadata keys exceeds the gateway's limit of 5", len(metadata))
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return "", err
+	}
+
+	// Translated from the same role allowlist the claude runtime uses, so the
+	// two runtimes grant the same thing and a reader can compare them. The
+	// Bash(bd:*) entry is the one that matters: bd and nothing else.
+	perm := map[string]any{
+		"*":     "deny",
+		"read":  "allow",
+		"glob":  "allow",
+		"grep":  "allow",
+		"edit":  "allow",
+		"write": "allow",
+		"bash": map[string]string{
+			"*":    "deny",
+			"bd *": "allow",
+		},
+		// Everything outside the run directory and the rig is denied. Claude
+		// Code has no equivalent of this and relies on the sandbox; here it is
+		// stated, which is strictly better.
+		"external_directory": map[string]string{
+			"*":                                     "deny",
+			filepath.Join(cellRoot, "town") + "/**": "allow",
+		},
+	}
+	if !hasTool(tools, "Write") {
+		perm["write"] = "deny"
+	}
+	if !hasTool(tools, "Edit") {
+		perm["edit"] = "deny"
+	}
+
+	doc := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"provider": map[string]any{
+			openCodeProvider: map[string]any{
+				// The OpenAI-compatible adapter, against the gateway's /compat
+				// endpoint. That is where dynamic routes live too, so the same
+				// block reaches them later without changing shape.
+				"npm":  "@ai-sdk/openai-compatible",
+				"name": "Workgraph gateway",
+				"options": map[string]any{
+					"baseURL": base + "/compat",
+					"headers": map[string]string{
+						"cf-aig-authorization": "Bearer " + token,
+						"cf-aig-metadata":      string(encoded),
+					},
+				},
+				"models": map[string]any{
+					model: map[string]any{
+						"name":  model,
+						"limit": map[string]int{"context": limits.Context, "output": limits.Output},
+					},
+				},
+			},
+		},
+		"permission": perm,
+		// Off, because an agent that updates itself mid-run is a different
+		// binary than the one versions.lock pinned.
+		"autoupdate": false,
+		// Nothing leaves the node. The default is off, and stating it means a
+		// changed default does not quietly start publishing run transcripts.
+		"share": "disabled",
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(out) + "\n", nil
+}
+
+func hasTool(tools []string, want string) bool {
+	for _, t := range tools {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// knownRoles lists the roles this runner starts. DefaultRuntimes is the
+// authority, because every role needs one and a role missing from it cannot run
+// at all — whereas a role can legitimately take its model from a spec.
+func knownRoles() string {
+	names := make([]string, 0, len(DefaultRuntimes))
+	for r := range DefaultRuntimes {
+		names = append(names, r)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func knownRuntimes() string {
+	return string(RuntimeClaude) + ", " + string(RuntimeOpenCode)
 }
 
 // renderHeaders builds the gateway header value: the credential and the

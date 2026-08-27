@@ -414,3 +414,155 @@ func TestTooManyAgentsSaysTheNumbers(t *testing.T) {
 		}
 	}
 }
+
+// --- ADR-0024: the runtime is a property of the run ---
+
+func openCodeSpec() Spec {
+	s := spec()
+	s.Runtime = RuntimeOpenCode
+	s.Model = "workers-ai/@cf/moonshotai/kimi-k2.7-code"
+	s.GatewayBaseURL = "https://gateway.ai.cloudflare.com/v1/acct/workgraph-staging-oss"
+	return s
+}
+
+// The default must not move by accident. ADR-0024 makes another runtime
+// possible; it migrates nothing, because changing what executes model output
+// against our repositories deserves a decision rather than a side effect.
+func TestTheDefaultRuntimeIsStillClaude(t *testing.T) {
+	p, err := New(spec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Runtime != RuntimeClaude {
+		t.Errorf("runtime = %q, want %q", p.Runtime, RuntimeClaude)
+	}
+	if p.Argv[0] != "claude" {
+		t.Errorf("argv[0] = %q, want claude", p.Argv[0])
+	}
+}
+
+// The credential must not be readable by the agent it authorises. An agent with
+// Read in its own working directory found the gateway token once already and
+// said so; it behaved well and the next one might not. This has to hold for
+// EVERY runtime, which is the point of asserting it in a loop rather than once.
+func TestNoRuntimePutsTheCredentialWhereTheAgentCanReadIt(t *testing.T) {
+	for _, s := range []Spec{spec(), openCodeSpec()} {
+		p, err := New(s)
+		if err != nil {
+			t.Fatalf("%s: %v", s.Runtime, err)
+		}
+		if !strings.Contains(p.Settings, s.GatewayToken) {
+			t.Fatalf("%s: the config should carry the token; this test proves nothing otherwise", p.Runtime)
+		}
+		if strings.HasPrefix(p.SettingsPath, p.RunDir+string(filepath.Separator)) {
+			t.Errorf("%s: config %q is inside the run directory %q, where the agent can read it",
+				p.Runtime, p.SettingsPath, p.RunDir)
+		}
+	}
+}
+
+// OpenCode is told the model's limits or it asks for 32000 output tokens and a
+// smaller model refuses the whole request before doing any work.
+func TestOpenCodeCarriesTheModelLimits(t *testing.T) {
+	p, err := New(openCodeSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Provider map[string]struct {
+			Options struct {
+				BaseURL string            `json:"baseURL"`
+				Headers map[string]string `json:"headers"`
+			} `json:"options"`
+			Models map[string]struct {
+				Limit map[string]int `json:"limit"`
+			} `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(p.Settings), &doc); err != nil {
+		t.Fatalf("the config is not valid JSON: %v", err)
+	}
+	prov := doc.Provider[openCodeProvider]
+	if got := prov.Models["workers-ai/@cf/moonshotai/kimi-k2.7-code"].Limit["output"]; got != 8192 {
+		t.Errorf("output limit = %d, want 8192", got)
+	}
+	// /compat, not /anthropic: that endpoint is what accepts provider/model
+	// naming, and it is where dynamic routes will live.
+	if !strings.HasSuffix(prov.Options.BaseURL, "/compat") {
+		t.Errorf("baseURL = %q, want a /compat suffix", prov.Options.BaseURL)
+	}
+	// Both headers or neither. The credential and the attribution are one
+	// variable: a run that authenticates but arrives untagged is worse than one
+	// that fails, because it looks like success from outside every budget.
+	if prov.Options.Headers["cf-aig-authorization"] == "" {
+		t.Error("the gateway credential is missing")
+	}
+	if !strings.Contains(prov.Options.Headers["cf-aig-metadata"], `"bead"`) {
+		t.Errorf("attribution is missing from the headers: %q", prov.Options.Headers["cf-aig-metadata"])
+	}
+}
+
+// OpenCode allows everything by default, which is the opposite of Claude Code.
+// The config has to deny first and allow back, and bash has to be bd and
+// nothing else — no git push, no curl, no shelling out to reach them.
+func TestOpenCodeDeniesFirstAndAllowsBackOnlyBd(t *testing.T) {
+	p, err := New(openCodeSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Permission struct {
+			Star string            `json:"*"`
+			Bash map[string]string `json:"bash"`
+			Read string            `json:"read"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal([]byte(p.Settings), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Permission.Star != "deny" {
+		t.Errorf(`permission["*"] = %q, want deny — without a catch-all deny, `+
+			`anything OpenCode adds later is allowed by default`, doc.Permission.Star)
+	}
+	if doc.Permission.Bash["*"] != "deny" {
+		t.Errorf(`permission.bash["*"] = %q, want deny`, doc.Permission.Bash["*"])
+	}
+	if doc.Permission.Bash["bd *"] != "allow" {
+		t.Error("the agent cannot drive its own bead without bd")
+	}
+	if doc.Permission.Read != "allow" {
+		t.Error("an agent that cannot read cannot work")
+	}
+}
+
+// A model nobody has recorded limits for is refused rather than run with
+// OpenCode's default, which a smaller model rejects outright.
+func TestAnUnknownModelIsRefusedForOpenCode(t *testing.T) {
+	s := openCodeSpec()
+	s.Model = "workers-ai/@cf/nobody/never-heard-of-it"
+	if _, err := New(s); err == nil {
+		t.Error("a model with no known limits was planned anyway")
+	}
+}
+
+// Claude Code's spellings are not the gateway's. Handing "sonnet" to /compat
+// would fail a long way from here, so it fails at planning instead.
+func TestOpenCodeRefusesToGuessAModel(t *testing.T) {
+	s := openCodeSpec()
+	s.Model = ""
+	_, err := New(s)
+	if err == nil {
+		t.Fatal("the opencode runtime defaulted to a Claude Code model name")
+	}
+	if !strings.Contains(err.Error(), "explicit model") {
+		t.Errorf("the error should say a model is required: %v", err)
+	}
+}
+
+func TestAnUnknownRuntimeIsRefused(t *testing.T) {
+	s := spec()
+	s.Runtime = "telepathy"
+	if _, err := New(s); err == nil {
+		t.Error("an unknown runtime was accepted")
+	}
+}
