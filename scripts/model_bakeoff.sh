@@ -85,7 +85,7 @@ run_agent() {
   local bead="$1" model="$2" rt="$3" instr="$4"
   WG_AI_GATEWAY_TOKEN="$WG_AI_GATEWAY_TOKEN" "$RUNNER" \
     -bead "$bead" -cell oss -rig sandbox -cell-root "$CELL" \
-    -instructions "$instr" -deadline 6m -keep \
+    -instructions "$instr" -deadline 6m -keep ${BAKEOFF_EXPLAIN:+-explain} \
     -runtime "$rt" -model "$model" >"$WORK/$bead.log" 2>&1
 }
 

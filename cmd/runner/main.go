@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -52,6 +53,7 @@ func main() {
 		maxAgents = flag.Int("max-agents", 0, "refuse if the cell already has this many runs (0 disables; wg-726)")
 		keep      = flag.Bool("keep", false, "leave the run directory behind for inspection")
 		dryRun    = flag.Bool("dry-run", false, "plan and print, running nothing")
+		explain   = flag.Bool("explain", false, "print the exact argv, environment and directory, then run")
 		jsonOut   = flag.Bool("json", false, "print the result as JSON")
 	)
 	flag.Parse()
@@ -131,6 +133,15 @@ func main() {
 	}
 
 	log.Info("starting", "build", version.String(), "bead", *bead, "cell", *cell, "dir", plan.RunDir)
+
+	// -explain exists because wg-azd was chased for hours by guessing at what
+	// differed between this and a shell. Every candidate — the permission block,
+	// the session store, XDG, the working directory, stdin, the process group —
+	// was tested one at a time and worked. What was never done was reading the
+	// exec itself, which is the one thing that could not be wrong.
+	if *explain {
+		explainExec(plan, config.AIGatewayToken())
+	}
 
 	res := execute(log, plan, *keep)
 	if *jsonOut {
@@ -257,7 +268,23 @@ func execute(log *slog.Logger, plan runner.Plan, keep bool) result {
 	// run /login". Auth and the cell-wide settings live in the cell's home;
 	// per-run settings live in the working directory and take precedence there.
 	// Both are needed, and they are not the same place.
-	cmd.Env = os.Environ()
+	// PWD is set to match, and OLDPWD dropped.
+	//
+	// cmd.Dir changes the child's working directory but not its idea of one:
+	// PWD is an ordinary variable that a shell maintains, so a runner started
+	// from a script hands the agent a PWD pointing wherever that script was.
+	// OpenCode believes it over getcwd(), and against an unreadable /root it
+	// exits immediately with "Session not found" — a message about neither
+	// directories nor permissions, which is why wg-azd took eight ruled-out
+	// hypotheses to find.
+	//
+	// It only appeared under a script. Run by hand through `sudo -u ... env`,
+	// sudo strips PWD, the agent falls back to getcwd(), and everything works —
+	// so every manual reproduction passed and the bake-off failed.
+	//
+	// An inherited PWD that disagrees with cmd.Dir is a lie to the child
+	// whatever it does with it, so this is right regardless of OpenCode.
+	cmd.Env = append(environWithout("PWD", "OLDPWD"), "PWD="+plan.RunDir)
 	// The gateway credential and the bead's attribution travel in the
 	// environment, not in the settings file the agent reads (see runner.Plan).
 	for k, v := range plan.Env {
@@ -369,6 +396,73 @@ func gatewayBaseURL(cellRoot string) string {
 	}
 	// .../<account>/<gateway>/anthropic -> .../<account>/<gateway>
 	return strings.TrimSuffix(strings.TrimSuffix(doc.Env["ANTHROPIC_BASE_URL"], "/"), "/anthropic")
+}
+
+// explainExec prints exactly what the child is started with.
+//
+// The credential is redacted rather than omitted: knowing a variable is set, and
+// how long its value is, is most of what a comparison needs, and printing the
+// gateway token into a log would be a worse bug than the one being chased.
+// environWithout is os.Environ() with the named variables removed, so a
+// replacement can be appended without the child seeing both.
+func environWithout(drop ...string) []string {
+	skip := make(map[string]bool, len(drop))
+	for _, d := range drop {
+		skip[d] = true
+	}
+	out := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if !skip[k] {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+func explainExec(plan runner.Plan, secrets ...string) {
+	fmt.Fprintf(os.Stderr, "exec  dir=%s\n", plan.RunDir)
+	for i, a := range plan.Argv {
+		fmt.Fprintf(os.Stderr, "exec  argv[%d]=%q\n", i, a)
+	}
+	keys := make([]string, 0, len(plan.Env))
+	for k := range plan.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(os.Stderr, "exec  env %s=%s\n", k, redact(k, plan.Env[k], secrets))
+	}
+	// The whole inherited environment, not a chosen few. The child gets
+	// os.Environ() plus the plan's additions, so anything here reaches it — and
+	// "the exec looked identical" was true of the argv while the inherited
+	// environment was never compared.
+	inherited := os.Environ()
+	sort.Strings(inherited)
+	for _, kv := range inherited {
+		k, v, _ := strings.Cut(kv, "=")
+		fmt.Fprintf(os.Stderr, "exec  inherited %s=%s\n", k, redact(k, v, secrets))
+	}
+	fmt.Fprintf(os.Stderr, "exec  config=%s (%d bytes)\n", plan.SettingsPath, len(plan.Settings))
+}
+
+// redact hides a secret whether it is the whole value or buried in one.
+//
+// Redacting by variable NAME alone was not enough, and this printed a live
+// gateway token to prove it: sudo publishes the command it ran as SUDO_COMMAND,
+// so a token passed on a command line reappears inside an unrelated variable.
+// The known secret values are matched wherever they occur.
+func redact(key, value string, secrets []string) string {
+	for _, s := range secrets {
+		if s != "" && strings.Contains(value, s) {
+			value = strings.ReplaceAll(value, s, fmt.Sprintf("<redacted, %d chars>", len(s)))
+		}
+	}
+	lower := strings.ToLower(key)
+	if strings.Contains(lower, "token") || strings.Contains(lower, "secret") || strings.Contains(lower, "key") {
+		return fmt.Sprintf("<redacted, %d chars>", len(value))
+	}
+	return value
 }
 
 func getenv(k, def string) string {

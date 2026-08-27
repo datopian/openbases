@@ -1,6 +1,6 @@
 # wg-hvb: which models can be workers?
 
-**Ran:** 2026-08-27 · **Harness:** `scripts/model_bakeoff.sh` · **Decides:** the model half of [ADR-0024](../adr/0024-multi-provider-agent-runtimes.md)
+**Ran:** 2026-08-27, corrected and re-run 2026-08-28 · **Harness:** `scripts/model_bakeoff.sh` · **Decides:** the model half of [ADR-0024](../adr/0024-multi-provider-agent-runtimes.md)
 
 Three screens, cheapest first, because each costs an order of magnitude more than
 the one before and most candidates die early:
@@ -49,56 +49,82 @@ The lesson is narrower and worth more than the table: a number nobody checked
 reads exactly like a measurement. Everything else in this document was measured;
 this column was recalled, and it was the only part that was wrong.
 
-## Screens 2 and 3: blocked, and not by the models
+## Screens 2 and 3: every candidate passes
 
-The control passes both: `claude-sonnet-5` edits the file when told to, and
-fixes the off-by-one. So the harness works.
+All six read the file and edited it exactly as told, and all six fixed the
+off-by-one, verified on the edit rather than on the explanation.
 
-Every non-Anthropic candidate fails with `Error: Session not found`, thrown by
-OpenCode about seven seconds in, before the model does anything. **That is not a
-model result and must not be read as one.** Invoked directly from a shell with
-the identical configuration, `kimi-k2.7-code` reads the file, writes it, and
-verifies its own work.
+The earlier version of this document reported four tool-use failures. Those were
+`wg-azd` — a stale `PWD` inherited from the calling script, which OpenCode
+believed over `getcwd()`. Not one of them was a model failure.
 
-Tracked as `wg-azd`. Ruled out so far, each tested individually on the execution
-node as the cell user, all of which work from a shell: the deny-first permission
-block; OpenCode's shared session store; an isolated or missing `XDG_DATA_HOME`;
-the working directory being under the cell; stdin closed; the child in its own
-process group; output to a file rather than a pipe; and the exact generated
-config, byte for byte, with the same environment and working directory.
+## Cost for the same verified outcome
 
-The difference is something `wg-runner` does to the child that a shell does not,
-and it only matters once a tool is involved — a run needing no tools succeeds
-through `wg-runner` and is attributed normally.
+Screen 3 is one task, so this ranks nothing. It is here because the spread is
+larger than any argument about model quality is likely to be.
 
-## How this went wrong first, and what it cost
+| Model | Cents | Calls |
+|---|---:|---:|
+| `@cf/zai-org/glm-5.3-flash` | 0.188 | 6 |
+| `@cf/deepseek-ai/deepseek-v4-flash-0731` | 0.457 | 6 |
+| `@cf/google/gemma-4-26b-a4b-it` | 0.515 | 9 |
+| `@cf/moonshotai/kimi-k2.6` | 0.573 | 4 |
+| `@cf/moonshotai/kimi-k2.7-code` | 0.885 | 5 |
+| `anthropic/claude-sonnet-5` *(control)* | **60.215** | **47** |
 
-Three earlier attempts produced confident, wrong answers. Each is worth
-recording, because the failure mode was the same every time: **the harness broke
-in a way that looked exactly like a model declining to work.**
+Same task, same verified pass, and the default costs 320× the cheapest.
 
-The first run was on a laptop, where OpenCode merges a global config from
-`~/.config/opencode` that a cell user does not have. Five identical failures —
-*including the control*. The second and third were on the node but the work
-directory was never created, so every log redirect failed and the runner never
-started; then run directories were reused between attempts, and stale session
-state produced the same message.
+Read the call counts before drawing the obvious conclusion. Claude Code made 47
+requests where the open-weight runs made four to nine, which is a difference in
+how the harness works rather than in the model: it explores, reads more, and
+checks itself. On a one-line boundary fix that is pure overhead. On an ambiguous
+failure in an unfamiliar module it is most of the value, and this task cannot
+tell the two apart.
 
-The control is what caught all three. A screen every candidate fails, control
-included, is a broken screen — and without a known-good entry in the list there
-is nothing to distinguish that from a genuinely poor field.
+What the number does justify is measuring properly rather than assuming the
+expensive default is required. A task shape where a 0.19-cent model reliably
+succeeds should not be run at 60 cents, and there are shapes like that in this
+backlog.
+
+## How this went wrong, four times
+
+Every wrong answer had the same shape: **the harness broke in a way that looked
+exactly like a model declining to work.** Worth recording, because that shape is
+the thing to watch for rather than any individual cause.
+
+1. Run on a laptop, where OpenCode merges a global config from
+   `~/.config/opencode` that a cell user does not have. Five identical failures,
+   *including the control*.
+2. On the node, but the work directory was never created, so every log redirect
+   failed and the runner never started.
+3. Run directories reused between attempts, inheriting stale session state.
+4. `wg-azd`: a stale `PWD` inherited from the calling script. Four models
+   recorded as unable to use tools. All four use tools correctly.
+
+The control caught the first three: a screen every candidate fails, control
+included, is a broken screen. It did **not** catch the fourth, because Claude
+Code ignores `PWD` and passed while everything else failed — which reads exactly
+like a real result, and is the reason that one took eight ruled-out hypotheses.
+
+A control tells you the screen works. It does not tell you the screen is
+measuring what you think, and a control that differs from the candidates in the
+way that matters will pass a broken screen.
+
+The context column was wrong too, and differently: it was *recalled* rather than
+measured, and three of seven figures were too small. Everything else in this
+document came from a run. That column came from memory, and it was the only part
+that a reader caught.
 
 ## What to do next
 
-`wg-azd` first: it blocks the only screens that can rank models. Then re-run —
-the harness is on the node as `/usr/local/bin/wg-bakeoff` and takes about two
-minutes.
+Screen 3 is one task and ranks nothing. What decides which model does which work
+is cost per completed bead across real work of each shape, which needs a larger
+and duller sample than anything here — several beads per shape, taken from work
+that has already been done so the right answer is known.
 
-Add `kimi-k3` to the candidate list once Unified Billing credits are loaded. It
-is the one model the account currently cannot reach (403), and on published
-context it would pass screen 1 comfortably.
+Add `kimi-k3` once Unified Billing credits are loaded. It is the one model the
+account cannot currently reach, and on published context it passes screen 1.
 
-And treat screen 3 as a placeholder. One off-by-one is a smoke test, not a
-ranking. What decides which model does which work is cost per *completed bead*
-across real work of each shape — which needs `wg-azd` fixed and then a larger,
-duller sample than anything in this document.
+The harness is on the node as `/usr/local/bin/wg-bakeoff` and takes about four
+minutes. `BAKEOFF_EXPLAIN=1` dumps each run's exact argv, environment and
+working directory, which is what `wg-azd` needed and nobody had.
