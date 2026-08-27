@@ -130,7 +130,29 @@ and an architecture review are not the same job and should not cost the same, an
 whichever model the harness happens to reach for — is not a decision anybody made. The reasoning is
 [ADR-0018](docs/adr/0018-tiered-model-routing.md); this is what it means in practice.
 
-### Four tiers
+### What actually runs today
+
+Two models do all of the platform's work:
+
+| Model | What it runs |
+|---|---|
+| `claude-sonnet-5` | workers — `polecat` and `crew`, the agents that do the work |
+| `claude-haiku-4-5` | patrol — `mayor`, `deacon`, `witness`, `refinery`, `dog`, `boot` |
+
+**No open-weight model serves production traffic.** Of 3,356 recorded calls,
+195 went to open-weight models — all of them on 16–17 August, tagged
+`t0-bakeoff` and `probe`, and all of it the measurement below. Nothing has used
+one since, because the only planned caller for T0–T2 is control-plane inference,
+and that is not built (`wg-sn4`).
+
+Opus does not appear in any role map and the platform never selects it. The Opus
+spend in the gateway logs is untagged, which is what a developer's own Claude
+Code session looks like — not the agents.
+
+The tiers below are a **decision, not a description**. They say what should run
+what once there is something to route.
+
+### Four tiers (designed; T0–T2 have no caller yet)
 
 | Tier | Default model | Work it is for |
 |---|---|---|
@@ -141,6 +163,16 @@ whichever model the harness happens to reach for — is not a decision anybody m
 
 Opus is off by default and needs explicit human approval. Sonnet needs a cheaper tier to have been
 tried first, unless the work is marked critical.
+
+**Switching the agent tier to a non-Anthropic model is not a configuration
+change**, and it is worth knowing why before planning around it. Every agent
+call goes to `…/workgraph-<env>-<domain>/anthropic` — the gateway's Anthropic
+path — because Claude Code speaks Anthropic's `/v1/messages`. Point it elsewhere
+and the wire format no longer matches. The two ways out are replacing Claude
+Code as the harness, which Gas Town's hook integration makes more than a setting,
+or a proxy that accepts `/v1/messages` and speaks `/compat/chat/completions`.
+The proxy is the smaller change and is tracked as `wg-b7z`. Until one exists,
+`--model` on `wg-runner` can select any Anthropic model and nothing else.
 
 **T0 must not be a reasoning model, and that was measured rather than assumed.** The plan
 originally named GLM-4.7-Flash here. Classifying fifteen real bead titles into bug/task/chore
@@ -234,20 +266,27 @@ up for a dispatch and is torn down after it, and why the health monitor that rep
 patrol makes no model calls at all.
 
 Every call is recorded per model, imported from the gateways into `usage_records`. From staging, all
-3,350 records to date:
+3,356 records to date:
 
-| Model | Calls | Spend |
-|---|---:|---:|
-| `claude-opus-5` | 376 | $23.60 |
-| `claude-haiku-4-5` | 2,236 | $16.40 |
-| `claude-sonnet-5` | 503 | $11.97 |
-| `@cf/google/gemma-4-26b-a4b-it` | 92 | $0.01 |
-| `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | 69 | <$0.01 |
-| `@cf/zai-org/glm-4.7-flash` | 16 | <$0.01 |
+| Model | Calls | Spend | What produced it |
+|---|---:|---:|---|
+| `claude-opus-5` | 376 | $23.60 | untagged — developer sessions, not the platform |
+| `claude-haiku-4-5` | 2,236 | $16.40 | patrol roles |
+| `claude-sonnet-5` | 503 | $11.97 | workers |
+| open-weight, 8 models | 195 | $0.01 | the T0 bake-off above, 16–17 Aug |
 
-Read the top three rows together: Haiku took six times Opus's call volume for two thirds of its
-cost, and the open-weight tiers ran 177 calls for roughly a cent. That is the tiering working, and
-it is also why the cheap tiers are worth building callers for rather than reasoning about.
+Two things to read out of it, and one thing not to.
+
+Haiku took four times Sonnet's call volume for less than one and a half times its
+cost, which is patrol tiering doing its job — that is the part that is working.
+The Opus row is the largest single line and none of it is the platform: it is
+untagged, and untagged means no role, cell or bead header, which is what a
+developer's own Claude Code session looks like. Untagged spend is not a rounding
+error to leave alone; it is 45% of this table.
+
+What *not* to read is the open-weight row as evidence of tiering. Those 195 calls
+are the bake-off, ten days old and never repeated. Cheap tiers cost a cent here
+because almost nothing has used them.
 
 Spend is attributed by role, cell, project and **bead**, so `wg-budget` can refuse a dispatch
 before an agent starts rather than after it has spent the money. Three gateways — `oss`, `internal`,
