@@ -5,63 +5,21 @@ gets dispatched to a real agent on a real machine, and the cost of that agent
 lands against the cell that spent it. That is the whole system in one loop —
 work intake, planning, execution isolation, and cost attribution.
 
-`scripts/on.sh` below runs one command on a node. Neither node has an inbound
-port, so plain `ssh` will not work unless your ssh config already has the
-cloudflared ProxyCommand; the script borrows Ansible's, which does.
-
-Everything else is at **https://work-staging.openbases.com**. You will hit
+Everything is at **https://work-staging.openbases.com**. You will hit
 Cloudflare Access first and log in as yourself; that identity is what the API
 uses to decide what you can see.
 
-## Before you start: one apply
+## Before you start
 
-There is one piece I could not put in place, because it creates a Cloudflare
-Access application and I am not making Cloudflare changes outside of a plan you
-have seen. It takes about a minute.
+Nothing. It is all up.
 
-```bash
-cd ~/code/workgraph
-scripts/with_secrets.sh staging scripts/tofu.sh staging apply
-scripts/with_secrets.sh staging scripts/tofu.sh staging output -raw cell_work_queue_aud
-```
+The `/v1/node/` Access application exists, `wg-dispatcher` is running on the
+execution node, and the loop below has been run end to end — a brief in, two
+linked beads out, 18.57 cents attributed to the run that produced them.
 
-Take the AUD that prints and put it in `infra/ansible/group_vars/all/secrets.yml`,
-where the key is already there waiting, empty:
-
-```yaml
-control_api_cell_work_access_aud: "<the aud>"
-```
-
-That file is plain YAML, not encrypted — an AUD says which application a token
-was issued for and grants nothing on its own.
-
-Then redeploy both nodes:
-
-```bash
-make build-linux
-cd infra/ansible
-../../scripts/with_secrets.sh staging ansible-playbook -i inventory/staging.yml site.yml
-```
-
-**Give it fifteen minutes and do not interrupt it.** Copying a binary over the
-tunnel takes around fourteen of those on its own (wg-0lc); the run looks stalled
-and is not. If it does report the execution node `unreachable`, re-run with
-`--limit workgraph-staging-execution` — that is the same slowness timing out an
-SSH connection, not a broken node.
-
-The dispatcher on the execution node enables itself on that run. It stays off
-until the AUD is set, deliberately: started earlier it would just log a 401
-every fifteen seconds and bury the next real failure.
-
-**What this unlocks:** the execution node's ability to claim queued work. The
-node has no inbound port — that is deliberate — so it reaches out to
-`/v1/node/...` to ask for a job, and that path needs its own Access application
-with a service-token policy. Without it the queue accepts jobs and nothing
-picks them up.
-
-**If the apply fails or you are short on time**, skip to
-[The read-only demo](#the-read-only-demo). It needs none of this and still shows
-real data.
+`scripts/on.sh` in the commands below runs one command on a node. Neither node
+has an inbound port, so plain `ssh` will not work unless your ssh config already
+carries the cloudflared ProxyCommand; the script borrows Ansible's, which does.
 
 ## The full loop
 
@@ -89,7 +47,9 @@ a Claude Code agent inside the `oss` cell's cgroup slice with its own Dolt
 database. The prompt tells it to file work, not do it, and bounds it to between
 two and eight beads that each need acceptance criteria.
 
-Expect **60 to 120 seconds**. The page polls every five seconds.
+**Measured, not estimated:** the dispatcher polls every ten seconds, and the
+planning run itself took 26 seconds. Allow about a minute and a half from
+pressing the button to seeing the beads. The page polls every five seconds.
 
 ### 3. Read what it filed
 
@@ -106,9 +66,25 @@ filed.
 Pick one of the new beads and press **Dispatch**. It queues, the dispatcher
 claims it, and an agent does the work in the cell.
 
-**Watch the cents column.** It fills in after the run. That number came from the
-model gateway, matched back to this bead by the headers the runner set — which is
-why cost lands on a *bead*, not just on an account.
+**Watch the cents column** — but first make it appear. Spend is imported from
+the gateway on an hourly timer, so straight after a run the column still reads
+`0` and looks broken. Force the import:
+
+```bash
+scripts/on.sh staging control 'systemctl start wg-costimport.service'
+```
+
+Then refresh. The last run through this loop landed as:
+
+```
+bead                                       role     model             calls  cents
+plan-d37e5ff7-79aa-4040-9436-368f7a347b7a  polecat  claude-sonnet-5       6  18.57
+```
+
+That number came from the model gateway and was matched back to this bead by the
+headers the runner set — which is why cost lands on a *bead* and a *role*, not
+just on an account. Say the hourly lag out loud rather than letting someone
+notice a zero and draw their own conclusion.
 
 ### 5. Show what happens at the limit
 
@@ -148,20 +124,18 @@ the `portaljs-oss` project budget, so lowering the cell ceiling would not touch
 them. `unset` removes a level and restores the fallback; zero does not, because
 zero is a real budget meaning refuse everything.
 
-## The read-only demo
+## If the dispatcher is down
 
-If the apply above did not happen, this still works and is worth showing.
-
-On the control node:
+The read half does not depend on the execution node at all. From the control
+node:
 
 ```bash
 scripts/on.sh staging control 'wg-env wg-work sync-hq'
 ```
 
-That projects the HQ graph into `work_refs` directly from the control node. Then
-the Work page shows the real backlog — status, ownership, spend per bead. The
-brief box will queue jobs that nothing claims, so do not press **Plan** during a
-read-only demo.
+That projects the HQ graph into `work_refs` directly, and the Work page then
+shows the real backlog — status, ownership, spend per bead. Do not press **Plan**
+in this state: the job queues and nothing claims it.
 
 ## Other things worth showing
 
@@ -186,8 +160,26 @@ The dispatcher is the moving part. On the execution node:
 scripts/on.sh staging execution 'journalctl -u wg-dispatcher-oss -n 50 --no-pager'
 ```
 
-A repeating 401 means the AUD from the apply is missing or does not match. A
-repeating "no work" is normal and means the queue is empty.
+**Silence is the healthy state.** It logs when it starts, when it runs a job and
+when one finishes, and nothing in between — an idle queue produces no output at
+all, so an empty journal is not a symptom.
 
-If a job is stuck *in flight*, it will time out on its own after fifteen minutes
-and report the failure rather than sitting there forever.
+If the service token is not accepted for a path, you get this rather than a 401,
+because Cloudflare Access answers an unauthenticated request with **200 and its
+login page**:
+
+```
+expected JSON, got "text/html; charset=utf-8" — this is Cloudflare Access
+serving its login page, which means the service token was not accepted for
+this path
+```
+
+That means the AUD in `group_vars/all/secrets.yml` no longer matches the Access
+application. Compare it against
+`scripts/with_secrets.sh staging scripts/tofu.sh staging output -raw cell_work_queue_aud`.
+
+A job that fails reports why, in the queue and in the UI — for example
+`a run needs the AI Gateway token, or its spend escapes every budget`, which is
+`wg-runner` refusing to run outside the budget rather than failing open. A job
+stuck *in flight* times out on its own after fifteen minutes and reports the
+failure rather than sitting there forever.
