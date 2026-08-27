@@ -23,6 +23,25 @@ control_api_binary: /usr/local/bin/workgraph-control-api
 # which has the same answer and no database credential to hand out.
 budget_local_binary: ""
 budget_binary: /usr/local/bin/wg-budget
+
+# wg-work, the operator's side of the work queue (WP-E3), on the same reasoning
+# as wg-budget: it needs this role's database identity and nothing else.
+#
+# It also carries `sync-hq`, which projects the HQ graph into work_refs from
+# here. That is the one path to a populated Work page that does not depend on an
+# execution node being up.
+work_local_binary: ""
+work_binary: /usr/local/bin/wg-work
+
+# The migration tool, which embeds the migrations rather than reading them from
+# a directory — so deploying this binary is deploying the schema.
+#
+# Applied on every deploy, before the API restarts. Migrations are forward-only,
+# each runs in its own transaction, and applying one that is already applied is
+# a no-op checked against its recorded checksum. Leaving this to a person meant
+# the schema on the node was whatever the last person remembered to run.
+migrate_local_binary: ""
+migrate_binary: /usr/local/bin/wg-migrate
 control_api_reconcile_binary: /usr/local/bin/workgraph-reconcile
 # The App private key on the control node. Deployed only when a local source is
 # given; reconciliation's resync half is skipped without it, while replay still

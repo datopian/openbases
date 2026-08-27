@@ -1,0 +1,300 @@
+// Command wg-dispatcher is the execution node's side of the work queue.
+//
+// The control plane cannot reach here — this node has no inbound port, and it
+// talks to the control API outward through Cloudflare Access. So a dispatch is
+// not something the node receives, it is a row the node comes and claims. This
+// polls for one, runs it with wg-runner, and reports what happened.
+//
+// It also pushes the cell's bead state up on every pass. work_refs has existed
+// since 0001 as the projection of Beads into the control plane and nothing ever
+// filled it, so the interface could show projects and repositories but never the
+// work itself. A process already talking to the control plane every few seconds
+// is the cheapest thing to fill it with.
+//
+// One job at a time, deliberately. Concurrency is bounded by the budget's
+// max_concurrent_agents (wg-726), and a dispatcher that ran two jobs at once
+// would have to reimplement that bound rather than inherit it.
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/datopian/workgraph/internal/version"
+	"github.com/datopian/workgraph/internal/work"
+)
+
+func main() {
+	var (
+		apiURL   = flag.String("api", os.Getenv("WG_CONTROL_API"), "control API base URL")
+		cell     = flag.String("cell", getenv("WG_CELL", "oss"), "this cell's slug")
+		cellRoot = flag.String("cell-root", "", "the cell's home, e.g. /srv/cells/oss")
+		rig      = flag.String("rig", getenv("WG_RIG", "sandbox"), "default rig")
+		runner   = flag.String("runner", "/usr/local/bin/wg-runner", "path to the agent runner")
+		interval = flag.Duration("interval", 10*time.Second, "how often to look for work")
+		deadline = flag.Duration("deadline", 15*time.Minute, "how long one job may take")
+		once     = flag.Bool("once", false, "do a single pass and exit")
+	)
+	flag.Parse()
+
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if *cellRoot == "" {
+		*cellRoot = "/srv/cells/" + *cell
+	}
+
+	id, secret := os.Getenv("WG_ACCESS_CLIENT_ID"), os.Getenv("WG_ACCESS_CLIENT_SECRET")
+	if *apiURL == "" || id == "" || secret == "" {
+		log.Error("no control API credentials; expected WG_CONTROL_API and the Access client id and secret")
+		os.Exit(2)
+	}
+
+	d := &dispatcher{
+		api: strings.TrimSuffix(*apiURL, "/"), clientID: id, clientSecret: secret,
+		cell: *cell, cellRoot: *cellRoot, rig: *rig, runner: *runner,
+		deadline: *deadline, log: log,
+		http: &http.Client{Timeout: 60 * time.Second},
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	log.Info("starting", "build", version.String(), "cell", *cell, "api", d.api)
+
+	if *once {
+		d.pass(ctx)
+		return
+	}
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
+	d.pass(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("stopped cleanly")
+			return
+		case <-ticker.C:
+			d.pass(ctx)
+		}
+	}
+}
+
+type dispatcher struct {
+	api, clientID, clientSecret string
+	cell, cellRoot, rig, runner string
+	deadline                    time.Duration
+	http                        *http.Client
+	log                         *slog.Logger
+}
+
+// pass projects the cell's beads upward, then claims and runs at most one job.
+//
+// Projection first, so that a bead an agent created a moment ago is visible
+// before anything else happens to it. Getting this the other way round meant a
+// freshly planned bead appeared in the interface only after the NEXT pass, which
+// reads as the planner having done nothing.
+func (d *dispatcher) pass(ctx context.Context) {
+	if err := d.project(ctx); err != nil {
+		d.log.Error("projecting beads", "error", err)
+	}
+
+	job, err := d.claim(ctx)
+	if err != nil {
+		d.log.Error("claiming work", "error", err)
+		return
+	}
+	if job == nil {
+		return
+	}
+	if err := job.Validate(); err != nil {
+		d.log.Error("refusing an unrunnable job", "job", job.ID, "error", err)
+		d.report(ctx, job.ID, work.Result{OK: false, Output: err.Error()})
+		return
+	}
+
+	d.log.Info("running", "job", job.ID, "kind", job.Kind, "bead", job.Bead)
+	out, runErr := d.run(ctx, *job)
+	d.report(ctx, job.ID, work.Result{OK: runErr == nil, Output: out})
+	if runErr != nil {
+		d.log.Error("job failed", "job", job.ID, "error", runErr)
+	} else {
+		d.log.Info("job done", "job", job.ID)
+	}
+}
+
+// run invokes wg-runner, which owns the working directory, the settings, the
+// deadline and the teardown. Nothing about how an agent is started belongs here.
+func (d *dispatcher) run(ctx context.Context, job work.Job) (string, error) {
+	rig := job.Rig
+	if rig == "" {
+		rig = d.rig
+	}
+	// A plan job has no bead of its own, so it needs a name for its run
+	// directory and its cost attribution. The job id is the honest one: the
+	// spend belongs to the act of planning, not to any bead it produces.
+	bead := job.Bead
+	if bead == "" {
+		bead = "plan-" + job.ID
+	}
+
+	args := []string{
+		"-bead", bead,
+		"-cell", d.cell,
+		"-rig", rig,
+		"-cell-root", d.cellRoot,
+		"-role", job.Role(),
+		"-instructions", job.Instructions(),
+		"-deadline", d.deadline.String(),
+	}
+	cmd := exec.CommandContext(ctx, d.runner, args...)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// project sends the cell's beads to the control plane.
+func (d *dispatcher) project(ctx context.Context) error {
+	beads, err := d.readBeads(ctx)
+	if err != nil {
+		return err
+	}
+	if len(beads) == 0 {
+		return nil
+	}
+	body, err := json.Marshal(map[string]any{"cell": d.cell, "beads": beads})
+	if err != nil {
+		return err
+	}
+	_, err = d.call(ctx, http.MethodPost, "/v1/work/project", bytes.NewReader(body))
+	return err
+}
+
+type beadRow struct {
+	Bead   string `json:"bead"`
+	Title  string `json:"title"`
+	Kind   string `json:"kind"`
+	Status string `json:"status"`
+}
+
+// readBeads asks bd for the cell's beads as JSON.
+func (d *dispatcher) readBeads(ctx context.Context) ([]beadRow, error) {
+	cmd := exec.CommandContext(ctx, "bd", "list", "--all", "--json")
+	cmd.Dir = d.cellRoot + "/town/" + d.rig
+	cmd.Env = append(os.Environ(), "HOME="+d.cellRoot)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("bd list: %w", err)
+	}
+
+	// bd's JSON shape is its own, and it has changed between versions, so this
+	// reads defensively: anything without an id is skipped rather than failing
+	// the pass, because one odd row must not stop the rest being visible.
+	var raw []map[string]any
+	if err := json.Unmarshal(out, &raw); err != nil {
+		var wrapper struct {
+			Issues []map[string]any `json:"issues"`
+		}
+		if err2 := json.Unmarshal(out, &wrapper); err2 != nil {
+			return nil, fmt.Errorf("bd list returned neither a list nor {issues}: %w", err)
+		}
+		raw = wrapper.Issues
+	}
+
+	rows := make([]beadRow, 0, len(raw))
+	for _, r := range raw {
+		id, _ := r["id"].(string)
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		row := beadRow{Bead: id}
+		row.Title, _ = r["title"].(string)
+		row.Kind, _ = r["issue_type"].(string)
+		if row.Kind == "" {
+			row.Kind, _ = r["type"].(string)
+		}
+		row.Status, _ = r["status"].(string)
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (d *dispatcher) claim(ctx context.Context) (*work.Job, error) {
+	body, err := d.call(ctx, http.MethodPost, "/v1/work/claim?cell="+d.cell, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil, nil // 204: nothing to do, which is the common case
+	}
+	var job work.Job
+	if err := json.Unmarshal(body, &job); err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (d *dispatcher) report(ctx context.Context, id string, res work.Result) {
+	body, err := json.Marshal(res)
+	if err != nil {
+		d.log.Error("encoding a result", "job", id, "error", err)
+		return
+	}
+	if _, err := d.call(ctx, http.MethodPost, "/v1/work/"+id+"/result", bytes.NewReader(body)); err != nil {
+		// Loud, because a job stuck in `running` forever is how a queue quietly
+		// stops. Nothing here can fix it; the control plane has to notice.
+		d.log.Error("could not report a finished job; it will sit as running", "job", id, "error", err)
+	}
+}
+
+func (d *dispatcher) call(ctx context.Context, method, path string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, d.api+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("CF-Access-Client-Id", d.clientID)
+	req.Header.Set("CF-Access-Client-Secret", d.clientSecret)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := d.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, truncate(string(out), 200))
+	}
+	return out, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}

@@ -32,6 +32,7 @@ import (
 	"github.com/datopian/workgraph/internal/version"
 	"github.com/datopian/workgraph/internal/webui"
 	"github.com/datopian/workgraph/internal/witness"
+	"github.com/datopian/workgraph/internal/work"
 )
 
 func main() {
@@ -103,6 +104,17 @@ func main() {
 				// Three narrow applications sharing one service token keeps
 				// each grant equal to the endpoint that was actually reviewed.
 				"/v1/budget/check": cfg.CellBudgetAccessAudience,
+				// The node's side of the work queue. A distinct /v1/node/
+				// prefix so ONE Access application covers exactly the node's
+				// surface — the human endpoints live under /v1/work and a
+				// prefix application over that would have handed a cell token
+				// the ability to enqueue work as well as claim it.
+			},
+			// /v1/node/ is reserved for the execution nodes. Everything under
+			// it is a node endpoint, which is what makes a prefix safe here —
+			// the human endpoints that CREATE work live under /v1/work.
+			PathPrefixAudiences: map[string]string{
+				"/v1/node/": cfg.CellWorkAccessAudience,
 			},
 		}
 	}
@@ -306,6 +318,127 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		})
 	})
 
+	// ---------------------------------------------------------------------
+	// The work queue (WP-D2/E3)
+	// ---------------------------------------------------------------------
+	//
+	// The control plane cannot reach an execution node, so a dispatch is not a
+	// call — it is a row the node comes and claims. These two endpoints are the
+	// node's side of that, and they use the cell service token like every other
+	// node-facing endpoint here.
+
+	// Claim the next job for a cell. Returns 204 when there is nothing to do,
+	// which is the common case and must not read as an error in a log.
+	authed.HandleFunc("POST /v1/node/work/claim", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		cell := strings.TrimSpace(r.URL.Query().Get("cell"))
+		if cell == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "cell is required"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+
+		var job work.Job
+		var bead, brief sql.NullString
+		err := db.QueryRowContext(r.Context(),
+			`SELECT id, kind, bead, brief, rig FROM system_claim_work($1)`, cell).
+			Scan(&job.ID, &job.Kind, &bead, &brief, &job.Rig)
+		if errors.Is(err, sql.ErrNoRows) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if err != nil {
+			log.Error("claiming work", "cell", cell, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		job.Cell, job.Bead, job.Brief = cell, bead.String, brief.String
+		log.Info("work claimed", "cell", cell, "job", job.ID, "kind", job.Kind, "bead", job.Bead)
+		writeJSON(w, http.StatusOK, job)
+	})
+
+	// Report a finished job.
+	authed.HandleFunc("POST /v1/node/work/{id}/result", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		var res work.Result
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&res); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		var ok bool
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT system_finish_work($1, $2, $3)`,
+			r.PathValue("id"), res.OK, res.Output).Scan(&ok); err != nil {
+			log.Error("finishing work", "job", r.PathValue("id"), "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		log.Info("work finished", "job", r.PathValue("id"), "ok", res.OK, "recorded", ok)
+		writeJSON(w, http.StatusOK, map[string]any{"recorded": ok})
+	})
+
+	// Project beads from a cell's graph into work_refs.
+	//
+	// work_refs has existed since 0001 as the projection of Beads into the
+	// control plane and nothing ever filled it, so the UI could show projects
+	// and repositories but never the work. Beads stays canonical; this is a
+	// cache so a page can rank and filter without asking every cell.
+	authed.HandleFunc("POST /v1/node/work/project", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		var payload struct {
+			Cell  string `json:"cell"`
+			Beads []struct {
+				Bead   string `json:"bead"`
+				Title  string `json:"title"`
+				Kind   string `json:"kind"`
+				Status string `json:"status"`
+			} `json:"beads"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&payload); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		projected := 0
+		for _, b := range payload.Beads {
+			if strings.TrimSpace(b.Bead) == "" {
+				continue
+			}
+			var ok bool
+			if err := db.QueryRowContext(r.Context(),
+				`SELECT system_project_bead($1,$2,$3,$4,$5)`,
+				payload.Cell, b.Bead, b.Title, b.Kind, b.Status).Scan(&ok); err != nil {
+				log.Error("projecting a bead", "cell", payload.Cell, "bead", b.Bead, "error", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+				return
+			}
+			projected++
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"projected": projected})
+	})
+
 	// Agent health, reported by the deterministic witness on each execution
 	// node (cmd/witness). The pass is recorded whole — observations included —
 	// because the claim being made is that health monitoring needs no
@@ -409,6 +542,219 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			"spent", status.SpentCents, "limit", status.DailyCents,
 			"staleness_seconds", status.StalenessSeconds)
 		writeJSON(w, http.StatusOK, decision)
+	})
+
+	// ---------------------------------------------------------------------
+	// Work, for a person (WP-F1)
+	// ---------------------------------------------------------------------
+
+	// Everything there is to see about the work: the beads, whether an agent is
+	// queued or running on one, and what each has cost.
+	authed.HandleFunc("GET /v1/work", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "a user is required"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		cell := nullableParam(r.URL.Query().Get("cell"))
+
+		type item struct {
+			Bead       string `json:"bead"`
+			Title      string `json:"title"`
+			Kind       string `json:"kind"`
+			Status     string `json:"status"`
+			Cell       string `json:"cell"`
+			Project    string `json:"project,omitempty"`
+			LastSeen   string `json:"last_seen"`
+			QueueState string `json:"queue_state,omitempty"`
+			QueuedAt   string `json:"queued_at,omitempty"`
+			SpentCents string `json:"spent_cents"`
+			Requests   int64  `json:"requests"`
+		}
+		rows, err := db.QueryContext(r.Context(),
+			`SELECT bead, coalesce(title,''), coalesce(kind,''), coalesce(status,''),
+			        coalesce(cell,''), coalesce(project,''), last_seen,
+			        coalesce(queue_state,''), queued_at, spent_cents::text, requests
+			   FROM system_work_overview($1)`, cell)
+		if err != nil {
+			log.Error("listing work", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		defer rows.Close()
+
+		out := []item{}
+		for rows.Next() {
+			var it item
+			var lastSeen sql.NullTime
+			var queuedAt sql.NullTime
+			if err := rows.Scan(&it.Bead, &it.Title, &it.Kind, &it.Status, &it.Cell,
+				&it.Project, &lastSeen, &it.QueueState, &queuedAt, &it.SpentCents, &it.Requests); err != nil {
+				log.Error("scanning work", "error", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+				return
+			}
+			if lastSeen.Valid {
+				it.LastSeen = lastSeen.Time.UTC().Format(time.RFC3339)
+			}
+			if queuedAt.Valid {
+				it.QueuedAt = queuedAt.Time.UTC().Format(time.RFC3339)
+			}
+			out = append(out, it)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"work": out})
+	})
+
+	// The queue, including plan jobs, which have no bead to hang off until they
+	// have produced some.
+	authed.HandleFunc("GET /v1/work/queue", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "a user is required"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		rows, err := db.QueryContext(r.Context(),
+			`SELECT id, kind, cell, rig, coalesce(bead,''), coalesce(brief,''),
+			        status, created_at, finished_at, coalesce(result,'')
+			   FROM system_queue_overview($1)`, nullableParam(r.URL.Query().Get("cell")))
+		if err != nil {
+			log.Error("listing the queue", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		defer rows.Close()
+
+		type job struct {
+			ID         string `json:"id"`
+			Kind       string `json:"kind"`
+			Cell       string `json:"cell"`
+			Rig        string `json:"rig"`
+			Bead       string `json:"bead,omitempty"`
+			Brief      string `json:"brief,omitempty"`
+			Status     string `json:"status"`
+			CreatedAt  string `json:"created_at"`
+			FinishedAt string `json:"finished_at,omitempty"`
+			Result     string `json:"result,omitempty"`
+		}
+		out := []job{}
+		for rows.Next() {
+			var j job
+			var created time.Time
+			var finished sql.NullTime
+			if err := rows.Scan(&j.ID, &j.Kind, &j.Cell, &j.Rig, &j.Bead, &j.Brief,
+				&j.Status, &created, &finished, &j.Result); err != nil {
+				log.Error("scanning the queue", "error", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+				return
+			}
+			j.CreatedAt = created.UTC().Format(time.RFC3339)
+			if finished.Valid {
+				j.FinishedAt = finished.Time.UTC().Format(time.RFC3339)
+			}
+			out = append(out, j)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"queue": out})
+	})
+
+	// Turn a brief into beads.
+	//
+	// Enqueued rather than run: the node claims it. That is not only an
+	// architectural necessity — it also means this returns immediately and the
+	// page can show the job moving through queued, running and done, rather than
+	// holding a request open for however long an agent takes.
+	authed.HandleFunc("POST /v1/work/plan", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "a user is required"})
+			return
+		}
+		var payload struct {
+			Brief string `json:"brief"`
+			Cell  string `json:"cell"`
+			Rig   string `json:"rig"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		if strings.TrimSpace(payload.Brief) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "a brief is required"})
+			return
+		}
+		if strings.TrimSpace(payload.Cell) == "" {
+			payload.Cell = "oss"
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		var jobID string
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT system_enqueue_work('plan', $1, $2, NULL, $3, $4)`,
+			payload.Cell, payload.Rig, payload.Brief, id.UserID).Scan(&jobID); err != nil {
+			log.Error("enqueueing a plan", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		log.Info("plan enqueued", "job", jobID, "cell", payload.Cell, "by", id.UserID)
+		writeJSON(w, http.StatusAccepted, map[string]any{"job": jobID, "status": "queued"})
+	})
+
+	// Send one bead to an agent.
+	authed.HandleFunc("POST /v1/work/{bead}/dispatch", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "a user is required"})
+			return
+		}
+		var payload struct {
+			Cell string `json:"cell"`
+			Rig  string `json:"rig"`
+		}
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&payload)
+		if strings.TrimSpace(payload.Cell) == "" {
+			payload.Cell = "oss"
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+
+		bead := r.PathValue("bead")
+
+		// The budget is checked HERE, before the job is queued, rather than
+		// only on the node. A refusal a person can see when they press the
+		// button is worth more than one they find in a journal afterwards, and
+		// the node checks again anyway — that second check is what actually
+		// protects the money.
+		if status, err := budget.Read(r.Context(), db, bead, payload.Cell); err == nil {
+			if d := budget.Decide(status, budget.PolicyFromEnv()); !d.Allow {
+				log.Warn("dispatch refused by budget", "bead", bead, "reason", d.Reason)
+				writeJSON(w, http.StatusPaymentRequired, map[string]any{
+					"error": d.Reason, "budget": d.Status,
+				})
+				return
+			}
+		}
+
+		var jobID string
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT system_enqueue_work('work', $1, $2, $3, NULL, $4)`,
+			payload.Cell, payload.Rig, bead, id.UserID).Scan(&jobID); err != nil {
+			log.Error("enqueueing work", "bead", bead, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		log.Info("work enqueued", "job", jobID, "bead", bead, "by", id.UserID)
+		writeJSON(w, http.StatusAccepted, map[string]any{"job": jobID, "bead": bead, "status": "queued"})
 	})
 
 	// The registry. Every read runs inside a transaction carrying the caller's
@@ -715,4 +1061,13 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// nullableParam turns an absent query parameter into a SQL NULL, so a filter
+// that was not asked for does not become a filter for the empty string.
+func nullableParam(v string) any {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	return v
 }

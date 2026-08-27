@@ -50,3 +50,7 @@ output "probe_client_secret" {
   value     = module.environment.probe_client_secret
   sensitive = true
 }
+
+output "cell_work_queue_aud" {
+  value = module.environment.cell_work_queue_aud
+}

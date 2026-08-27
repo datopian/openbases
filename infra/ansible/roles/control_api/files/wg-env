@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Run a workgraph CLI with the control plane's configuration.
+#
+#   wg-env wg-work list oss
+#   wg-env wg-budget status wg-qw1 --cell oss
+#
+# The services get their configuration from systemd: an EnvironmentFile for the
+# settings and LoadCredential for the secrets. A person at a shell gets neither,
+# which is why `wg-work` on its own says there is no database URL configured
+# while the API it shares a config package with is happily connected.
+#
+# This is the same two sources, assembled the same way. CREDENTIALS_DIRECTORY is
+# what systemd sets, so the config package finds the password by the path it
+# already prefers rather than through the environment fallback — the secret
+# never becomes an environment variable that `ps` or a child process can read.
+set -euo pipefail
+
+[ "$#" -gt 0 ] || { echo "usage: wg-env <command> [args...]" >&2; exit 2; }
+
+set -a
+# shellcheck disable=SC1091
+. /etc/workgraph/control-api.env
+set +a
+export CREDENTIALS_DIRECTORY=/etc/workgraph/credentials
+
+exec "$@"

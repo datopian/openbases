@@ -41,6 +41,11 @@ type AccessValidator struct {
 	// to its path keeps that property instead of quietly widening it.
 	PathAudiences map[string]string
 
+	// PathPrefixAudiences maps a reserved path PREFIX to an audience accepted
+	// anywhere beneath it. Only for namespaces that exist to be one; see
+	// audiencesFor.
+	PathPrefixAudiences map[string]string
+
 	// HTTPClient fetches the signing keys. Injectable for tests.
 	HTTPClient *http.Client
 
@@ -246,6 +251,22 @@ func (v *AccessValidator) audiencesFor(path string) jwt.Audience {
 	auds := jwt.Audience{v.Audience}
 	if extra, ok := v.PathAudiences[path]; ok && extra != "" {
 		auds = append(auds, extra)
+	}
+	// A prefix is accepted only for a namespace that exists to BE one.
+	//
+	// The rule above is right for the paths it guards: a prefix match on
+	// "/v1/integrations/github/installation-token" would also accept anything
+	// appended to it. It cannot express "/v1/node/work/{id}/result", whose id
+	// varies, and enumerating job ids is not possible.
+	//
+	// So /v1/node/ is reserved: everything under it is a node endpoint and
+	// nothing else is ever mounted there. The prefix is the security boundary,
+	// which is only safe because the namespace is dedicated — the human
+	// endpoints that CREATE work live under /v1/work, deliberately not here.
+	for prefix, extra := range v.PathPrefixAudiences {
+		if extra != "" && strings.HasPrefix(path, prefix) {
+			auds = append(auds, extra)
+		}
 	}
 	return auds
 }
