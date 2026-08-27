@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -94,5 +96,45 @@ func TestAccessLoginPageIsReportedAsSuch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Access") {
 		t.Errorf("the error must name Cloudflare Access so the cause is findable; got %q", err)
+	}
+}
+
+// The gateway token is not stored on its own anywhere. It lives inside the
+// header string the agent sends, because the gateway only honours the
+// credential when it arrives as a header — set it in the environment and the
+// run reaches the gateway untagged, which looks like success and is not.
+func TestGatewayTokenComesFromTheCellSettings(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := &dispatcher{cellRoot: root}
+
+	write(`{"env":{"ANTHROPIC_CUSTOM_HEADERS":"cf-aig-authorization: Bearer tok-abc123\nx-other: 1"}}`)
+	got, err := d.gatewayToken()
+	if err != nil {
+		t.Fatalf("gatewayToken: %v", err)
+	}
+	if got != "tok-abc123" {
+		t.Errorf("token = %q, want tok-abc123", got)
+	}
+
+	// Refused, not defaulted. A run without the gateway does not fail — it
+	// succeeds straight against the provider, outside every budget.
+	write(`{"env":{"ANTHROPIC_CUSTOM_HEADERS":"x-other: 1"}}`)
+	if _, err := d.gatewayToken(); err == nil {
+		t.Error("a missing token must refuse the run, not return an empty string")
+	}
+
+	if err := os.Remove(filepath.Join(root, ".claude", "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.gatewayToken(); err == nil {
+		t.Error("missing settings must refuse the run")
 	}
 }

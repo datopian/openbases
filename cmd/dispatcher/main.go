@@ -28,6 +28,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -157,11 +159,58 @@ func (d *dispatcher) run(ctx context.Context, job work.Job) (string, error) {
 		"-instructions", job.Instructions(),
 		"-deadline", d.deadline.String(),
 	}
+	// The gateway token comes from the cell's own agent settings, which is
+	// where the gastown role put it — the same place scripts/dispatch_bead.sh
+	// reads it from, and for the same reason: read here rather than passed in,
+	// so a dispatch cannot run with a different token than the cell's own
+	// agents use.
+	//
+	// wg-runner refuses without it, and that refusal is the point. A run with
+	// no gateway does not fail; it succeeds straight against the provider,
+	// untagged, unmetered and outside every budget — the one failure this whole
+	// chain exists to prevent.
+	token, err := d.gatewayToken()
+	if err != nil {
+		return "", err
+	}
+
 	cmd := exec.CommandContext(ctx, d.runner, args...)
-	cmd.Env = os.Environ()
+	// Appended rather than replacing the environment, because the runner also
+	// needs PATH and HOME from the unit. The token is passed to one child and
+	// is never logged; wg-runner writes it into a settings file outside the run
+	// directory so the agent itself cannot read it back.
+	cmd.Env = append(os.Environ(), "WG_AI_GATEWAY_TOKEN="+token)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
+
+// gatewayToken reads the cell's AI Gateway token out of its agent settings.
+//
+// The token is not stored on its own anywhere. It lives inside the
+// ANTHROPIC_CUSTOM_HEADERS value that Claude Code sends, because the gateway
+// only honours the credential when it arrives as a header on the request — an
+// environment variable is ignored, and a run then reaches the gateway untagged.
+func (d *dispatcher) gatewayToken() (string, error) {
+	path := filepath.Join(d.cellRoot, ".claude", "settings.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading the cell's agent settings for the gateway token: %w", err)
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return "", fmt.Errorf("parsing %s: %w", path, err)
+	}
+	m := gatewayTokenPattern.FindStringSubmatch(settings.Env["ANTHROPIC_CUSTOM_HEADERS"])
+	if len(m) != 2 || m[1] == "" {
+		return "", fmt.Errorf("no AI Gateway token in %s; refusing to run, because a run without it "+
+			"escapes every budget", path)
+	}
+	return m[1], nil
+}
+
+var gatewayTokenPattern = regexp.MustCompile(`cf-aig-authorization:\s*Bearer\s+(\S+)`)
 
 // project reads the cell's beads and sends them to the control plane.
 //
