@@ -44,3 +44,5 @@ old one, exactly as knowledge records are superseded rather than overwritten.
 - [ADR-0021](0021-durable-cost-records.md) — Spend is recorded in the database, not read from the gateway
 - [ADR-0022](0022-per-bead-budgets.md) — Budgets are checked before dispatch, and refuse when they cannot be checked
 - [ADR-0023](0023-direct-agent-runner.md) — Running agents directly, not through Gas Town
+- [ADR-0024](0024-multi-provider-agent-runtimes.md) — Multi-provider agent runtimes, with the runtime chosen per run
+- [ADR-0025](0025-api-first-external-clients.md) — Reachable from the tools people already use, not only from its own interface
