@@ -211,6 +211,12 @@ type ModelLimits struct {
 
 // GatewayModels is what we know about the models reachable through the gateway.
 //
+// Context figures are Cloudflare's published ones, read from
+// developers.cloudflare.com/workers-ai/models/<slug> on 2026-08-28. Three were
+// wrong on first writing, all too small — deepseek by a factor of ten from a
+// dropped digit — and a wrong-low context here does not fail loudly. It caps
+// what the agent can see, so the run just does less well.
+//
 // A short table here rather than a lookup, because it is consulted while
 // planning and a planner that makes a network call has a new failure mode. It
 // moves to deployed configuration in wg-3tp; until then, adding a model is a
@@ -222,8 +228,9 @@ var GatewayModels = map[string]ModelLimits{
 	"workers-ai/@cf/moonshotai/kimi-k2.7-code":          {Context: 262144, Output: 8192},
 	"workers-ai/@cf/moonshotai/kimi-k2.6":               {Context: 262144, Output: 8192},
 	"workers-ai/@cf/moonshotai/kimi-k3":                 {Context: 262144, Output: 8192},
-	"workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731": {Context: 131072, Output: 8192},
-	"workers-ai/@cf/zai-org/glm-5.3-flash":              {Context: 131072, Output: 8192},
+	"workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731": {Context: 1310720, Output: 8192},
+	"workers-ai/@cf/zai-org/glm-5.3-flash":              {Context: 1048576, Output: 8192},
+	"workers-ai/@cf/google/gemma-4-26b-a4b-it":          {Context: 256000, Output: 8192},
 	"workers-ai/@cf/qwen/qwen3-30b-a3b-fp8":             {Context: 32768, Output: 4096},
 }
 

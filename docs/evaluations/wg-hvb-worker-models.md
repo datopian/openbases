@@ -13,25 +13,41 @@ The order is the finding from [wg-uhj](../spikes/wg-uhj-opencode-gateway.md).
 OpenCode's agent system prompt is about 19,900 tokens, so context filters models
 before quality does — and it filters absolutely.
 
-## Screen 1: context — a real result
+## Screen 1: context
 
 A worker needs room for the prompt **and** the work, so the bar is four times the
 prompt: 79,600 tokens.
 
+Context figures are Cloudflare's published ones, read from
+`developers.cloudflare.com/workers-ai/models/<slug>` on 2026-08-28.
+
 | Model | Context | |
 |---|---:|---|
+| `@cf/deepseek-ai/deepseek-v4-flash-0731` | 1,310,720 | pass |
+| `@cf/zai-org/glm-5.3-flash` | 1,048,576 | pass |
 | `@cf/moonshotai/kimi-k2.7-code` | 262,144 | pass |
 | `@cf/moonshotai/kimi-k2.6` | 262,144 | pass |
-| `@cf/deepseek-ai/deepseek-v4-flash-0731` | 131,072 | pass |
-| `@cf/zai-org/glm-5.3-flash` | 131,072 | pass |
+| `@cf/google/gemma-4-26b-a4b-it` | 256,000 | pass |
 | `anthropic/claude-sonnet-5` *(control)* | 200,000 | pass |
 | `@cf/qwen/qwen3-30b-a3b-fp8` | 32,768 | **drop** |
-| `@cf/google/gemma-4-26b-a4b-it` | 16,384 | **drop** |
 
-Two of six candidates are out before any inference is bought. Worth stating
-plainly because it is counterintuitive: `llama-3.3-70b` is the *best* T0
-classifier we measured and cannot be a worker at all. Those facts are unrelated,
-and a benchmark leaderboard will never tell you the second one.
+**This table was wrong when first published, and the correction is the more
+useful finding.** Three of seven figures were too small — `gemma-4-26b` recorded
+as 16,384 against a real 256,000, `deepseek-v4-flash` as 131,072 against
+1,310,720 from a dropped digit, and `glm-5.3-flash` likewise. They were written
+from assumption rather than read from the documentation, and `gemma-4-26b` was
+dropped from the field because of it.
+
+So the screen is much less selective than it first appeared: **one candidate of
+six fails on context**, not two. What survives is the shape of the finding rather
+than its severity — `llama-3.3-70b` has a 24,000-token window, confirmed both by
+the documentation and by the error it returns, and is the best T0 classifier we
+measured. It cannot be a worker. That remains true and remains the reason to
+screen on context before quality.
+
+The lesson is narrower and worth more than the table: a number nobody checked
+reads exactly like a measurement. Everything else in this document was measured;
+this column was recalled, and it was the only part that was wrong.
 
 ## Screens 2 and 3: blocked, and not by the models
 
