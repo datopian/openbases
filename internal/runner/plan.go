@@ -95,6 +95,19 @@ type Plan struct {
 	// Env is what the run needs in its environment. Not the gateway credential,
 	// which is only honoured from a settings file, and not anything secret.
 	Env map[string]string
+	// StatePath is a per-run directory for the runtime's own state, removed at
+	// teardown. Empty when the runtime keeps no state worth isolating.
+	//
+	// OpenCode keeps sessions in a SQLite database under XDG_DATA_HOME. Shared
+	// across runs it wedges: after one run in a cell, every later one fails with
+	//
+	//	Error: Session not found
+	//
+	// before reaching the model — which reads exactly like the model refusing to
+	// use tools, and was recorded as four tool-use failures in wg-hvb before the
+	// cause was found. The dispatcher runs job after job against one cell, so
+	// shared state would have failed everything after the first.
+	StatePath string
 	// TrustFile is the CLI's own config, where a workspace is marked trusted.
 	//
 	// Permissions in a settings file are IGNORED in an untrusted workspace, and
@@ -496,6 +509,10 @@ func planOpenCode(p *Plan, s Spec, tools []string) error {
 	// nothing is left to ask; --auto would additionally approve anything a
 	// future OpenCode version adds that we have not thought about.
 	p.Env["OPENCODE_CONFIG"] = p.SettingsPath
+	// A state directory of its own, beside the run rather than inside it, for
+	// the same reason the config is: the agent has no business reading either.
+	p.StatePath = filepath.Join(s.CellRoot, "runs", "."+s.Bead+".state")
+	p.Env["XDG_DATA_HOME"] = p.StatePath
 	// Effort has no equivalent here. Saying so is better than silently dropping
 	// it, because a run that ignored the tier would look identical to one that
 	// honoured it.

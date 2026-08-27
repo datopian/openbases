@@ -604,3 +604,42 @@ func TestAnUnknownRuntimeIsRefused(t *testing.T) {
 		t.Error("an unknown runtime was accepted")
 	}
 }
+
+// OpenCode keeps sessions in a SQLite database under XDG_DATA_HOME. Shared
+// between runs it wedges, and every run after the first dies with "Session not
+// found" before reaching the model — which reads as the model refusing to use
+// tools. Four candidates were recorded as tool-use failures that way.
+func TestOpenCodeGetsItsOwnStateDirectory(t *testing.T) {
+	p, err := New(openCodeSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.StatePath == "" {
+		t.Fatal("no state directory; runs will share one and wedge after the first")
+	}
+	if p.Env["XDG_DATA_HOME"] != p.StatePath {
+		t.Errorf("XDG_DATA_HOME = %q, want the state directory %q", p.Env["XDG_DATA_HOME"], p.StatePath)
+	}
+	// Beside the run, not inside it: the agent has no business reading the
+	// runtime's own scratch, on the same reasoning as the config file.
+	if strings.HasPrefix(p.StatePath, p.RunDir+string(filepath.Separator)) {
+		t.Errorf("state %q is inside the run directory %q", p.StatePath, p.RunDir)
+	}
+	// Per bead, or two concurrent runs in a cell share it and reintroduce the
+	// bug from the other direction.
+	if !strings.Contains(p.StatePath, "wg-qw1") {
+		t.Errorf("state path %q is not per-run", p.StatePath)
+	}
+}
+
+// The claude runtime keeps no state we isolate, so it must not ask for a
+// directory that teardown would then remove for nothing.
+func TestTheClaudeRuntimeHasNoStateDirectory(t *testing.T) {
+	p, err := New(spec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.StatePath != "" {
+		t.Errorf("claude asked for a state directory: %q", p.StatePath)
+	}
+}

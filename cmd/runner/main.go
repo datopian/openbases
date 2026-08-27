@@ -168,6 +168,15 @@ func execute(log *slog.Logger, plan runner.Plan, keep bool) result {
 			log.Error("could not remove the settings file, which holds the gateway token",
 				"file", plan.SettingsPath, "error", err)
 		}
+		// The state directory goes whether or not the run directory is kept: it
+		// is the runtime's own scratch, it holds no evidence worth inspecting,
+		// and leaving it is what wedges the next run.
+		if plan.StatePath != "" {
+			if err := os.RemoveAll(plan.StatePath); err != nil {
+				log.Error("could not remove the runtime state directory",
+					"dir", plan.StatePath, "error", err)
+			}
+		}
 		if keep {
 			log.Info("leaving the run directory behind", "dir", plan.RunDir)
 			return
@@ -183,6 +192,16 @@ func execute(log *slog.Logger, plan runner.Plan, keep bool) result {
 	if err := os.MkdirAll(plan.RunDir, 0o700); err != nil {
 		res.Error = err.Error()
 		return res
+	}
+	// Created, not just named. OpenCode is handed this as XDG_DATA_HOME and
+	// will not start against a directory that is not there — which presents as
+	// "Session not found", the same message a wedged shared store gives, so the
+	// fix for one looks like it did not work for the other.
+	if plan.StatePath != "" {
+		if err := os.MkdirAll(plan.StatePath, 0o700); err != nil {
+			log.Error("could not create the runtime state directory", "dir", plan.StatePath, "error", err)
+			os.Exit(1)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(plan.SettingsPath), 0o700); err != nil {
 		res.Error = err.Error()

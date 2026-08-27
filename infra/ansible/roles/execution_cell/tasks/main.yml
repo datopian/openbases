@@ -382,6 +382,18 @@
     # 401 every fifteen seconds, which buries the real failure when one comes.
     - control_api_cell_work_access_aud | default("") | length > 0
 
+# A measurement tool, not a service: it runs an agent per candidate model and is
+# invoked by hand. On the node rather than a workstation because OpenCode merges
+# a global config from ~/.config/opencode, which a developer machine has and a
+# cell user does not — so a bake-off run on a laptop measures the laptop.
+- name: Install the model bake-off script
+  ansible.builtin.copy:
+    src: ../../../scripts/model_bakeoff.sh
+    dest: /usr/local/bin/wg-bakeoff
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Install the reaper timer units
   ansible.builtin.copy:
     dest: "/etc/systemd/system/{{ item.name }}"
