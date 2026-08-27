@@ -26,32 +26,63 @@
     - not ansible_check_mode
     - tool.version | replace('v','') not in (installed.stdout | default(''))
   block:
-    - name: "Download {{ tool.name }}"
-      ansible.builtin.get_url:
-        url: "{{ tool.url }}"
-        dest: "/tmp/{{ tool.name }}.tar.gz"
-        checksum: "sha256:{{ tool.sha256 }}"
-        mode: "0644"
+    # A directory of its own, removed afterwards, rather than unpacking into
+    # /tmp and deleting only the tarball.
+    #
+    # This unpacked every release straight into /tmp and left the tree there.
+    # Mostly that was litter; with OpenCode it was a failure, because the
+    # unpacked /tmp/opencode collides with the scratch directory the binary
+    # creates for itself, and `opencode --version` then exits 1 with
+    #
+    #   EEXIST: file already exists, mkdir '/tmp/opencode'
+    #
+    # An installer that leaves debris named after the tool is a trap for any
+    # tool that uses /tmp, which is most of them.
+    - name: "Create a staging directory for {{ tool.name }}"
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: "-{{ tool.name }}-install"
+      register: staging
 
-    - name: "Unpack {{ tool.name }}"
-      ansible.builtin.unarchive:
-        src: "/tmp/{{ tool.name }}.tar.gz"
-        dest: /tmp
-        remote_src: true
+    - name: "Download and install {{ tool.name }}"
+      block:
+        - name: "Download {{ tool.name }}"
+          ansible.builtin.get_url:
+            url: "{{ tool.url }}"
+            dest: "{{ staging.path }}/{{ tool.name }}.tar.gz"
+            checksum: "sha256:{{ tool.sha256 }}"
+            mode: "0644"
 
-    - name: "Locate the {{ tool.binary }} executable"
-      ansible.builtin.command: "find /tmp -type f -name {{ tool.binary }} -perm -u+x"
-      register: found
-      changed_when: false
+        - name: "Unpack {{ tool.name }}"
+          ansible.builtin.unarchive:
+            src: "{{ staging.path }}/{{ tool.name }}.tar.gz"
+            dest: "{{ staging.path }}"
+            remote_src: true
 
-    - name: "Install {{ tool.binary }}"
-      ansible.builtin.copy:
-        src: "{{ found.stdout_lines[0] }}"
-        dest: "/usr/local/bin/{{ tool.binary }}"
-        mode: "0755"
-        remote_src: true
+        # Scoped to the staging directory, so it cannot find a same-named binary
+        # left behind by something else — which is how the wrong version gets
+        # installed and then reports the right one.
+        - name: "Locate the {{ tool.binary }} executable"
+          ansible.builtin.command: "find {{ staging.path }} -type f -name {{ tool.binary }} -perm -u+x"
+          register: found
+          changed_when: false
 
-    - name: "Clean up {{ tool.name }}"
-      ansible.builtin.file:
-        path: "/tmp/{{ tool.name }}.tar.gz"
-        state: absent
+        - name: "Refuse to install {{ tool.name }} when the archive holds no {{ tool.binary }}"
+          ansible.builtin.assert:
+            that: found.stdout_lines | length > 0
+            fail_msg: >-
+              no executable named {{ tool.binary }} in the {{ tool.name }}
+              archive; installing nothing is better than installing whatever
+              happened to match
+
+        - name: "Install {{ tool.binary }}"
+          ansible.builtin.copy:
+            src: "{{ found.stdout_lines[0] }}"
+            dest: "/usr/local/bin/{{ tool.binary }}"
+            mode: "0755"
+            remote_src: true
+      always:
+        - name: "Clean up {{ tool.name }}"
+          ansible.builtin.file:
+            path: "{{ staging.path }}"
+            state: absent

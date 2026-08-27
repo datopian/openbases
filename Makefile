@@ -8,7 +8,7 @@ LDFLAGS  := -X github.com/datopian/workgraph/internal/version.Version=$(shell gi
             -X github.com/datopian/workgraph/internal/version.BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 .PHONY: help bootstrap dev test check fmt vet lint build clean \
-        web-install web-build web-dev verify-versions migrate-check sql-check infra-check \
+        web-install web-build web-dev verify-versions pins-check migrate-check sql-check infra-check \
         live-zones e2e
 
 help: ## Show available targets
@@ -29,7 +29,7 @@ dev: ## Run the local stack (API, worker, web, PostgreSQL, fixture Beads)
 ## Quality gates — `make check` is what CI runs
 ## ---------------------------------------------------------------------------
 
-check: fmt vet test verify-versions sql-check infra-check secrets-check ## Run every gate CI runs
+check: fmt vet test verify-versions pins-check sql-check infra-check secrets-check ## Run every gate CI runs
 
 fmt: ## Fail if Go source is not gofmt-clean
 	@out="$$(gofmt -l ./cmd ./internal)"; \
@@ -91,6 +91,9 @@ build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 
 verify-versions: ## Check installed gt/bd/dolt against versions.lock
 	@bash scripts/verify_versions.sh
+
+pins-check: ## Check the Ansible defaults still match versions.lock
+	@bash scripts/check_pins.sh
 
 sql-check: ## Basic structural checks on migrations
 	@bash scripts/check_migrations.sh
