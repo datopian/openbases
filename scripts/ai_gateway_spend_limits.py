@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 import urllib.error
 import urllib.request
 
@@ -91,6 +92,89 @@ def budget_from_tfvars(environment: str) -> tuple[float, dict[str, float]]:
         sys.exit(f"{path}: ai_budget_shares sum to {total:g}, not 1. "
                  "The per-gateway limits must add up to the pool.")
     return pool, shares
+
+
+# Scoped rules are configuration, not code — but the configuration is empty
+# today and that is a finding rather than an omission (wg-hpv).
+#
+# Cloudflare supports scoping a spend rule by provider, by model, or by a custom
+# metadata key, each either "split by value" (a bucket per distinct value) or
+# "filter by value". Our runs already carry role, cell, bead and rig as gateway
+# metadata, so splitting by `cell` would give every cell its own bucket without
+# the arithmetic that divides one pool three ways.
+#
+# What is missing is the API field names. Cloudflare documents dimensions only
+# as dashboard steps; they appear in no REST reference, no llms-full.txt, and
+# not on a live gateway's JSON, because none of ours has a dimensioned rule yet.
+#
+# That is not a reason to guess. This exact API reported success while storing
+# something else — a gateway sat refusing every request against a limit of 0.01
+# while its stored configuration said 70 — and a wrong write here resets the
+# spend counter for the month. So the field names get established by creating
+# ONE rule in the dashboard and reading it back with this script's GET, and then
+# they go in the file below and never need the dashboard again.
+SPEND_RULES = Path(__file__).resolve().parent.parent / "infra" / "gateway" / "spend_rules.json"
+
+
+def pool_rule(budget: float) -> dict:
+    """The gateway's share of the shared pool, with no dimensions.
+
+    A rule with no dimensions tracks every request together, which is what a
+    ceiling for the whole gateway means.
+    """
+    return {
+        "enabled": True,
+        # camelCase. The snake_case the provider sends is rejected.
+        "limitType": "cost",
+        "limit": budget,
+        "window": WINDOW_SECONDS,
+        "technique": "sliding",
+    }
+
+
+def extra_rules(gid: str) -> list[dict]:
+    """Scoped rules for this gateway, from infra/gateway/spend_rules.json.
+
+    Passed to the API exactly as written. Nothing is filled in, because a
+    default this script invented would be a limit nobody chose.
+    """
+    if not SPEND_RULES.exists():
+        return []
+    doc = json.loads(SPEND_RULES.read_text())
+    rules = (doc.get("rules") or {}).get(gid) or []
+    if not isinstance(rules, list):
+        sys.exit(f"{SPEND_RULES}: rules for {gid} must be a list")
+    return rules
+
+
+def rules_match(existing: list[dict], wanted: list[dict]) -> bool:
+    """Whether the gateway already carries exactly the rules we want.
+
+    Compared field by field, ignoring the server-assigned id, and ONLY to decide
+    whether to skip the write. That decision is the whole budget: writing mints
+    new rule ids, the spend counter is keyed to the id, so every write silently
+    restarts the window from zero.
+
+    This used to assume exactly one rule (`len(existing) == 1`). The moment a
+    second appeared — added here, or by anyone through the dashboard — the check
+    could never match again, so every apply rewrote every rule and reset every
+    counter, and the 30-day pool would never accumulate over 30 days. That is
+    the same failure the id comment below describes, reintroduced by a length
+    check nobody would look at twice.
+    """
+    if len(existing) != len(wanted):
+        return False
+    for have, want in zip(existing, wanted):
+        for key, value in want.items():
+            got = have.get(key)
+            # Numbers arrive as int or float depending on the field; compare as
+            # floats so 70 and 70.0 are the same limit.
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if got is None or float(got) != float(value):
+                    return False
+            elif got != value:
+                return False
+    return True
 
 
 def main() -> int:
@@ -175,16 +259,14 @@ def main() -> int:
         # id changing from 057c6bf0 to 6297e059. Since this script ran on every
         # apply, the 30-day pool had never once accumulated over 30 days.
         existing = (g.get("spend_limits") or {}).get("rules") or []
-        if (len(existing) == 1
-                and (g.get("spend_limits") or {}).get("enabled")
-                and existing[0].get("enabled")
-                and existing[0].get("limitType") == "cost"
-                and float(existing[0].get("limit", -1)) == budget
-                and int(existing[0].get("window", -1)) == WINDOW_SECONDS
-                and existing[0].get("technique") == "sliding"):
+        wanted = [pool_rule(budget)] + extra_rules(gid)
+
+        if (g.get("spend_limits") or {}).get("enabled") and rules_match(existing, wanted):
+            ids = ", ".join(r.get("id", "?") for r in existing)
             print(f"  {gid}: ${budget:g} per 30 days "
-                  f"({shares[domain]:.0%} of the ${pool:g} pool), already correct "
-                  f"(rule {existing[0].get('id')}, counter preserved)")
+                  f"({shares[domain]:.0%} of the ${pool:g} pool)"
+                  f"{f' plus {len(wanted) - 1} scoped rule(s)' if len(wanted) > 1 else ''}"
+                  f", already correct (rules {ids}, counters preserved)")
             unchanged.append(gid)
             continue
 
@@ -214,13 +296,7 @@ def main() -> int:
                 # counter — but a deliberate budget change resetting the month
                 # is defensible, and the skip above means an unchanged
                 # re-apply never gets here.
-                "rules": [{
-                    "enabled": True,
-                    "limitType": "cost",
-                    "limit": budget,
-                    "window": WINDOW_SECONDS,
-                    "technique": "sliding",
-                }],
+                "rules": wanted,
             },
         }
 

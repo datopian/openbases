@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "Extra spend limit rules per gateway, beyond the pool-share rule the script",
+    "computes (wg-hpv). Empty today, and that is a finding rather than an",
+    "omission: see docs/adr/0024 and the note in ai_gateway_spend_limits.py.",
+    "",
+    "A rule here is passed to the API as written, so adding one once the",
+    "dimension field names are known is a change to this file rather than to",
+    "code. Cloudflare allows 20 rules per gateway.",
+    "",
+    "Every field the API expects must be present. The script does not fill any",
+    "in, because a default it invented would be a limit nobody chose."
+  ],
+  "rules": {
+    "workgraph-staging-oss": [],
+    "workgraph-staging-internal": [],
+    "workgraph-staging-client": []
+  }
+}
