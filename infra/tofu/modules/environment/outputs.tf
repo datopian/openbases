@@ -95,3 +95,8 @@ output "probe_client_secret" {
   value       = cloudflare_zero_trust_access_service_token.probe.client_secret
   sensitive   = true
 }
+
+output "cell_work_queue_aud" {
+  description = "AUD of the Access application fronting the node work queue (/v1/node/)."
+  value       = cloudflare_zero_trust_access_application.cell_work_queue.aud
+}

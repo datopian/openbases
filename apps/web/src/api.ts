@@ -151,6 +151,54 @@ export function asList<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
 
+
+export interface WorkItem {
+  bead: string;
+  title: string;
+  kind: string;
+  status: string;
+  cell: string;
+  project?: string;
+  last_seen: string;
+  queue_state: string;
+  queued_at: string;
+  /** Decimal string, never a number. numeric(16,8) does not survive a float. */
+  spent_cents: string;
+  requests: number;
+}
+
+export interface QueueJob {
+  id: string;
+  kind: string;
+  cell: string;
+  rig: string;
+  bead?: string;
+  brief?: string;
+  status: string;
+  created_at: string;
+  finished_at?: string;
+  result?: string;
+}
+
+/** POST that turns a refusal body into a readable error. */
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  const parsed: unknown = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      parsed && typeof parsed === "object" && "error" in parsed
+        ? String((parsed as { error: unknown }).error)
+        : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return parsed as T;
+}
+
 export const api = {
   version: () => get<VersionInfo>("/version"),
   me: () => get<Identity>("/v1/me"),
@@ -161,6 +209,19 @@ export const api = {
     asList((await get<{ items: AttentionItem[] | null }>("/v1/inbox"))?.items),
   branches: async () =>
     asList((await get<{ branches: Branch[] | null }>("/v1/inbox/branches"))?.branches),
+
+  work: async () =>
+    asList((await get<{ work: WorkItem[] | null }>("/v1/work"))?.work),
+  workQueue: async () =>
+    asList((await get<{ queue: QueueJob[] | null }>("/v1/work/queue"))?.queue),
+
+  plan: async (brief: string) => post<{ job: string }>("/v1/work/plan", { brief }),
+
+  // A budget refusal arrives as 402 with the reason in the body. Surfaced as
+  // the error message rather than swallowed into "request failed", because the
+  // reason is the single most useful thing this call can return.
+  dispatch: async (bead: string) =>
+    post<{ job: string; bead: string }>(`/v1/work/${encodeURIComponent(bead)}/dispatch`, {}),
 
   decide: async (id: string, approve: boolean, reason: string, seenDigest: string) => {
     const res = await fetch(`/v1/approvals/${encodeURIComponent(id)}/decide`, {

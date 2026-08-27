@@ -28,6 +28,16 @@ witness_local_binary: ""
 # a locally built binary changes nothing rather than removing a working one.
 runner_local_binary: ""
 runner_binary: /usr/local/bin/wg-runner
+
+# The work-queue dispatcher (WP-D2/E3). Left empty, it is not deployed.
+dispatcher_local_binary: ""
+dispatcher_binary: /usr/local/bin/wg-dispatcher
+dispatcher_rig: sandbox
+# Ten seconds. Nothing is waiting on a human timescale, and a claim is one small
+# request — but a minute of latency between pressing a button and seeing
+# anything happen makes a demo look broken.
+dispatcher_interval: 10s
+dispatcher_deadline: 15m
 witness_binary: /usr/local/bin/wg-witness
 # How often to look at the event channel. This is a readdir, not a model call,
 # so the interval is chosen for responsiveness rather than cost.

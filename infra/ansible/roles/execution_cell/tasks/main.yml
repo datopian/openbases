@@ -316,6 +316,53 @@
     label: "{{ item.item.name }}"
   when: item.stat.exists
 
+- name: Install the work dispatcher
+  ansible.builtin.copy:
+    src: "{{ dispatcher_local_binary }}"
+    dest: "{{ dispatcher_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: dispatcher_local_binary | length > 0
+
+- name: Install the dispatcher unit for each cell with a town
+  ansible.builtin.template:
+    src: wg-dispatcher.service.j2
+    dest: "/etc/systemd/system/wg-dispatcher-{{ item.item.name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    cell: "{{ item.item }}"
+  loop: "{{ cell_towns.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.stat.exists
+  notify: Reload systemd
+
+- name: Check whether the dispatcher binary is present
+  ansible.builtin.stat:
+    path: "{{ dispatcher_binary }}"
+  register: dispatcher_stat
+
+# Started only when the cell actually has credentials for the control API. A
+# dispatcher without them restarts every fifteen seconds and fills the journal
+# with the same authentication error, which is how a real failure later gets
+# lost in the noise.
+- name: Enable the dispatcher for each cell with a town
+  ansible.builtin.systemd_service:
+    name: "wg-dispatcher-{{ item.item.name }}.service"
+    enabled: true
+    state: restarted
+    daemon_reload: true
+  loop: "{{ cell_towns.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.stat.exists
+    - dispatcher_stat.stat.exists
+    - access_service_client_secret | default("") | length > 0
+
 - name: Install the reaper timer units
   ansible.builtin.copy:
     dest: "/etc/systemd/system/{{ item.name }}"

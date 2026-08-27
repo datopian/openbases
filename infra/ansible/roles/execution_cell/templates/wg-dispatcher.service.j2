@@ -1,0 +1,60 @@
+# Managed by Ansible (WP-D2/E3).
+#
+# The execution node's side of the work queue. The control plane cannot reach
+# here — this node has no inbound port — so a dispatch is not something it
+# receives, it is a row it comes and claims. This polls for one, runs it with
+# wg-runner, and reports what happened.
+#
+# It also pushes the cell's bead state up on every pass, which is what fills
+# work_refs and therefore what puts real work on the Work page.
+[Unit]
+Description=Claim and run queued work for cell {{ cell.name }}
+Documentation=https://github.com/datopian/company-workgraph#wp-e3
+After=network-online.target wg-rig-dolt-{{ cell.name }}.service
+Wants=network-online.target
+# The rig's database holds the beads it reads and writes. Without it every pass
+# fails on bd rather than on anything to do with the queue.
+Requires=wg-rig-dolt-{{ cell.name }}.service
+
+[Service]
+Type=simple
+User=wgcell_{{ cell.name | replace('-', '_') }}
+Group=wgcell_{{ cell.name | replace('-', '_') }}
+# Inside the cell's slice, so the WP-I3 CPU and memory limits cover the
+# dispatcher and every agent it starts.
+Slice=wgcell-{{ cell.name }}.slice
+WorkingDirectory={{ cells_root }}/{{ cell.name }}
+# The cell's own Access service token and the control API URL, written by the
+# gastown role. Read as a file rather than passed on a command line so the
+# secret is not in the unit or in `systemctl show`.
+EnvironmentFile={{ cells_root }}/{{ cell.name }}/.credentials/control-api.env
+Environment=HOME={{ cells_root }}/{{ cell.name }}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=WG_CELL={{ cell.name }}
+Environment=WG_RIG={{ dispatcher_rig }}
+ExecStart={{ dispatcher_binary }} \
+  -cell {{ cell.name }} \
+  -cell-root {{ cells_root }}/{{ cell.name }} \
+  -rig {{ dispatcher_rig }} \
+  -interval {{ dispatcher_interval }} \
+  -deadline {{ dispatcher_deadline }}
+
+# Restart, because this is the thing that makes work happen. A dispatcher that
+# died quietly would look exactly like a queue nobody is adding to.
+Restart=always
+RestartSec=15s
+
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

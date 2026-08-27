@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Ask } from "./Ask";
 import { Inbox } from "./Inbox";
+import { Work } from "./Work";
 import {
   age,
   api,
@@ -289,6 +290,10 @@ function onAsk(): boolean {
   return window.location.hash === "#/ask";
 }
 
+function onWork(): boolean {
+  return window.location.hash === "#/work";
+}
+
 /**
  * A visible build stamp.
  *
@@ -319,6 +324,7 @@ export function App() {
   const [slug, setSlug] = useState<string | null>(() => slugFromHash());
   const [inbox, setInbox] = useState<boolean>(() => onInbox());
   const [ask, setAsk] = useState<boolean>(() => onAsk());
+  const [work, setWork] = useState<boolean>(() => onWork());
 
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
@@ -330,6 +336,7 @@ export function App() {
       setSlug(slugFromHash());
       setInbox(onInbox());
       setAsk(onAsk());
+      setWork(onWork());
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -344,6 +351,7 @@ export function App() {
     setSlug(null);
     setInbox(false);
     setAsk(false);
+    setWork(false);
   };
 
   return (
@@ -354,12 +362,28 @@ export function App() {
         </a>
         <span style={{ fontSize: "0.85rem" }}>
           <a
+            href="#/work"
+            style={{ ...css.link, marginRight: "1rem" }}
+            onClick={(e) => {
+              e.preventDefault();
+              window.location.hash = "#/work";
+              setWork(true);
+              setInbox(false);
+              setAsk(false);
+              setSlug(null);
+            }}
+          >
+            Work
+          </a>
+          <a
             href="#/inbox"
             style={{ ...css.link, marginRight: "1rem" }}
             onClick={(e) => {
               e.preventDefault();
               window.location.hash = "#/inbox";
               setInbox(true);
+              setAsk(false);
+              setWork(false);
               setSlug(null);
             }}
           >
@@ -373,6 +397,7 @@ export function App() {
               window.location.hash = "#/ask";
               setAsk(true);
               setInbox(false);
+              setWork(false);
               setSlug(null);
             }}
           >
@@ -382,7 +407,7 @@ export function App() {
         </span>
       </header>
 
-      {ask ? <Ask /> : inbox ? <Inbox /> : slug ? <ProjectPage slug={slug} onBack={back} /> : (
+      {work ? <Work /> : ask ? <Ask /> : inbox ? <Inbox /> : slug ? <ProjectPage slug={slug} onBack={back} /> : (
         <>
           <h1 style={{ marginBottom: "0.15rem" }}>Projects</h1>
           <p style={{ ...css.muted, marginTop: 0, marginBottom: "1.5rem" }}>

@@ -723,6 +723,29 @@ resource "cloudflare_zero_trust_access_application" "health_probe" {
   }]
 }
 
+# The node's side of the work queue (WP-D2/E3).
+#
+# A PREFIX rather than an exact path, which is the opposite of what the
+# applications above do and is deliberate. /v1/node/ is reserved: everything
+# beneath it is an execution node talking to the control plane, and one of those
+# endpoints carries a job id in its path, so it cannot be enumerated.
+#
+# The reason a prefix is safe here and not there: the endpoints a PERSON uses to
+# create work live under /v1/work, not /v1/node/. A cell token can claim a job
+# and report a result; it cannot enqueue one.
+resource "cloudflare_zero_trust_access_application" "cell_work_queue" {
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-cell-work-queue"
+  domain           = "${var.hostname}/v1/node"
+  type             = "self_hosted"
+  session_duration = "0s"
+
+  policies = [{
+    id         = cloudflare_zero_trust_access_policy.cells_service.id
+    precedence = 1
+  }]
+}
+
 resource "cloudflare_zero_trust_access_policy" "cells_service" {
   account_id = var.cloudflare_account_id
   name       = "workgraph-${var.environment}-cells-service"
