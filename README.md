@@ -132,25 +132,52 @@ whichever model the harness happens to reach for — is not a decision anybody m
 
 ### What actually runs today
 
-Two models do all of the platform's work:
+Two models still do all of the platform's work, and that is now a choice rather
+than a constraint:
 
 | Model | What it runs |
 |---|---|
-| `claude-sonnet-5` | workers — `polecat` and `crew`, the agents that do the work |
+| `anthropic/claude-sonnet-5` | workers — `polecat` and `crew`, the agents that do the work |
 | `claude-haiku-4-5` | patrol — `mayor`, `deacon`, `witness`, `refinery`, `dog`, `boot` |
 
-**No open-weight model serves production traffic.** Of 3,356 recorded calls,
-195 went to open-weight models — all of them on 16–17 August, tagged
-`t0-bakeoff` and `probe`, and all of it the measurement below. Nothing has used
-one since, because the only planned caller for T0–T2 is control-plane inference,
-and that is not built (`wg-sn4`).
+**Reaching another provider is a flag, not a project.** `wg-runner` takes a
+runtime the way it takes a model: `-runtime opencode -model
+workers-ai/@cf/moonshotai/kimi-k2.7-code` runs that model through the same
+gateway, with the same per-bead budget, and the spend lands attributed to the
+role, cell and bead like any other run. Both roles still default to
+`claude`, because changing what executes model output against our repositories
+deserves a decision rather than a side effect.
+
+What made that possible: OpenCode is installed and pinned on the execution node
+alongside `gt`, `bd` and `dolt`, and it carries the gateway's attribution headers
+intact — which was the one thing that could have sunk
+[ADR-0024](docs/adr/0024-multi-provider-agent-runtimes.md), and is why the first
+bead of that plan was a half-day spike rather than a build.
+
+**Which models can be workers is decided by measurement, and context decides it
+first.** OpenCode's agent system prompt is about 19,900 tokens, so a model needs
+roughly four times that to host the prompt and still have room to work. Two of
+six candidates are out on that alone — `qwen3-30b` at 32k and `gemma-4-26b` at
+16k. `llama-3.3-70b` is the best T0 classifier we measured and cannot be a worker
+at all; the two facts are unrelated, and no leaderboard would have told us the
+second. The harness is `scripts/model_bakeoff.sh` and the results are in
+[`docs/evaluations/`](docs/evaluations/).
+
+Ranking the survivors is blocked on `wg-azd`: an OpenCode run started by
+`wg-runner` fails as soon as it needs a tool, while the same task succeeds when
+OpenCode is invoked from a shell with the identical configuration.
+
+The role and model tables are deployed configuration, not Go constants — moving
+a role onto a newer model is an Ansible variable and a deploy. The **tool
+allowlist deliberately is not**: whether an agent may run arbitrary shell stays
+a change to code somebody reviews.
 
 Opus does not appear in any role map and the platform never selects it. The Opus
 spend in the gateway logs is untagged, which is what a developer's own Claude
 Code session looks like — not the agents.
 
-The tiers below are a **decision, not a description**. They say what should run
-what once there is something to route.
+The tiers below are still a **decision, not a description** for T0–T2: their only
+planned caller is control-plane inference, and that is not built (`wg-sn4`).
 
 ### Four tiers (designed; T0–T2 have no caller yet)
 
@@ -284,9 +311,18 @@ untagged, and untagged means no role, cell or bead header, which is what a
 developer's own Claude Code session looks like. Untagged spend is not a rounding
 error to leave alone; it is 45% of this table.
 
-What *not* to read is the open-weight row as evidence of tiering. Those 195 calls
-are the bake-off, ten days old and never repeated. Cheap tiers cost a cent here
-because almost nothing has used them.
+What *not* to read is the open-weight row as evidence of tiering. Those calls are
+measurement — the T0 bake-off, then ADR-0024's spike and the worker screens.
+Cheap tiers cost a cent here because almost nothing has used them for real work
+yet, which is a statement about what we have wired up rather than about the
+models.
+
+One measured comparison, worth its caveat. The same trivial task through
+`wg-runner` cost **0.40 cents** on `kimi-k2.7-code` via OpenCode and **10.95
+cents** on `claude-sonnet-5` via Claude Code, the latter across two calls. That
+is a 27× gap on one trivial task, which is not a benchmark — it is a reason to
+measure cost per *completed bead* across real work, which is what the blocked
+half of the worker screens is for.
 
 Spend is attributed by role, cell, project and **bead**, so `wg-budget` can refuse a dispatch
 before an agent starts rather than after it has spent the money. Three gateways — `oss`, `internal`,
@@ -316,7 +352,7 @@ infra/             OpenTofu, Ansible, Cloudflare, Google integration resources
 deploy/            Compose and systemd definitions
 formulas/          Gas Town workflow formulas
 policies/          policy bundles evaluated by the approval engine
-evaluations/       golden and regression suites
+docs/evaluations/  measured model and harness results
 docs/adr/          architecture decision records
 docs/runbooks/     operator runbooks
 docs/go-live/      the go-live evidence pack

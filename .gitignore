@@ -70,3 +70,7 @@ infra/tofu/**/.terraform/
 internal/webui/dist/*
 !internal/webui/dist/.gitkeep
 .gstack/
+
+# Python bytecode, which a local import of a script leaves behind.
+__pycache__/
+*.pyc
