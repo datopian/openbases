@@ -58,13 +58,21 @@ MIN_CONTEXT=$((PROMPT_TOKENS * 4))
 # Candidates, with the context each publishes. Every one returned 200 through the
 # staging oss gateway on 2026-08-27; kimi-k3 is excluded because the account
 # cannot reach it until Unified Billing credits are loaded.
+# Context windows are Cloudflare's published figures, read from
+# developers.cloudflare.com/workers-ai/models/<slug> on 2026-08-28. They are
+# copied here rather than fetched, because a planner that makes a network call
+# has a new failure mode — but copied numbers rot, so the date is the point.
+#
+# Three of these were wrong when this script was first written, all of them too
+# small, and one of the two models the screen dropped was dropped because of it.
+# A number nobody checked reads exactly like a measurement.
 CANDIDATES="
 workers-ai/@cf/moonshotai/kimi-k2.7-code:262144
 workers-ai/@cf/moonshotai/kimi-k2.6:262144
-workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731:131072
-workers-ai/@cf/zai-org/glm-5.3-flash:131072
+workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731:1310720
+workers-ai/@cf/zai-org/glm-5.3-flash:1048576
+workers-ai/@cf/google/gemma-4-26b-a4b-it:256000
 workers-ai/@cf/qwen/qwen3-30b-a3b-fp8:32768
-workers-ai/@cf/google/gemma-4-26b-a4b-it:16384
 "
 # The control. If this fails a screen, the screen is wrong.
 CONTROL="anthropic/claude-sonnet-5:200000"

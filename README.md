@@ -156,12 +156,16 @@ bead of that plan was a half-day spike rather than a build.
 
 **Which models can be workers is decided by measurement, and context decides it
 first.** OpenCode's agent system prompt is about 19,900 tokens, so a model needs
-roughly four times that to host the prompt and still have room to work. Two of
-six candidates are out on that alone — `qwen3-30b` at 32k and `gemma-4-26b` at
-16k. `llama-3.3-70b` is the best T0 classifier we measured and cannot be a worker
-at all; the two facts are unrelated, and no leaderboard would have told us the
-second. The harness is `scripts/model_bakeoff.sh` and the results are in
-[`docs/evaluations/`](docs/evaluations/).
+roughly four times that to host the prompt and still have room to work.
+`llama-3.3-70b` has a 24,000-token window: it is the best T0 classifier we
+measured and cannot be a worker at all. The two facts are unrelated, and no
+leaderboard would have told us the second.
+
+Of the current candidates only `qwen3-30b` fails that bar. The first version of
+that screen dropped `gemma-4-26b` too, on a context figure written from
+assumption rather than read from Cloudflare's documentation — three of seven were
+wrong, all too small. The harness is `scripts/model_bakeoff.sh`; the results and
+the correction are in [`docs/evaluations/`](docs/evaluations/).
 
 Ranking the survivors is blocked on `wg-azd`: an OpenCode run started by
 `wg-runner` fails as soon as it needs a tool, while the same task succeeds when
