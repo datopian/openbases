@@ -1,6 +1,6 @@
 # ADR-0024: Multi-provider agent runtimes, with the runtime chosen per run
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-08-27
 - **Bead:** wg-uhj
 - **Plan reference:** §4.7, §13.2, §14.8
@@ -161,6 +161,50 @@ being a phrase in an ADR and becomes a query.
 
 Concentration risk drops in a way that matters operationally, not just commercially: a
 provider outage or a rate-limit ceiling stops being an outage for all agent work.
+
+## The spike result
+
+`wg-uhj` ran on 2026-08-27 and **passed**. OpenCode reached
+`@cf/moonshotai/kimi-k2.7-code` through the staging `oss` gateway and the call arrived
+attributed:
+
+```
+model                          role     cell  bead              rig    cents
+@cf/moonshotai/kimi-k2.7-code  polecat  oss   wg-uhj-opencode   spike  1.8241
+```
+
+`options.headers` carries `cf-aig-authorization` and `cf-aig-metadata` intact, so
+attribution survives a runtime change and the per-bead budget gate can read the cost.
+This decision stands and `wg-b7z` — the translating proxy — is not needed.
+
+Four things the spike found that the plan did not anticipate.
+
+**The endpoint and naming work as documented.** `/compat/chat/completions` with
+`provider/model` (`workers-ai/@cf/...`) accepts our existing gateway token and headers.
+No new credential, no new gateway.
+
+**`kimi-k3` is 403 on this account** — "Account 3218567 is not allowed to access
+@cf/moonshotai/kimi-k3". Every other open-weight model tried returns 200:
+`kimi-k2.7-code`, `kimi-k2.6`, `deepseek-v4-flash-0731`, `glm-5.3-flash`,
+`qwen3-30b-a3b-fp8`, `gemma-4-26b-a4b-it`. Cloudflare documents prepaid credits as
+granting "access to Workers AI models that otherwise require the Workers Paid plan", so
+this is what Unified Billing is expected to lift. Until it is on, K3 specifically is out
+of reach while the rest of the catalogue is not.
+
+**Context window is a hard filter on which models can be workers, separately from
+quality.** OpenCode's agent system prompt is roughly 19,900 tokens. A 24k-context model
+cannot host it — `llama-3.3-70b-instruct-fp8-fast` fails with
+"maximum context length is 24000 tokens... your prompt contains at least 19905 input
+tokens" before doing any work. That model is a fine T0 classifier and an unusable
+worker, and the two facts are unrelated. `wg-hvb` must screen on context before it
+screens on quality.
+
+**A large system prompt changes the cost model.** Answering "reply with exactly: OK" cost
+1.82 cents, because ~20k tokens of prompt go in on every request regardless of the task.
+Cheap per-token rates do not translate into cheap runs when the floor is that high. The
+comparison that matters for `wg-hvb` is cost per completed bead, not per token — and
+Claude Code's prompt size on the same task should be measured next to it rather than
+assumed smaller.
 
 ## The work, in order
 
