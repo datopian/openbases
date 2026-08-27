@@ -336,6 +336,113 @@ Read [`AGENTS.md`](AGENTS.md) before making a change. The short version:
 - Never commit a secret. Never upgrade `gt`, `bd`, or `dolt` independently. Never publish
   unreviewed model extraction. Never widen a classification. Nothing approves itself.
 
+## Contributing
+
+Workgraph is built by Datopian, and more hands are welcome. This section is what you
+need on day one; [`AGENTS.md`](AGENTS.md) is the full set of rules and is worth reading
+before your first pull request rather than after it.
+
+### What you need access to
+
+| Thing | How | Who grants it |
+|---|---|---|
+| The repositories | `datopian/workgraph` and `datopian/company-workgraph` | a GitHub org admin |
+| The staging interface | https://work-staging.openbases.com, log in with your Datopian Google account | already yours if you are in the Workspace |
+| The work graph, to *file* beads | control-node access via `scripts/hq.sh`, which needs the SOPS keys | ask in the team channel |
+
+You can read the backlog and run everything locally without that third row. You only
+need it to create or close a bead yourself, which is a gap rather than a design — see
+`wg-dbd`.
+
+### Getting the toolchain
+
+```bash
+git clone git@github.com:datopian/workgraph.git
+cd workgraph
+make bootstrap                          # pinned gt/bd/dolt, each checksum-verified
+export PATH="$PWD/.toolchain/bin:$PATH" # add this to your shell profile
+make check                              # everything CI runs
+```
+
+`make bootstrap` downloads only release artefacts and verifies every SHA-256 against
+[`versions.lock`](versions.lock). Nothing resolves to `latest`, and a mismatch aborts.
+
+**Put `.toolchain/bin` on your PATH before you run the tests.** With a system `bd` of a
+different version the contract tests fail with `unknown shorthand flag: 'C'`, which reads
+like a broken test suite and is a version skew. That is `wg-7kf`.
+
+### Finding something to work on
+
+```bash
+scripts/hq.sh list --status open        # the whole backlog
+scripts/hq.sh ready                     # what is unblocked right now
+scripts/hq.sh show wg-8e0               # one bead, with its dependencies
+```
+
+Without node access, the same backlog is readable two other ways: the **Work** page in
+the staging interface, and `beads-bootstrap/seed/go-live-plan.jsonl` in
+`company-workgraph`, which is the graph exported into a file you can read in a pull
+request.
+
+Good first beads are the ones tagged P2 or P3 with no dependencies. If you want
+something larger, `wg-uhj` and the beads under [ADR-0024](docs/adr/0024-multi-provider-agent-runtimes.md)
+are a self-contained piece of work with a clear acceptance test.
+
+### The loop
+
+```
+bead -> branch bead/<id>-<slug> -> commits -> PR -> CI + review -> merge -> staging
+```
+
+- **Every change is attached to a bead.** No `TODO.md`, no `PLAN.md`. If it is worth
+  tracking, it is a bead.
+- **`main` is protected** — for people and agents equally. A direct push is detected by
+  `main-push-guard` and has to be reverted through a pull request.
+- **Close a bead with evidence**, not with an opinion: a merged PR, a test run, a
+  deployment digest. "Should be fine now" is not a close.
+
+### What we care about in review
+
+Three things, in this order.
+
+**Does it actually work, and how do you know?** A PR that says "tested manually" against
+a change to a deployment path will be asked what command was run and what it printed. The
+acceptance scripts in `test/acceptance/` are the shape we like: they run against staging
+and print `N passed, M failed`.
+
+**Is the reasoning in the repository?** Comments here explain *why*, not what — usually
+the failure that made the code look like this. That is deliberate. Someone hits the same
+wall in six months, and the comment is what stops them re-deriving it. If you fixed
+something subtle, say what it was in the comment and in the commit message.
+
+**Is it honest about what it does not do?** Marking a feature as designed-but-not-built,
+or naming the case you did not handle, is worth more than the appearance of completeness.
+Several beads in this backlog exist because someone wrote down a limitation instead of
+hoping nobody would look.
+
+### Working with agents
+
+Much of this repository is written by AI agents running inside it, which shapes two rules
+you will not find in most projects.
+
+**Nothing approves itself.** An agent can open a pull request; it cannot merge one, widen
+a classification, or change its own budget. If you build something an agent will drive,
+the approval has to land somewhere a person sees it.
+
+**Treat model output as untrusted input.** Extraction, summaries and classifications are
+proposals until a human reviews them. Never publish unreviewed extraction, and never
+widen a visibility classification automatically.
+
+If you want an agent to do a piece of work, the **Work** page takes a project brief and
+files beads from it. `docs/demo/staging-walkthrough.md` shows the whole loop.
+
+### Where to ask
+
+Open a draft pull request early and ask in it — that is the lowest-friction way to get a
+second opinion here, and it leaves the answer somewhere the next person will find it. For
+anything about how a decision was reached, check [`docs/adr/`](docs/adr/) first; there are
+24 of them and they are written to be read.
+
 ## Current state
 
 Phase A — repository and governance bootstrap — is complete: repositories, ADRs, policies,
