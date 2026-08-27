@@ -54,6 +54,9 @@ type Spec struct {
 	// the cell rather than configured separately, on the same reasoning as the
 	// token: a run must not reach a different gateway than the cell's own agents.
 	GatewayBaseURL string
+	// Catalogue overrides the built-in role and model tables. Nil uses them
+	// (wg-3tp).
+	Catalogue *Catalogue
 	// Runtime is which agent CLI runs this. Empty means the role's default.
 	Runtime Runtime
 	// Model and Effort override the role defaults when set.
@@ -303,13 +306,13 @@ func New(s Spec) (Plan, error) {
 	// table every role must appear in. Three lookups each reporting their own
 	// failure meant an unknown role was reported as a missing runtime, which
 	// says nothing about the actual mistake.
-	if _, ok := DefaultRuntimes[role]; !ok {
-		return p, fmt.Errorf("unknown role %q (known: %s)", role, knownRoles())
+	if _, ok := s.Catalogue.runtimeFor(role); !ok {
+		return p, fmt.Errorf("unknown role %q (known: %s)", role, s.Catalogue.knownRolesIn())
 	}
 
 	runtime := s.Runtime
 	if runtime == "" {
-		runtime = DefaultRuntimes[role]
+		runtime, _ = s.Catalogue.runtimeFor(role)
 	}
 	if runtime != RuntimeClaude && runtime != RuntimeOpenCode {
 		return p, fmt.Errorf("unknown runtime %q; expected %q or %q", runtime, RuntimeClaude, RuntimeOpenCode)
@@ -317,25 +320,30 @@ func New(s Spec) (Plan, error) {
 
 	model := s.Model
 	if model == "" {
-		if runtime == RuntimeOpenCode {
-			// No default, and deliberately not one borrowed from DefaultModels:
-			// those are Claude Code's spellings, and handing "sonnet" to the
-			// gateway's /compat endpoint would fail somewhere far from here.
-			// Naming models one way for every runtime is wg-8e0.
-			return p, fmt.Errorf("the %s runtime needs an explicit model, e.g. %s",
-				RuntimeOpenCode, "workers-ai/@cf/moonshotai/kimi-k2.7-code")
-		}
+		// The catalogue first, then the built-in table. A role configured onto a
+		// gateway model must satisfy the opencode runtime the same way an
+		// explicit -model does — refusing before looking here made a configured
+		// model unusable, which is the whole point of wg-3tp.
 		var ok bool
-		if model, ok = DefaultModels[role]; !ok {
+		if model, ok = s.Catalogue.modelFor(role); !ok {
 			// Not defaulted to something cheap and not to something capable:
 			// either would be a guess about cost, and the roles this runner
 			// starts are a short, known list.
 			return p, fmt.Errorf("no model tier for role %q (known: %s)", role, known(DefaultModels))
 		}
 	}
+	// Checked after the lookup rather than before it, so a catalogue can supply
+	// what the runtime needs. Claude Code's spellings are not the gateway's, and
+	// handing one to /compat fails a long way from here.
+	if runtime == RuntimeOpenCode && strings.HasPrefix(model, "anthropic/") {
+		return p, fmt.Errorf("the %s runtime cannot reach %q through the gateway's Anthropic path; "+
+			"give this role an explicit model, e.g. %s", RuntimeOpenCode, model,
+			"workers-ai/@cf/moonshotai/kimi-k2.7-code")
+	}
+
 	effort := s.Effort
 	if effort == "" {
-		effort = DefaultEffort[role] // absent is fine; the CLI has its own default
+		effort = s.Catalogue.effortFor(role) // absent is fine; the CLI has its own default
 	}
 
 	deadline := s.Deadline
@@ -491,7 +499,7 @@ func planOpenCode(p *Plan, s Spec, tools []string) error {
 	if base == "" {
 		return fmt.Errorf("the %s runtime needs the gateway base URL", RuntimeOpenCode)
 	}
-	limits, ok := GatewayModels[p.Model]
+	limits, ok := s.Catalogue.limitsFor(p.Model)
 	if !ok {
 		return fmt.Errorf("no limits known for model %q; add it to GatewayModels, "+
 			"because without them OpenCode requests 32000 output tokens and the model refuses", p.Model)
@@ -621,14 +629,9 @@ func hasTool(tools []string, want string) bool {
 	return false
 }
 
-// knownRoles lists the roles this runner starts. DefaultRuntimes is the
-// authority, because every role needs one and a role missing from it cannot run
-// at all — whereas a role can legitimately take its model from a spec.
-func knownRoles() string {
-	names := make([]string, 0, len(DefaultRuntimes))
-	for r := range DefaultRuntimes {
-		names = append(names, r)
-	}
+// joinSorted renders a name list stably, so an error message does not change
+// between runs for no reason.
+func joinSorted(names []string) string {
 	sort.Strings(names)
 	return strings.Join(names, ", ")
 }

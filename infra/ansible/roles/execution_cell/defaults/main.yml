@@ -37,6 +37,40 @@ dispatcher_rig: sandbox
 # request — but a minute of latency between pressing a button and seeing
 # anything happen makes a demo look broken.
 dispatcher_interval: 10s
+
+# The role and model tables wg-runner reads (wg-3tp), deployed as
+# /etc/workgraph/models.json. These were map literals in Go, so moving a role
+# onto a newer model meant a binary release to change four lines of data.
+#
+# The built-in tables remain the fallback: a node without this file still runs.
+# What is deliberately NOT here is the tool allowlist — whether an agent may run
+# arbitrary shell is a change to code somebody reviews, not to a data file.
+#
+# Names are <gateway-provider>/<model> (wg-8e0), the spelling the gateway uses
+# and the one that comes back in usage_records.
+wg_model_runtimes:
+  polecat: claude
+  crew: claude
+
+wg_model_roles:
+  polecat: anthropic/claude-sonnet-5
+  crew: anthropic/claude-sonnet-5
+
+wg_model_effort:
+  polecat: medium
+  crew: medium
+
+# Context is a hard filter on which models can be workers, separately from how
+# good they are: OpenCode's system prompt is about 19,900 tokens, so a 24k model
+# cannot host it and still work (wg-hvb). Output limits are required by OpenCode,
+# which otherwise asks for 32000 and a smaller model refuses the whole request.
+wg_model_limits:
+  anthropic/claude-sonnet-5: {context: 200000, output: 64000}
+  anthropic/claude-haiku-4-5: {context: 200000, output: 64000}
+  workers-ai/@cf/moonshotai/kimi-k2.7-code: {context: 262144, output: 8192}
+  workers-ai/@cf/moonshotai/kimi-k2.6: {context: 262144, output: 8192}
+  workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731: {context: 131072, output: 8192}
+  workers-ai/@cf/zai-org/glm-5.3-flash: {context: 131072, output: 8192}
 dispatcher_deadline: 15m
 witness_binary: /usr/local/bin/wg-witness
 # How often to look at the event channel. This is a readdir, not a model call,
