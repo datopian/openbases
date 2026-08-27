@@ -76,7 +76,26 @@ chmod +x "$tmp/gitleaks"
 echo "==> scanning working tree"
 "$tmp/gitleaks" dir . --no-banner --redact --exit-code 1
 
+# The history pass is bounded to the commits actually under test.
+#
+# Without --log-opts, gitleaks scans EVERY ref in the clone. On the self-hosted
+# runner that clone is persistent and reused across jobs, and every pull request
+# ever built leaves a refs/remotes/pull/N/merge behind — actions/checkout's
+# --prune only covers refs/heads, so those accumulate forever. A secret in any
+# commit ever checked out there then fails this job on every later pull request,
+# after the branch is deleted and the pull request closed, even though the
+# commit is not in the repository any more (wg-cjp).
+#
+# Measured on the same commit: a fresh clone with every branch fetched scanned
+# 113 commits and found nothing; the runner scanned 164 and found one, in a
+# commit a fresh clone cannot see.
+#
+# HEAD is the right bound and not a weaker one. On a pull request HEAD is the
+# merge ref, so its ancestry is the proposed change plus the base branch. On a
+# push to main HEAD is main, so main's full history is still scanned. What stops
+# being scanned is refs that are not in the repository — which was never a scope
+# anyone chose, it was whatever the runner had lying around.
 echo "==> scanning git history"
-"$tmp/gitleaks" git . --no-banner --redact --exit-code 1
+"$tmp/gitleaks" git . --no-banner --redact --exit-code 1 --log-opts=HEAD
 
 echo "no secrets detected"
