@@ -95,6 +95,22 @@ func main() {
 		}
 		fmt.Printf("%s %s: %s cents per day\n", args[1], args[2], args[3])
 
+	case "unset":
+		if len(args) != 3 {
+			fmt.Fprintln(os.Stderr, "usage: wg-budget unset <bead|project|cell> <key>")
+			os.Exit(2)
+		}
+		existed, err := budget.Unset(ctx, db, args[1], args[2])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if existed {
+			fmt.Printf("%s %s: budget removed, it now follows the level above\n", args[1], args[2])
+		} else {
+			fmt.Printf("%s %s: no budget was set\n", args[1], args[2])
+		}
+
 	case "status":
 		if len(args) != 2 {
 			fmt.Fprintln(os.Stderr, "usage: wg-budget status <bead>")
@@ -217,12 +233,15 @@ wg-budget — spend ceilings, in CENTS per day
   wg-budget set bead    <bead-id>      <cents>
   wg-budget set project <project-slug> <cents>
   wg-budget set cell    <cell-slug>    <cents>
+  wg-budget unset <bead|project|cell> <key>
   wg-budget status <bead-id> [--cell <slug>]
   wg-budget list
 
 Amounts are CENTS. 200 is two dollars a day; 2 is two cents a day.
 
 The most specific budget wins: a bead's, else its project's, else its cell's.
+Zero is a real budget meaning refuse everything, so it is not how you remove
+one. Unset is, and it restores the fallback to the level above.
 Spend is summed at the same level, so a project ceiling is compared against the
 project's whole spend and not against one bead's.
 

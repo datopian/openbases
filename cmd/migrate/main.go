@@ -26,6 +26,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/datopian/workgraph/db"
+	"github.com/datopian/workgraph/internal/config"
 )
 
 type migration struct {
@@ -36,7 +37,14 @@ type migration struct {
 
 func main() {
 	var (
-		dsn    = flag.String("dsn", os.Getenv("WG_DATABASE_URL"), "PostgreSQL connection string")
+		// config.DatabaseURL rather than the environment variable alone. On a
+		// deployed control node there is no WG_DATABASE_URL: there is a
+		// template plus a password held as a systemd credential, assembled by
+		// the config package. Reading only the variable meant this tool could
+		// not run where the migrations actually need to be applied, so they
+		// were applied by hand — which is how a schema drifts from the one in
+		// the repository without anyone deciding that it should.
+		dsn    = flag.String("dsn", config.DatabaseURL(), "PostgreSQL connection string")
 		dryRun = flag.Bool("dry-run", false, "report what would be applied without applying it")
 		verify = flag.Bool("verify", false, "check applied migrations still match their recorded checksums, then exit")
 	)
@@ -45,7 +53,7 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	if *dsn == "" {
-		log.Error("no connection string; set WG_DATABASE_URL or pass -dsn")
+		log.Error("no connection string; set WG_DATABASE_URL, or WG_DATABASE_URL_TEMPLATE with the db_app_password credential, or pass -dsn")
 		os.Exit(1)
 	}
 

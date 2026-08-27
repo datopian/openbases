@@ -1,0 +1,30 @@
+# Where the Go binaries come from.
+#
+# Every role that installs one takes a `*_local_binary` path and skips the
+# install when it is empty. The defaults were empty, so each deploy had to name
+# every binary on the command line — and a deploy that forgot one silently left
+# the old version running. That is exactly the failure that is hardest to see:
+# the playbook reports success, the service is healthy, and it is running last
+# week's code.
+#
+# So the default is the build output. `make build-linux` then a plain
+# `ansible-playbook site.yml` deploys what you just built, and nothing has to be
+# remembered.
+#
+# first_found with errors='ignore' returns nothing when the file is not there,
+# which keeps the empty-string contract: a checkout that has not been built
+# deploys configuration and leaves the binaries alone, rather than failing on a
+# missing source file.
+workgraph_build_dir: "{{ playbook_dir }}/../../bin/linux-amd64"
+
+control_api_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/control-api'], errors='ignore') | default('', true) }}"
+budget_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/budget'], errors='ignore') | default('', true) }}"
+work_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/work'], errors='ignore') | default('', true) }}"
+migrate_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/migrate'], errors='ignore') | default('', true) }}"
+monitor_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/monitor'], errors='ignore') | default('', true) }}"
+costimport_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/costimport'], errors='ignore') | default('', true) }}"
+registry_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/registry'], errors='ignore') | default('', true) }}"
+
+witness_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/witness'], errors='ignore') | default('', true) }}"
+runner_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/runner'], errors='ignore') | default('', true) }}"
+dispatcher_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/dispatcher'], errors='ignore') | default('', true) }}"

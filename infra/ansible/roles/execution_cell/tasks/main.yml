@@ -345,6 +345,19 @@
     path: "{{ dispatcher_binary }}"
   register: dispatcher_stat
 
+# The credentials the dispatcher authenticates with are written by the gastown
+# role, but only on a run that was given the service-token secret. Asking the
+# node whether the file is there is the honest question: a run without the
+# secret leaves an existing, working file alone, and gating on the variable
+# would then disable a dispatcher that had everything it needed.
+- name: Check whether each cell has control-plane credentials
+  ansible.builtin.stat:
+    path: "{{ cells_root }}/{{ item.name }}/.credentials/control-api.env"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cell_control_creds
+
 # Started only when the cell actually has credentials for the control API. A
 # dispatcher without them restarts every fifteen seconds and fills the journal
 # with the same authentication error, which is how a real failure later gets
@@ -361,7 +374,13 @@
   when:
     - item.stat.exists
     - dispatcher_stat.stat.exists
-    - access_service_client_secret | default("") | length > 0
+    - (cell_control_creds.results
+       | selectattr('item.name', 'equalto', item.item.name)
+       | map(attribute='stat.exists') | first | default(false))
+    # And only once the control API can actually verify what the dispatcher
+    # sends. Enabling it before the /v1/node/ Access application exists gives a
+    # 401 every fifteen seconds, which buries the real failure when one comes.
+    - control_api_cell_work_access_aud | default("") | length > 0
 
 - name: Install the reaper timer units
   ansible.builtin.copy:

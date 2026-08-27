@@ -67,6 +67,22 @@ func Set(ctx context.Context, db *sql.DB, kind, key, dailyCents string, maxAgent
 	return nil
 }
 
+// Unset removes a budget so the subject falls back to the one above it: a bead
+// to its project, a project to its cell. Reports whether there was one.
+//
+// Set alone could not express this. Zero is a real budget meaning "refuse
+// everything", so it is not a way to remove one, and raising the number instead
+// leaves a limit in place that hides the fallback.
+func Unset(ctx context.Context, db *sql.DB, kind, key string) (bool, error) {
+	var existed bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT system_clear_budget($1, $2)`, kind, key,
+	).Scan(&existed); err != nil {
+		return false, fmt.Errorf("clearing the %s budget for %s: %w", kind, key, err)
+	}
+	return existed, nil
+}
+
 func nullable(s string) any {
 	if s == "" {
 		return nil

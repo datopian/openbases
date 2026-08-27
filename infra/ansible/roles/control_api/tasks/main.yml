@@ -40,6 +40,24 @@
     group: root
   when: budget_local_binary | length > 0
 
+- name: Install the work queue tool
+  ansible.builtin.copy:
+    src: "{{ work_local_binary }}"
+    dest: "{{ work_binary }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: work_local_binary | length > 0
+
+- name: Install the migration tool
+  ansible.builtin.copy:
+    src: "{{ migrate_local_binary }}"
+    dest: "{{ migrate_binary }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: migrate_local_binary | length > 0
+
 # Credential source files. systemd reads these at start and copies them into a
 # per-service tmpfs; the service user never needs to read them itself, which is
 # why they are root-only rather than group-readable like the env file.
@@ -108,6 +126,47 @@
     mode: "0640"
   no_log: true
   notify: Restart control-api
+
+# So that the CLIs are usable by a person, not only by systemd. Without it the
+# first thing anyone hits at a shell is "no database URL is configured" from a
+# binary that is correctly configured.
+- name: Install the CLI environment shim
+  ansible.builtin.copy:
+    src: wg-env
+    dest: /usr/local/bin/wg-env
+    owner: root
+    group: root
+    mode: "0755"
+
+# Before the service starts. Migrations are forward-only and idempotent: one
+# already applied is checked against its recorded checksum and skipped.
+#
+# As `postgres` over the unix socket, not as the application role. The
+# application role is deliberately not the owner of anything — an owner bypasses
+# row-level security unless FORCE is set on every table — so it cannot create
+# the objects a migration creates, and a migration run as the app role fails
+# with "permission denied for schema public".
+#
+# Peer authentication over the socket means no password is assembled, passed on
+# a command line, or placed in the environment for this.
+- name: Apply database migrations
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: >-
+      {{ migrate_binary }}
+      -dsn postgresql:///{{ postgresql_database }}?host=/var/run/postgresql
+  register: migrate_run
+  # The tool logs one "applied" line per migration and "database is up to date"
+  # when there was nothing to do, so this reports a change only when the schema
+  # actually moved.
+  changed_when: "'msg=applied' in migrate_run.stdout"
+  when: migrate_local_binary | length > 0
+
+- name: Report what the migrations did
+  ansible.builtin.debug:
+    msg: "{{ migrate_run.stdout_lines | default([]) | select('search', 'applied|up to date|migrations found') | list }}"
+  when: migrate_local_binary | length > 0
 
 - name: Install the systemd unit
   ansible.builtin.template:
