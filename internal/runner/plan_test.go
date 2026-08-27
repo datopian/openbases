@@ -175,8 +175,13 @@ func TestTheRoleDecidesTheModelAndTheEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	argv := strings.Join(p.Argv, " ")
-	if !strings.Contains(argv, "--model sonnet") {
+	// The provider segment comes off for the CLI, which speaks Anthropic's
+	// names; the canonical form keeps it (wg-8e0).
+	if !strings.Contains(argv, "--model claude-sonnet-5") {
 		t.Errorf("polecat should run on its tier: %s", argv)
+	}
+	if strings.Contains(argv, "--model anthropic/") {
+		t.Errorf("the provider segment must not reach the CLI: %s", argv)
 	}
 	// --effort is the flag the CLI actually has. --reasoning-effort is rejected
 	// as an unknown option, which surfaces as a bare exit 1 and reads exactly
@@ -190,7 +195,7 @@ func TestTheRoleDecidesTheModelAndTheEffort(t *testing.T) {
 
 	// An explicit override wins, so an escalation does not need a code change.
 	s := spec()
-	s.Model, s.Effort = "claude-opus-5", "high"
+	s.Model, s.Effort = "anthropic/claude-opus-5", "high"
 	p, err = New(s)
 	if err != nil {
 		t.Fatal(err)
@@ -248,20 +253,53 @@ func TestThePlanStatesItsModelAndEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Model != "sonnet" || p.Effort != "medium" {
+	if p.Model != "anthropic/claude-sonnet-5" || p.Effort != "medium" {
 		t.Fatalf("plan says model=%q effort=%q", p.Model, p.Effort)
 	}
 }
 
-// The tier names must be ones the CLI accepts. Gas Town spells them
-// "claude-sonnet"; the CLI answers that with "not a model this version of Claude
-// Code recognizes" and then runs anyway on a default, so the wrong tier is a
-// line on stderr rather than a failure.
-func TestModelNamesAreOnesTheCLIAccepts(t *testing.T) {
+// One namespace (wg-8e0). Every default is <provider>/<model>, and every one
+// has recorded limits — a default that cannot be planned is a role that cannot
+// run, and finding that out at dispatch is finding it out too late.
+func TestEveryDefaultModelIsCanonicalAndKnown(t *testing.T) {
 	for role, model := range DefaultModels {
-		if strings.HasPrefix(model, "claude-") {
-			t.Errorf("role %q maps to %q, which is Gas Town's spelling, not the CLI's", role, model)
+		if _, _, err := splitModel(model); err != nil {
+			t.Errorf("role %q maps to %q: %v", role, model, err)
+			continue
 		}
+		if _, ok := GatewayModels[model]; !ok {
+			t.Errorf("role %q maps to %q, which has no recorded limits", role, model)
+		}
+	}
+}
+
+// A bare model name is the ambiguity the rename removes: "claude-sonnet-5" could
+// be addressed through anthropic, bedrock or vertex, and those are different
+// endpoints with different credentials.
+func TestABareModelNameIsRefused(t *testing.T) {
+	s := spec()
+	s.Model = "claude-sonnet-5"
+	_, err := New(s)
+	if err == nil {
+		t.Fatal("a model with no provider was accepted")
+	}
+	if !strings.Contains(err.Error(), "<provider>/<model>") {
+		t.Errorf("the error should say what the shape is: %v", err)
+	}
+}
+
+// Claude Code reaches the gateway's /anthropic path and cannot address any other
+// provider. Handing it a Kimi model must fail here rather than becoming a
+// warning on stderr and a run on whatever the CLI falls back to.
+func TestTheClaudeRuntimeRefusesANonAnthropicModel(t *testing.T) {
+	s := spec()
+	s.Model = "workers-ai/@cf/moonshotai/kimi-k2.7-code"
+	_, err := New(s)
+	if err == nil {
+		t.Fatal("a non-Anthropic model was handed to Claude Code")
+	}
+	if !strings.Contains(err.Error(), string(RuntimeOpenCode)) {
+		t.Errorf("the error should name the runtime that can reach it: %v", err)
 	}
 }
 
