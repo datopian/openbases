@@ -123,6 +123,137 @@ health monitor that replaced the largest of them makes no model calls at all.
 Nothing on the return path approves itself. An agent can open a pull request; it cannot merge one,
 widen a classification, or decide its own budget.
 
+## Which model does which work
+
+Model choice is a property of the **work**, not of whichever agent picks it up. A classification
+and an architecture review are not the same job and should not cost the same, and the default —
+whichever model the harness happens to reach for — is not a decision anybody made. The reasoning is
+[ADR-0018](docs/adr/0018-tiered-model-routing.md); this is what it means in practice.
+
+### Four tiers
+
+| Tier | Default model | Work it is for |
+|---|---|---|
+| **T0** mechanical | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | classification, routing, tagging, extraction, short operational text |
+| **T1** reasoning | `@cf/google/gemma-4-26b-a4b-it` | briefs, planning, decomposition, review, routine writing |
+| **T2** coding | Kimi K2.7 Code | non-trivial implementation, debugging, repo-scale change |
+| **T3** expert | `claude-sonnet-5`, then `claude-opus-5` | architecture, ambiguous failure, critical review |
+
+Opus is off by default and needs explicit human approval. Sonnet needs a cheaper tier to have been
+tried first, unless the work is marked critical.
+
+**T0 must not be a reasoning model, and that was measured rather than assumed.** The plan
+originally named GLM-4.7-Flash here. Classifying fifteen real bead titles into bug/task/chore
+through the staging `oss` gateway:
+
+| Model | max_tokens | Correct | Blank | Neurons | Time |
+|---|---|---|---|---|---|
+| `llama-3.3-70b-instruct-fp8-fast` | 64 | **13/15** | 0 | **35.6** | **11.7s** |
+| `gemma-4-26b-a4b-it` | 400 | 9/15 | 2 | 110.8 | 58.7s |
+| `gemma-4-26b-a4b-it` | 256 | 3/15 | 11 | 111.6 | 56.9s |
+| `glm-4.7-flash` | 1200 | 5/6 | — | 105.8 | 38.9s |
+| `glm-4.7-flash` | 24 | 0/6 | 6 | 6.6 | 6.2s |
+
+The structural finding matters more than the ranking. A reasoning model spends its budget thinking
+before it answers, so at a T0-sized budget it returns **nothing at all** — GLM at 24 tokens and
+Gemma at 256 both consume the budget without producing content. Give it room to finish and it costs
+three times the neurons and four to five times the latency to do work that has one right answer.
+That is a statement about the *tier*, not about which model is better: Gemma 4 stays the right T1
+default, because T1 is briefs and review, where deliberation is the product.
+
+Two consequences for anyone writing a caller. **Any T0 client must handle `content: null`** —
+GLM-4.7-Flash returns its answer in `reasoning` with `content` empty, so a client reading only
+`content` sees a blank string and no error, and silently classifies everything as blank. And the
+scope of the measurement is n=15 on one task: enough to pick a default and to rule out reasoning
+models at this tier, not enough to treat 13/15 as an accuracy figure.
+
+### The work carries its own tier
+
+A bead is meant to declare what it needs and how far it may escalate, so the *work* selects the
+model rather than the agent that happens to pick it up:
+
+```yaml
+model_class: normal
+max_cost_usd: 1.00
+escalation: [gemma-4, kimi-k2.7-code, claude-sonnet]
+```
+
+*Designed, not built — the schema records cost per bead today, but nothing reads an escalation path
+yet (`wg-fpt`).* What exists now is the per-bead **budget**, which is enforced: `wg-budget` refuses
+a dispatch before an agent starts, resolving most-specific-first — the bead's own ceiling, else its
+project's, else its cell's.
+
+### Two inference planes, tiered differently
+
+The split is forced by a real constraint, not by taste. Cloudflare's dynamic routing is reachable
+only through the OpenAI-compatible `/compat/chat/completions` endpoint and is unavailable on the
+REST API. Gas Town spawns Claude Code, which speaks Anthropic's `/v1/messages`, so **an agent
+cannot address a dynamic route at all.**
+
+**Control-plane inference** — extraction, classification, attention ranking, summarisation, context
+preparation. We write these callers, so they can carry metadata (project, task type, risk, bead)
+and get conditional routing, budget nodes and fallback. This is where the volume will be, so it is
+where tiering pays. *Not built yet — tracked as `wg-sn4`.*
+
+**Agent inference** — Mayor, Deacon, Witness, Refinery, polecats, crew. Claude Code processes on
+provider-native endpoints, so they are tiered by **role** instead, which is coarser and sufficient:
+
+| Role | Model | Effort | Why |
+|---|---|---|---|
+| `polecat` | `claude-sonnet` | medium | does the actual work |
+| `crew` | `claude-sonnet` | medium | does the actual work |
+| `mayor` | `claude-haiku` | low | supervises nothing here — Workgraph does that job itself |
+| `deacon` | `claude-haiku` | low | town watchdog |
+| `witness` | `claude-haiku` | low | mostly replaced by `cmd/witness`, which makes no model calls |
+| `refinery` | `claude-haiku` | low | event-driven; costs only when there is a merge |
+| `dog`, `boot` | `claude-haiku` | low | patrol |
+
+The full map lives in [`infra/ansible/roles/gastown/defaults/main.yml`](infra/ansible/roles/gastown/defaults/main.yml).
+[`internal/runner/plan.go`](internal/runner/plan.go) carries the same tiers for the two roles the
+direct runner starts — `polecat` and `crew` — under the names the Claude Code CLI accepts, which
+are not the names Gas Town uses. Same tier, different spelling; see the note below.
+
+The map is owned in Ansible rather than by `gt config cost-tier`, because two owners of one map
+fight: once any entry differs from the preset, `gt` reports the tier as `custom` rather than `budget`, so a task
+that re-applies the tier whenever it is not `budget` fires on every run and undoes the difference.
+That was observed, not theorised.
+
+**Reasoning effort matters more than the model did.** Output was 89% of tokens and effectively all
+of the cost in the first bill, so every patrol role runs at `low`. One spelling note that cost real
+time: the CLI flag is `--effort`, not `--reasoning-effort`, and the CLI model name is `sonnet`, not
+`claude-sonnet` — given the latter it prints a warning to stderr and then **runs anyway on a
+default**, so the wrong tier fails quietly rather than loudly.
+
+### What it actually costs
+
+Tiering is step three, not step one. The order is: zero unnecessary calls, then less context, then
+the cheapest model that reliably succeeds, then escalation, and spend limits last as a net rather
+than a control. One day of testing produced a $23 bill of which $13 was patrol roles polling —
+1,616 requests doing no work. No model choice beats not making the call, which is why the town comes
+up for a dispatch and is torn down after it, and why the health monitor that replaced the largest
+patrol makes no model calls at all.
+
+Every call is recorded per model, imported from the gateways into `usage_records`. From staging, all
+3,350 records to date:
+
+| Model | Calls | Spend |
+|---|---:|---:|
+| `claude-opus-5` | 376 | $23.60 |
+| `claude-haiku-4-5` | 2,236 | $16.40 |
+| `claude-sonnet-5` | 503 | $11.97 |
+| `@cf/google/gemma-4-26b-a4b-it` | 92 | $0.01 |
+| `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | 69 | <$0.01 |
+| `@cf/zai-org/glm-4.7-flash` | 16 | <$0.01 |
+
+Read the top three rows together: Haiku took six times Opus's call volume for two thirds of its
+cost, and the open-weight tiers ran 177 calls for roughly a cent. That is the tiering working, and
+it is also why the cheap tiers are worth building callers for rather than reasoning about.
+
+Spend is attributed by role, cell, project and **bead**, so `wg-budget` can refuse a dispatch
+before an agent starts rather than after it has spent the money. Three gateways — `oss`, `internal`,
+`client` — divide one shared ceiling rather than each repeating it, because writing the whole figure
+to each made the real ceiling three times the agreed one.
+
 ## Getting started
 
 ```bash
