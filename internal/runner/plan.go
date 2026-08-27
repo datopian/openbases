@@ -109,19 +109,45 @@ type Plan struct {
 	TrustFile string
 }
 
-// DefaultModels maps a role to its model tier (ADR-0018).
+// DefaultModels maps a role to its model (ADR-0018, renamed by wg-8e0).
 //
-// These are the names the Claude Code CLI accepts, which are NOT the names Gas
-// Town uses. gastown_role_agents says "claude-sonnet"; the CLI answers that with
+// Names are `<gateway-provider>/<model>` — the spelling the AI Gateway uses and
+// the one that comes back in usage_records. One namespace, because there were
+// three: this map said "sonnet", gastown_role_agents says "claude-sonnet", and
+// the gateway logs "claude-sonnet-5". A model identifier that means different
+// things in three files is how the wrong tier ships, and it ships quietly: the
+// Claude Code CLI answers a name it does not know with
 //
 //	"claude-sonnet" is not a model this version of Claude Code recognizes
 //
-// and then runs anyway on a default, assuming a 200k context — so the wrong tier
-// is a warning on stderr rather than a failure, and would have been easy to miss
-// in a log nobody reads. The tiers are the same; only the spelling differs.
+// on stderr, and then runs anyway on a default. A warning in a log nobody reads
+// is indistinguishable from success.
+//
+// Each runtime translates to whatever its own CLI wants. The claude runtime
+// strips the provider and REFUSES anything but anthropic, rather than passing a
+// name it cannot reach and letting the CLI fall back.
+//
+// Not renamed: gastown_role_agents in Ansible. Those values are Gas Town agent
+// ALIASES, not model identifiers — "claude-haiku" there names a gt agent whose
+// command happens to be claude. Making them look like our names would be a
+// third meaning wearing the same clothes.
 var DefaultModels = map[string]string{
-	"polecat": "sonnet",
-	"crew":    "sonnet",
+	"polecat": "anthropic/claude-sonnet-5",
+	"crew":    "anthropic/claude-sonnet-5",
+}
+
+// splitModel separates the gateway provider from the model.
+//
+// Required rather than optional, because a bare name is exactly the ambiguity
+// this rename removes: "claude-sonnet-5" could reasonably be addressed through
+// anthropic, bedrock or vertex, and those are different endpoints with different
+// credentials.
+func splitModel(canonical string) (provider, model string, err error) {
+	i := strings.Index(canonical, "/")
+	if i <= 0 || i == len(canonical)-1 {
+		return "", "", fmt.Errorf("model %q must be <provider>/<model>, e.g. anthropic/claude-sonnet-5", canonical)
+	}
+	return canonical[:i], canonical[i+1:], nil
 }
 
 // Runtime is which agent CLI executes the run.
@@ -175,6 +201,8 @@ type ModelLimits struct {
 // pull request, which for something that decides what executes against our
 // repositories is the right amount of friction.
 var GatewayModels = map[string]ModelLimits{
+	"anthropic/claude-sonnet-5":                         {Context: 200000, Output: 64000},
+	"anthropic/claude-haiku-4-5":                        {Context: 200000, Output: 64000},
 	"workers-ai/@cf/moonshotai/kimi-k2.7-code":          {Context: 262144, Output: 8192},
 	"workers-ai/@cf/moonshotai/kimi-k2.6":               {Context: 262144, Output: 8192},
 	"workers-ai/@cf/moonshotai/kimi-k3":                 {Context: 262144, Output: 8192},
@@ -403,7 +431,21 @@ func planClaude(p *Plan, s Spec, tools []string) error {
 		return err
 	}
 	p.Settings = settings
-	p.Argv = []string{"claude", "-p", s.Instructions, "--model", p.Model,
+
+	// The CLI speaks Anthropic's names, so the provider segment comes off. It is
+	// checked rather than assumed: Claude Code reaches the gateway's /anthropic
+	// path and cannot address any other provider, so a Kimi model handed to this
+	// runtime would produce a warning and a run on the wrong model.
+	provider, model, err := splitModel(p.Model)
+	if err != nil {
+		return err
+	}
+	if provider != "anthropic" {
+		return fmt.Errorf("the %s runtime reaches Anthropic models only; %q needs the %s runtime",
+			RuntimeClaude, p.Model, RuntimeOpenCode)
+	}
+
+	p.Argv = []string{"claude", "-p", s.Instructions, "--model", model,
 		"--settings", p.SettingsPath}
 	if p.Effort != "" {
 		// --effort, not --reasoning-effort. The CLI rejects the latter with

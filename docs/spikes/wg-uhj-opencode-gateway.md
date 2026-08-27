@@ -89,6 +89,24 @@ classifier and an unusable worker; those are unrelated facts. `wg-hvb` should sc
 context first, then on tool-use, then on quality — in that order, because each is cheaper
 than the next.
 
+**Measured against Claude Code on the same task (added 2026-08-27, wg-8e0).** The
+same trivial instruction — "reply with exactly: OK" — run through `wg-runner` both ways:
+
+| Runtime | Model | Calls | Cents |
+|---|---|---:|---:|
+| `opencode` | `@cf/moonshotai/kimi-k2.7-code` | 1 | 0.40 |
+| `claude` | `claude-sonnet-5` | 2 | 10.95 |
+
+That is 27× on one trivial task, and it refines the point below rather than
+contradicting it. The 20k-token prompt floor is real; Sonnet's rate is simply high
+enough that the cheaper model still wins by a lot even paying it. Note also that
+Claude Code made **two** calls where OpenCode made one, which is a difference in
+harness behaviour and not in model choice.
+
+One task is not a benchmark. What it is good for is showing that the comparison
+must be run per task type on real beads — which is `wg-hvb` — rather than argued
+from per-token rates.
+
 **A 20k-token floor changes the cost arithmetic.** "Reply with exactly: OK" cost 1.82
 cents, because the prompt goes in whole on every request whatever the task. Cheap
 per-token rates do not make cheap runs when the floor is that high. Compare cost per
