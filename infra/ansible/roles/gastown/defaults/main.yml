@@ -14,7 +14,17 @@ dolt_sha256_linux_amd64: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc3145
 # Gas Town spawns the Claude Code CLI: its start command is
 # `exec claude --dangerously-skip-permissions`. The agent harness is therefore a
 # dependency of the orchestrator, not an implementation detail of the model.
+# Pinned, not "latest". This is the process that runs an agent with file-write
+# access inside a cell, so an unpinned upgrade is a change to what our agents can
+# do arriving without a pull request. Kept in step with versions.lock by
+# scripts/check_pins.sh.
 claude_code_package: "@anthropic-ai/claude-code"
+claude_code_version: "2.1.232"
+
+# OpenCode, the second agent runtime (ADR-0024). Reaches any gateway provider
+# through /compat, which Claude Code cannot.
+opencode_version: "v1.18.23"
+opencode_sha256_linux_amd64: "ab7015cd8113e011a461f30a0c2b77d8299a144ff688cb62e93e8802835d7288"
 
 cells_root: /srv/cells
 

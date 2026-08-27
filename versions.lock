@@ -90,6 +90,48 @@ matrix:
         file: "dolt-darwin-amd64.tar.gz"
         sha256: "4a054b3417b22a3f07ce2e98fc5e23db027cdfa6b2e9835790c11c4ab0fed0bb"
 
+# Agent runtimes — the CLIs that actually execute model output (ADR-0024).
+#
+# A separate section, NOT part of the matrix above, and the distinction matters.
+# The matrix moves as a unit because gt declares exact compatibility with bd and
+# a minimum for dolt; rolling one back means rolling all three. An agent runtime
+# declares nothing about the others and can be bumped on its own, so filing it
+# under `matrix` would make every OpenCode release a matrix bump and quietly
+# devalue the rule that a matrix bump needs the compatibility fixture.
+#
+# Pinned for a sharper reason than libraries are. This is not a dependency the
+# services import; it is the process that runs an agent with file-write access
+# inside a cell. An unpinned upgrade to it is a change to what our agents can
+# do, arriving without a pull request.
+#
+# Digests are the publisher-reported SHA-256 from the GitHub release API, read
+# on 2026-08-27.
+runtimes:
+  opencode:
+    version: "v1.18.23"
+    repository: "anomalyco/opencode"
+    # Reaches any gateway provider through /compat. Proven to carry attribution
+    # in wg-uhj; used by wg-runner's opencode runtime.
+    artefacts:
+      linux_amd64:
+        file: "opencode-linux-x64.tar.gz"
+        sha256: "ab7015cd8113e011a461f30a0c2b77d8299a144ff688cb62e93e8802835d7288"
+      linux_arm64:
+        file: "opencode-linux-arm64.tar.gz"
+        sha256: "86d3afaf4e8784f9adab189be2a315c12b27ec40a04b70defbe70595c3cc7c65"
+
+  claude_code:
+    # Was unpinned: the Ansible task installed the npm package with `state:
+    # present` and no version, so a node got whatever was latest the day it was
+    # first built and kept it. Two nodes built a month apart ran different
+    # agents, and neither was recorded anywhere.
+    #
+    # Pinned at the version already deployed, so adopting this changes nothing
+    # today and makes the next change deliberate. npm verifies the package
+    # integrity hash itself, which is why there is no sha256 here.
+    version: "2.1.232"
+    package: "@anthropic-ai/claude-code"
+
 # Language and build toolchain, pinned so that CI, local development, and the
 # release image agree.
 toolchain:

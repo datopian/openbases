@@ -23,6 +23,14 @@
       url: "https://github.com/gastownhall/gastown/releases/download/{{ gastown_version }}/gastown_{{ gastown_version | replace('v','') }}_linux_amd64.tar.gz"
       sha256: "{{ gastown_sha256_linux_amd64 }}"
       binary: gt
+    # Not part of the matrix above and installed alongside it rather than with
+    # it: OpenCode declares no compatibility with gt, bd or dolt and is rolled
+    # back on its own (versions.lock, `runtimes`).
+    - name: opencode
+      version: "{{ opencode_version }}"
+      url: "https://github.com/anomalyco/opencode/releases/download/{{ opencode_version }}/opencode-linux-x64.tar.gz"
+      sha256: "{{ opencode_sha256_linux_amd64 }}"
+      binary: opencode
   loop_control:
     loop_var: tool
     label: "{{ tool.name }} {{ tool.version }}"
@@ -42,6 +50,7 @@
 - name: Install the Claude Code CLI
   community.general.npm:
     name: "{{ claude_code_package }}"
+    version: "{{ claude_code_version }}"
     global: true
     state: present
 
@@ -51,9 +60,17 @@
   changed_when: false
   failed_when: claude_version.rc != 0
 
+- name: Confirm the second agent runtime answers
+  ansible.builtin.command: opencode --version
+  register: opencode_installed
+  changed_when: false
+  failed_when: opencode_installed.rc != 0
+
 - name: Report the installed matrix
   ansible.builtin.debug:
-    msg: "gt={{ gastown_version }} bd={{ beads_version }} dolt={{ dolt_version }} claude={{ claude_version.stdout }}"
+    msg: >-
+      gt={{ gastown_version }} bd={{ beads_version }} dolt={{ dolt_version }}
+      claude={{ claude_version.stdout }} opencode={{ opencode_installed.stdout }}
 
 # ---------------------------------------------------------------------------
 # Agent first-run state
