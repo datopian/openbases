@@ -163,12 +163,24 @@ func (d *dispatcher) run(ctx context.Context, job work.Job) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// project sends the cell's beads to the control plane.
+// project reads the cell's beads and sends them to the control plane.
+//
+// Reading and sending are separate because only one of them can be tested
+// without a cell: readBeads shells out to bd against a real Dolt database,
+// while sendBeads is the part that has to get the endpoint right — and getting
+// the endpoint wrong is what actually happened.
 func (d *dispatcher) project(ctx context.Context) error {
 	beads, err := d.readBeads(ctx)
 	if err != nil {
 		return err
 	}
+	return d.sendBeads(ctx, beads)
+}
+
+// sendBeads projects a bead list upward. An empty list is not sent: it would be
+// indistinguishable from a cell whose graph failed to open, and the control
+// plane would then show the backlog as empty.
+func (d *dispatcher) sendBeads(ctx context.Context, beads []beadRow) error {
 	if len(beads) == 0 {
 		return nil
 	}
@@ -176,7 +188,7 @@ func (d *dispatcher) project(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.call(ctx, http.MethodPost, "/v1/work/project", bytes.NewReader(body))
+	_, err = d.call(ctx, http.MethodPost, "/v1/node/work/project", bytes.NewReader(body))
 	return err
 }
 
@@ -230,7 +242,7 @@ func (d *dispatcher) readBeads(ctx context.Context) ([]beadRow, error) {
 }
 
 func (d *dispatcher) claim(ctx context.Context) (*work.Job, error) {
-	body, err := d.call(ctx, http.MethodPost, "/v1/work/claim?cell="+d.cell, nil)
+	body, err := d.call(ctx, http.MethodPost, "/v1/node/work/claim?cell="+d.cell, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +262,7 @@ func (d *dispatcher) report(ctx context.Context, id string, res work.Result) {
 		d.log.Error("encoding a result", "job", id, "error", err)
 		return
 	}
-	if _, err := d.call(ctx, http.MethodPost, "/v1/work/"+id+"/result", bytes.NewReader(body)); err != nil {
+	if _, err := d.call(ctx, http.MethodPost, "/v1/node/work/"+id+"/result", bytes.NewReader(body)); err != nil {
 		// Loud, because a job stuck in `running` forever is how a queue quietly
 		// stops. Nothing here can fix it; the control plane has to notice.
 		d.log.Error("could not report a finished job; it will sit as running", "job", id, "error", err)
@@ -281,6 +293,22 @@ func (d *dispatcher) call(ctx context.Context, method, path string, body io.Read
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, truncate(string(out), 200))
+	}
+	// A rejected request does not arrive as a 4xx. Cloudflare Access answers an
+	// unauthenticated request with 200 and its own login PAGE, so the status
+	// check above passes and the HTML then fails to parse as JSON — which is
+	// how this presented in the journal:
+	//
+	//	msg="claiming work" error="invalid character '<' looking for beginning of value"
+	//
+	// That says nothing about Access, nothing about which path, and nothing
+	// about what to do, and it repeated every ten seconds. The real cause was
+	// this client calling /v1/work instead of /v1/node/work: the right token
+	// for the wrong application, which Access answers by asking a daemon to log
+	// in. Naming it here costs one header check.
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "json") && len(bytes.TrimSpace(out)) > 0 {
+		return nil, fmt.Errorf("%s %s: expected JSON, got %q — this is Cloudflare Access serving its login page, "+
+			"which means the service token was not accepted for this path", method, path, ct)
 	}
 	return out, nil
 }
