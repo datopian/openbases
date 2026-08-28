@@ -38,7 +38,30 @@ type Identity struct {
 	// ServiceName is the service token's common name, so an audit record
 	// attributes the action to a named token rather than to nobody.
 	ServiceName string
+
+	// TokenID is set when the caller authenticated with a personal API token
+	// rather than an interactive Access session, and holds that token's id.
+	//
+	// The identity is otherwise IDENTICAL to the session's — same UserID, same
+	// grants, same row-level visibility — because that is exactly what makes a
+	// token usable at all (wg-p4h.1). This field exists for the few decisions
+	// that must still tell the two apart:
+	//
+	//	minting a token, which must never be reachable from a token, or a
+	//	leaked credential mints its own successor and revocation stops
+	//	meaning anything;
+	//
+	//	attributing an action in the audit trail to the credential used and
+	//	not only to the person holding it.
+	//
+	// Empty means an interactive session. Code that cares must ask explicitly:
+	// nothing else about a token identity is implicitly weaker, and treating it
+	// as second-class by default would undo the property above.
+	TokenID string
 }
+
+// ViaToken reports whether this identity came from a personal API token.
+func (i Identity) ViaToken() bool { return i.TokenID != "" }
 
 // Authenticator establishes the identity of an inbound request.
 type Authenticator interface {

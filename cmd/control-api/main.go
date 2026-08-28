@@ -29,6 +29,7 @@ import (
 	"github.com/datopian/workgraph/internal/domain"
 	"github.com/datopian/workgraph/internal/githubapp"
 	"github.com/datopian/workgraph/internal/httplog"
+	"github.com/datopian/workgraph/internal/tokens"
 	"github.com/datopian/workgraph/internal/version"
 	"github.com/datopian/workgraph/internal/webui"
 	"github.com/datopian/workgraph/internal/witness"
@@ -170,10 +171,12 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	var cos *chiefofstaff.Store
 	var inbox *attention.Store
 	var decisions *approvals.Store
+	var apiTokens *tokens.Store
 	if db != nil {
 		cos = chiefofstaff.NewStore(db)
 		inbox = attention.NewStore(db)
 		decisions = approvals.NewStore(db)
+		apiTokens = tokens.NewStore(db)
 	}
 
 	var gh *githubapp.Client
@@ -907,6 +910,136 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "recorded"})
+	})
+
+	// Personal API tokens (wg-p4h.2). The credential a person gives a tool.
+	//
+	// tokenMinter guards the one rule that cannot be expressed as a scope: a
+	// token may not mint a token. A leaked credential that can produce its own
+	// successor makes revocation meaningless, because revoking the one you know
+	// about leaves the one it created. So minting requires an interactive Access
+	// session, and the refusal is written now — before wg-p4h.3 wires the
+	// authenticator that would make it reachable — because a rule added after
+	// the path exists is a rule that was briefly absent.
+	tokenMinter := func(w http.ResponseWriter, r *http.Request) (authn.Identity, bool) {
+		id, _ := authn.FromContext(r.Context())
+		if apiTokens == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return id, false
+		}
+		if id.ViaToken() {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": "a token cannot manage tokens",
+				"code":  "token_self_service_forbidden",
+				"hint":  "mint and revoke tokens from the interface, with an Access session",
+			})
+			return id, false
+		}
+		return id, true
+	}
+
+	authed.HandleFunc("POST /v1/tokens", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := tokenMinter(w, r)
+		if !ok {
+			return
+		}
+		var body struct {
+			Label     string   `json:"label"`
+			Scopes    []string `json:"scopes"`
+			ExpiresIn string   `json:"expires_in"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		d, err := time.ParseDuration(body.ExpiresIn)
+		if err != nil || d <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "expires_in must be a positive duration, for example \"720h\"",
+				"code":  "invalid_expiry",
+			})
+			return
+		}
+		secret, t, err := apiTokens.Mint(r.Context(), id.UserID, body.Label, body.Scopes,
+			time.Now().Add(d), "interface")
+		if errors.Is(err, tokens.ErrProtectedScope) || errors.Is(err, tokens.ErrLifetime) {
+			// A refusal the caller can act on, unlike the generic 400 above.
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": err.Error(), "code": "scope_or_lifetime_refused",
+			})
+			return
+		}
+		if err != nil {
+			log.Error("minting a token", "error", err, "user", id.UserID)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		// The only time the secret exists outside the caller's hands. It is not
+		// logged here or anywhere: the digest is all the server keeps.
+		log.Info("token minted", "user", id.UserID, "token", t.ID, "label", t.Label,
+			"scopes", t.Scopes, "expires", t.ExpiresAt.UTC().Format(time.RFC3339))
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"token":      secret,
+			"id":         t.ID,
+			"label":      t.Label,
+			"scopes":     t.Scopes,
+			"expires_at": t.ExpiresAt.UTC().Format(time.RFC3339),
+			"warning":    "this is the only time the token is shown; store it now",
+		})
+	})
+
+	authed.HandleFunc("GET /v1/tokens", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := tokenMinter(w, r)
+		if !ok {
+			return
+		}
+		list, err := apiTokens.List(r.Context(), id.UserID)
+		if err != nil {
+			log.Error("listing tokens", "error", err, "user", id.UserID)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		// Enveloped, matching every other collection in this API.
+		out := make([]map[string]any, 0, len(list))
+		for _, t := range list {
+			item := map[string]any{
+				"id":         t.ID,
+				"label":      t.Label,
+				"scopes":     t.Scopes,
+				"created_at": t.CreatedAt.UTC().Format(time.RFC3339),
+				"expires_at": t.ExpiresAt.UTC().Format(time.RFC3339),
+				"live":       t.Live(time.Now()),
+			}
+			if t.LastUsedAt != nil {
+				item["last_used_at"] = t.LastUsedAt.UTC().Format(time.RFC3339)
+			}
+			if t.RevokedAt != nil {
+				item["revoked_at"] = t.RevokedAt.UTC().Format(time.RFC3339)
+			}
+			out = append(out, item)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"tokens": out})
+	})
+
+	authed.HandleFunc("DELETE /v1/tokens/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := tokenMinter(w, r)
+		if !ok {
+			return
+		}
+		err := apiTokens.Revoke(r.Context(), id.UserID, r.PathValue("id"))
+		if errors.Is(err, tokens.ErrNotFound) {
+			// Someone else's token and a token that does not exist are the same
+			// answer: row-level security means this handler never learns which.
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "no such token"})
+			return
+		}
+		if err != nil {
+			log.Error("revoking a token", "error", err, "user", id.UserID)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		log.Info("token revoked", "user", id.UserID, "token", r.PathValue("id"))
+		writeJSON(w, http.StatusOK, map[string]any{"status": "revoked"})
 	})
 
 	// The project page. Returns the summary, its repositories with projected
