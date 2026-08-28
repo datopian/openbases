@@ -115,9 +115,35 @@ ALTER TABLE api_tokens FORCE ROW LEVEL SECURITY;
 -- credentials is not an administrative need that this table has to serve.
 -- Ending another person's access is done by removing their user record, which
 -- cascades.
-CREATE POLICY api_tokens_own ON api_tokens
-    FOR ALL
+--
+-- Split by command rather than written as one FOR ALL policy. test/integration/
+-- invariants.sql refuses FOR ALL outright, and the reason is in its comment: a
+-- permissive FOR ALL also covers SELECT, so it re-opens every read it was meant
+-- to leave alone. The four policies below say the same thing here, because the
+-- predicate is identical for every command — but that is a property of this
+-- table today, not a rule, and the split is what keeps it from silently
+-- becoming untrue.
+CREATE POLICY api_tokens_read ON api_tokens
+    FOR SELECT
+    USING (user_id = current_app_user());
+
+CREATE POLICY api_tokens_insert ON api_tokens
+    FOR INSERT
+    WITH CHECK (user_id = current_app_user());
+
+-- Revocation is an UPDATE, and both halves are checked: USING decides which
+-- rows are visible to update, WITH CHECK refuses reassigning a token to another
+-- user on the way out.
+CREATE POLICY api_tokens_update ON api_tokens
+    FOR UPDATE
     USING (user_id = current_app_user())
     WITH CHECK (user_id = current_app_user());
+
+-- Deleting a token is not how it is revoked — revocation sets revoked_at and
+-- keeps the row, so "why did this stop working" stays answerable. The policy
+-- exists so that a delete which does happen is still scoped to the owner.
+CREATE POLICY api_tokens_delete ON api_tokens
+    FOR DELETE
+    USING (user_id = current_app_user());
 
 COMMIT;
