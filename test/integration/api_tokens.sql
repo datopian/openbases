@@ -31,21 +31,20 @@ INSERT INTO users (id, organisation_id, display_name, primary_email, status) VAL
 -- Digests are arbitrary 32-byte values. No plaintext token exists anywhere in
 -- this file, deliberately: secret_scan.sh scans history as well as the working
 -- tree, so a token-shaped literal here would fail CI permanently (wg-cjp).
-INSERT INTO api_tokens (id, user_id, label, token_sha256, scopes, expires_at) VALUES
+INSERT INTO api_tokens (id, user_id, label, token_sha256, scopes, created_at, expires_at) VALUES
   ('00000000-0000-0000-0000-0000000004c1', '00000000-0000-0000-0000-0000000004b1',
-   'ada laptop',      sha256('ada-live'::bytea),      ARRAY['work.create']::text[], now() + interval '30 days'),
+   'ada laptop',      sha256('ada-live'::bytea),      ARRAY['work.create']::text[], now(),                    now() + interval '30 days'),
+  -- Expired, and it has to be BACKDATED rather than have its expiry pushed
+  -- into the past. api_tokens_expiry_after_creation applies to UPDATE as well
+  -- as INSERT, so there is no way to represent a token that expired before it
+  -- was created — which is right, and means an expired fixture is one that was
+  -- minted two days ago for one day.
   ('00000000-0000-0000-0000-0000000004c2', '00000000-0000-0000-0000-0000000004b1',
-   'ada expired',     sha256('ada-expired'::bytea),   '{}'::text[],                now() + interval '1 hour'),
+   'ada expired',     sha256('ada-expired'::bytea),   '{}'::text[],                now() - interval '2 days', now() - interval '1 day'),
   ('00000000-0000-0000-0000-0000000004c3', '00000000-0000-0000-0000-0000000004b2',
-   'grace laptop',    sha256('grace-live'::bytea),    '{}'::text[],                now() + interval '30 days'),
+   'grace laptop',    sha256('grace-live'::bytea),    '{}'::text[],                now(),                    now() + interval '30 days'),
   ('00000000-0000-0000-0000-0000000004c4', '00000000-0000-0000-0000-0000000004b3',
-   'suspended owner', sha256('gone-live'::bytea),     '{}'::text[],                now() + interval '30 days');
-
--- Expire one by moving it into the past. Done with an UPDATE rather than an
--- INSERT because the expiry CHECK compares against created_at, and a row that
--- was born expired could not be inserted at all — which is itself correct.
-UPDATE api_tokens SET expires_at = now() - interval '1 minute'
- WHERE id = '00000000-0000-0000-0000-0000000004c2';
+   'suspended owner', sha256('gone-live'::bytea),     '{}'::text[],                now(),                    now() + interval '30 days');
 
 -- ---------------------------------------------------------------------------
 -- Visibility, as the application role
