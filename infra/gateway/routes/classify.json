@@ -1,0 +1,94 @@
+{
+  "name": "wg-classify",
+  "_doc": [
+    "T0 work: classification, routing, tagging, extraction, short operational text.",
+    "One route per task class (wg-sn4). Callers address it as model 'dynamic/wg-classify'",
+    "and never name a model, which is the point: changing what runs T0 is a change to",
+    "this file, not to every caller.",
+    "",
+    "Shape: a cost ceiling keyed on the calling cell, then llama-3.3-70b, falling back",
+    "to gemma-4-26b if it fails or times out. Both are Workers AI, so neither needs a",
+    "provider key.",
+    "",
+    "llama first because it was measured first: on classifying fifteen real bead titles",
+    "it scored 13/15 at 35.6 neurons and 11.7s, against gemma's 9/15 at 110.8 neurons",
+    "and 58.7s (ADR-0018). Gemma is the fallback rather than the default for the same",
+    "reason it is the T1 default \u2014 it deliberates, which is wasted on work that has one",
+    "right answer.",
+    "",
+    "The budget node is a ceiling, not the budget. wg-budget refuses a dispatch before",
+    "an agent starts; this catches control-plane inference, which no bead governs.",
+    "",
+    "Both model elements name a fallback even though the last one has nowhere to fall back to. The documentation calls fallback optional; the API refuses a model element without one, with `Required` at body.elements[3].outputs.fallback. So the terminal model points at end for both outputs, which reads oddly and is what the API accepts."
+  ],
+  "elements": [
+    {
+      "id": "start",
+      "type": "start",
+      "outputs": {
+        "next": {
+          "elementId": "cell_budget"
+        }
+      }
+    },
+    {
+      "id": "cell_budget",
+      "type": "rate",
+      "properties": {
+        "limitType": "cost",
+        "key": "metadata.cell",
+        "limit": 5,
+        "window": 86400
+      },
+      "outputs": {
+        "success": {
+          "elementId": "t0_primary"
+        },
+        "fallback": {
+          "elementId": "end"
+        }
+      }
+    },
+    {
+      "id": "t0_primary",
+      "type": "model",
+      "properties": {
+        "provider": "workers-ai",
+        "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "timeout": 30000,
+        "retries": 1
+      },
+      "outputs": {
+        "success": {
+          "elementId": "end"
+        },
+        "fallback": {
+          "elementId": "t0_fallback"
+        }
+      }
+    },
+    {
+      "id": "t0_fallback",
+      "type": "model",
+      "properties": {
+        "provider": "workers-ai",
+        "model": "@cf/google/gemma-4-26b-a4b-it",
+        "timeout": 45000,
+        "retries": 1
+      },
+      "outputs": {
+        "success": {
+          "elementId": "end"
+        },
+        "fallback": {
+          "elementId": "end"
+        }
+      }
+    },
+    {
+      "id": "end",
+      "type": "end",
+      "outputs": {}
+    }
+  ]
+}
