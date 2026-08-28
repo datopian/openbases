@@ -13,6 +13,14 @@ cloudflare_account_id = "83025b28472d6aa2bf5ae59f3724aa78"
 cloudflare_zone_id = "f33c8652ac5a2e9aa9526fd41c3ad2de"
 hostname           = "work-staging.openbases.com"
 
+# The token-authenticated API surface (wg-p4h.1).
+#
+# A separate name, so the Access bypass that lets a bearer-only request through
+# applies to this hostname and not to the interface's. Access does not challenge
+# this one; the application authenticates every request itself. The module
+# variable carries the full reasoning and the cost.
+api_hostname = "api-staging.openbases.com"
+
 hcloud_location = "fsn1"
 
 # 2 vCPU / 4 GB, EUR 5.49/mo. Enough to prove cell isolation; production uses

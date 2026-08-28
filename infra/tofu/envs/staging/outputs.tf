@@ -2,6 +2,10 @@ output "hostname" {
   value = module.environment.hostname
 }
 
+output "api_hostname" {
+  value = module.environment.api_hostname
+}
+
 output "control_node_ipv4" {
   value = module.environment.control_node_ipv4
 }

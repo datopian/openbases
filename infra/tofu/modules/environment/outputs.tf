@@ -100,3 +100,8 @@ output "cell_work_queue_aud" {
   description = "AUD of the Access application fronting the node work queue (/v1/node/)."
   value       = cloudflare_zero_trust_access_application.cell_work_queue.aud
 }
+
+output "api_hostname" {
+  description = "The token-authenticated API hostname, or empty when none is configured (wg-p4h.1)."
+  value       = var.api_hostname
+}

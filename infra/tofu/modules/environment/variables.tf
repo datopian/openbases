@@ -149,6 +149,34 @@ variable "app_port" {
   default     = 8080
 }
 
+variable "api_hostname" {
+  description = <<-EOT
+    Fully qualified hostname for the token-authenticated API surface, or "" to
+    create nothing.
+
+    Separate from `hostname` on purpose (wg-p4h.1). A personal API token has to
+    work across the whole /v1 surface, and neither existing shape fits that: a
+    per-path Access application would mean one application per endpoint, and the
+    comment on cell_token_mint explains why widening one to a prefix is unsafe —
+    it "would quietly extend the token's reach to every path underneath it". A
+    bypass policy on /v1 of the interface's own hostname would remove Access from
+    the entire API including the paths a browser uses.
+
+    So the token surface gets its own name, and the blast radius of the bypass is
+    one origin name that only ever serves token-authenticated traffic. ADR-0006's
+    "origin closed to inbound Internet traffic" stance gets one named exception
+    with a boundary rather than a general hole.
+
+    On this hostname the token is the whole security boundary: no Access session,
+    no MFA. That is the price of a credential a tool can hold, and it is why
+    wg-p4h.2's hashing, bounded expiry and revoke-on-next-request are not
+    optional, and why wg-p4h.9 (per-token rate and spend limits) is sequenced
+    before any external client can dispatch.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "ssh_hostname" {
   description = <<-EOT
     Hostname used to reach the node's SSH over Cloudflare Tunnel, for
