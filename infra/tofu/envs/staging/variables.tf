@@ -19,6 +19,12 @@ variable "hostname" {
   type        = string
 }
 
+variable "api_hostname" {
+  description = "Fully qualified hostname for the token-authenticated API surface, or empty for none. The module variable explains why it is a separate name (wg-p4h.1)."
+  type        = string
+  default     = ""
+}
+
 variable "access_allowed_emails" {
   description = "Emails permitted by the Cloudflare Access policy. Empty denies everyone."
   type        = list(string)

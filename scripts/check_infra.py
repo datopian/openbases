@@ -109,7 +109,7 @@ def check_cloudinit_template_escaping() -> None:
 
 # DNS records this configuration is allowed to manage. Adding a name here is a
 # deliberate act; a record not listed is either a mistake or someone else's.
-ALLOWED_DNS_RECORDS = {"app", "ssh", "ssh_execution"}
+ALLOWED_DNS_RECORDS = {"app", "ssh", "ssh_execution", "api"}
 
 
 def check_dns_records_are_declared() -> None:

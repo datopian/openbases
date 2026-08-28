@@ -220,6 +220,18 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "control" {
           hostname = var.hostname
           service  = "http://localhost:${var.app_port}"
         },
+      ],
+      # The token surface reaches the same origin. The separation is at the edge
+      # — one hostname carries an Access session, the other carries a token —
+      # not in the application, which authenticates both from one chain
+      # (wg-p4h.1, wg-p4h.3).
+      var.api_hostname != "" ? [
+        {
+          hostname = var.api_hostname
+          service  = "http://localhost:${var.app_port}"
+        }
+      ] : [],
+      [
         {
           service = "http_status:404"
         },
@@ -311,6 +323,18 @@ resource "cloudflare_dns_record" "ssh_execution" {
   proxied = true
   ttl     = 1
   comment = "Managed by OpenTofu — workgraph ${var.environment} execution SSH."
+}
+
+resource "cloudflare_dns_record" "api" {
+  count = var.api_hostname != "" ? 1 : 0
+
+  zone_id = var.cloudflare_zone_id
+  name    = var.api_hostname
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.control.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+  comment = "Managed by OpenTofu — workgraph ${var.environment} token API."
 }
 
 resource "cloudflare_zero_trust_access_policy" "allowed_users" {
@@ -547,6 +571,79 @@ resource "cloudflare_r2_bucket_lifecycle" "backups" {
 # ---------------------------------------------------------------------------
 # Unattended access for Ansible and drift detection (wg-8yv.49)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# The token-authenticated API surface (wg-p4h.1)
+# ---------------------------------------------------------------------------
+
+# Access does not challenge this hostname. The application does.
+#
+# This is the one place in the environment where Cloudflare Access is not the
+# outer gate, so it is worth being explicit about what replaces it and why the
+# alternatives were rejected.
+#
+# WHY A BYPASS AT ALL. A tool — Claude Code, Codex, a script — presents one
+# Authorization header and cannot complete an interactive Access challenge. That
+# is the same constraint that produced webhook_bypass for GitHub. The difference
+# is scope: the webhook is one path, and a personal token has to work across the
+# whole /v1 surface.
+#
+# WHY NOT THE PER-PATH SHAPE. cell_token_mint and its siblings bind a service
+# token to exactly one path each, and the comment there says why they are not one
+# widened application: a Zero Trust application matches one domain, and widening
+# it to a prefix "would quietly extend the token's reach to every path underneath
+# it". Applied here that would mean an Access application per endpoint, created
+# by a Tofu change every time an endpoint ships.
+#
+# WHY NOT A BYPASS ON /v1 OF THE MAIN HOSTNAME. It would remove Access from the
+# entire API, including the paths the interface itself calls with a session. The
+# blast radius would be the whole application rather than the token surface.
+#
+# WHAT THIS COSTS, STATED PLAINLY. On this hostname the personal token is the
+# entire security boundary. There is no Access session behind it and no MFA. That
+# is the price of a credential a tool can hold. It is why wg-p4h.2 makes hashing,
+# a bounded expiry and revocation-on-next-request non-negotiable, why wg-p4h.3
+# refuses to make approval.decide grantable to any token, and why wg-p4h.9 —
+# per-token request and spend limits — is sequenced before an external client can
+# dispatch work that costs money.
+#
+# The origin is not open even so: it still serves only through the tunnel, and
+# the application still authenticates every request and still refuses anyone with
+# no user record.
+
+resource "cloudflare_zero_trust_access_policy" "api_token_bypass" {
+  count = var.api_hostname != "" ? 1 : 0
+
+  account_id = var.cloudflare_account_id
+  name       = "${local.name}-api-token-bypass"
+  decision   = "bypass"
+
+  include = [
+    {
+      everyone = {}
+    }
+  ]
+}
+
+resource "cloudflare_zero_trust_access_application" "api" {
+  count = var.api_hostname != "" ? 1 : 0
+
+  account_id = var.cloudflare_account_id
+  name       = "${local.name}-api"
+  domain     = var.api_hostname
+  type       = "self_hosted"
+
+  # No session to establish: every request carries its own credential and none
+  # of them should mint a cookie.
+  session_duration = "0s"
+
+  policies = [
+    {
+      id         = cloudflare_zero_trust_access_policy.api_token_bypass[0].id
+      precedence = 1
+    }
+  ]
+}
 
 # A service token for automation that cannot complete an interactive login.
 #
