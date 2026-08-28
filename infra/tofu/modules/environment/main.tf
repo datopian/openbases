@@ -637,6 +637,12 @@ resource "cloudflare_zero_trust_access_application" "api" {
   # of them should mint a cookie.
   session_duration = "0s"
 
+  # Not in the App Launcher. The provider defaults this to true, which would put
+  # a tile for a machine endpoint in front of every human with Access — an
+  # invitation to click through to a 401, and a misleading one, because the tile
+  # implies a login this hostname deliberately does not have.
+  app_launcher_visible = false
+
   policies = [
     {
       id         = cloudflare_zero_trust_access_policy.api_token_bypass[0].id
