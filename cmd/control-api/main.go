@@ -120,6 +120,26 @@ func main() {
 		}
 	}
 
+	// Personal API tokens, second in the chain (wg-p4h.3).
+	//
+	// Access first, because a browser session is the common case and a request
+	// carrying an Access assertion should be judged by it — a revoked session
+	// must not be rescued by a token in the same request. The token link is
+	// reached only when no Access assertion is present at all, which is exactly
+	// the case a tool produces.
+	//
+	// Without a database there is no token store, so the chain is Access alone
+	// and a bearer token is refused rather than silently ignored.
+	if db != nil {
+		auth = authn.Chain{
+			authn.AccessOrNotRecognised{Inner: auth},
+			&authn.BearerAuthenticator{
+				Lookup: tokens.NewLookup(tokens.NewStore(db)),
+				Log:    log,
+			},
+		}
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           httplog.Middleware(log)(routes(cfg, db, auth, domain.NewResolver(domain.NewStore(db)), log)),
@@ -1072,7 +1092,41 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		})
 	})
 
-	mux.Handle("/v1/", authn.Middleware(auth, resolver, log)(authed))
+	// The action check sits between authentication and the handler (wg-p4h.3).
+	//
+	// It runs AFTER routing, because it needs to know which route matched, and
+	// http.ServeMux only knows that once it has matched. Handler(r) returns the
+	// pattern without serving, which is how the check learns the route's name
+	// before the handler runs rather than after it has already acted.
+	//
+	// What it does today is narrow TOKENS. A session passes through unchanged,
+	// because deciding whether a PERSON holds a grant needs a role-to-action
+	// mapping that does not exist yet — the roles table carries names and
+	// descriptions and nothing connects them to authz's actions. Enabling an
+	// owner check against an empty mapping would deny every request. Until it
+	// lands a person's reach is bounded by row-level security exactly as it has
+	// been, and a token is bounded by that AND its scopes.
+	enforced := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := authed.Handler(r)
+		id, _ := authn.FromContext(r.Context())
+
+		if ok, reason := checkRouteAction(pattern, id); !ok {
+			// The refusal names the CREDENTIAL rather than the person. An
+			// operator debugging "this token may not" must not be sent to
+			// change their role, which is the wrong fix and a confusing one.
+			log.Info("route refused",
+				"pattern", pattern, "reason", reason,
+				"user", id.UserID, "token", id.TokenID)
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": "this credential may not perform that action",
+				"code":  reason,
+			})
+			return
+		}
+		authed.ServeHTTP(w, r)
+	})
+
+	mux.Handle("/v1/", authn.Middleware(auth, resolver, log)(enforced))
 
 	// The GitHub webhook is deliberately OUTSIDE the authenticated mux.
 	//

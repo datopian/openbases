@@ -58,10 +58,45 @@ type Identity struct {
 	// nothing else about a token identity is implicitly weaker, and treating it
 	// as second-class by default would undo the property above.
 	TokenID string
+
+	// Scopes are the actions the presenting token may perform, and are
+	// meaningful only when TokenID is set.
+	//
+	// A CEILING, never a grant. What a caller may do is the INTERSECTION of
+	// their own authorisation and this list, so a scope here can only ever
+	// narrow the person holding the token — never widen them. Reading it as a
+	// grant would turn a token into a privilege-escalation primitive, which is
+	// the opposite of its purpose.
+	//
+	// Empty means the token may perform no scoped action at all. That is not
+	// the same as no access: reads are governed by row-level security, which
+	// asks who the user is and never how they authenticated.
+	Scopes []string
 }
 
 // ViaToken reports whether this identity came from a personal API token.
 func (i Identity) ViaToken() bool { return i.TokenID != "" }
+
+// Permits reports whether this identity's credential allows an action.
+//
+// An interactive session permits everything the person themselves may do, so
+// this answers true and defers to the authorisation layer. A token permits only
+// what its scopes name.
+//
+// This is deliberately only half of the question. It says what the CREDENTIAL
+// allows, never what the PERSON is authorised to do, and a caller that treats a
+// true here as permission has skipped the authorisation check entirely.
+func (i Identity) Permits(action string) bool {
+	if !i.ViaToken() {
+		return true
+	}
+	for _, s := range i.Scopes {
+		if s == action {
+			return true
+		}
+	}
+	return false
+}
 
 // Authenticator establishes the identity of an inbound request.
 type Authenticator interface {
