@@ -70,7 +70,7 @@ CANDIDATES="
 workers-ai/@cf/moonshotai/kimi-k2.7-code:262144
 workers-ai/@cf/moonshotai/kimi-k2.6:262144
 workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731:1310720
-workers-ai/@cf/zai-org/glm-5.3-flash:1048576
+workers-ai/@cf/zai-org/glm-5.3-flash:1310720
 workers-ai/@cf/google/gemma-4-26b-a4b-it:256000
 workers-ai/@cf/qwen/qwen3-30b-a3b-fp8:32768
 "

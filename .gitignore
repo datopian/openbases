@@ -74,3 +74,6 @@ internal/webui/dist/*
 # Python bytecode, which a local import of a script leaves behind.
 __pycache__/
 *.pyc
+
+# Worktrees other sessions create here are separate checkouts, not content.
+.claude/worktrees/
