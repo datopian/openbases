@@ -18,21 +18,27 @@ before quality does — and it filters absolutely.
 A worker needs room for the prompt **and** the work, so the bar is four times the
 prompt: 79,600 tokens.
 
-Context figures are Cloudflare's published ones, read from
-`developers.cloudflare.com/workers-ai/models/<slug>` on 2026-08-28.
+Context figures come from the ACCOUNT's own model catalogue
+(`/accounts/{id}/ai/models/search`), not from the documentation, and
+`scripts/check_model_limits.py` compares the recorded values against it.
+
+That is the third source tried. Assumption got three of seven wrong; reading the
+documentation by hand still put `glm-5.3-flash` at 1,048,576 against a real
+1,310,720. The account API is the only source that is both machine-readable and
+specific to what this account can actually reach.
 
 | Model | Context | |
 |---|---:|---|
 | `@cf/deepseek-ai/deepseek-v4-flash-0731` | 1,310,720 | pass |
-| `@cf/zai-org/glm-5.3-flash` | 1,048,576 | pass |
+| `@cf/zai-org/glm-5.3-flash` | 1,310,720 | pass |
 | `@cf/moonshotai/kimi-k2.7-code` | 262,144 | pass |
 | `@cf/moonshotai/kimi-k2.6` | 262,144 | pass |
 | `@cf/google/gemma-4-26b-a4b-it` | 256,000 | pass |
 | `anthropic/claude-sonnet-5` *(control)* | 200,000 | pass |
 | `@cf/qwen/qwen3-30b-a3b-fp8` | 32,768 | **drop** |
 
-**This table was wrong when first published, and the correction is the more
-useful finding.** Three of seven figures were too small — `gemma-4-26b` recorded
+**This table was wrong twice, and the correction is the more useful finding.**
+First, three of seven figures were too small — `gemma-4-26b` recorded
 as 16,384 against a real 256,000, `deepseek-v4-flash` as 131,072 against
 1,310,720 from a dropped digit, and `glm-5.3-flash` likewise. They were written
 from assumption rather than read from the documentation, and `gemma-4-26b` was
@@ -44,6 +50,10 @@ than its severity — `llama-3.3-70b` has a 24,000-token window, confirmed both 
 the documentation and by the error it returns, and is the best T0 classifier we
 measured. It cannot be a worker. That remains true and remains the reason to
 screen on context before quality.
+
+Then, after re-reading the documentation by hand, `glm-5.3-flash` was still
+wrong. That is what turned a correction into a script: getting the same class of
+number wrong twice is a process failure, not a slip.
 
 The lesson is narrower and worth more than the table: a number nobody checked
 reads exactly like a measurement. Everything else in this document was measured;

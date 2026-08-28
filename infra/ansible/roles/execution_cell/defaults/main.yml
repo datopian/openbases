@@ -70,7 +70,7 @@ wg_model_limits:
   workers-ai/@cf/moonshotai/kimi-k2.7-code: {context: 262144, output: 8192}
   workers-ai/@cf/moonshotai/kimi-k2.6: {context: 262144, output: 8192}
   workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731: {context: 1310720, output: 8192}
-  workers-ai/@cf/zai-org/glm-5.3-flash: {context: 1048576, output: 8192}
+  workers-ai/@cf/zai-org/glm-5.3-flash: {context: 1310720, output: 8192}
   workers-ai/@cf/google/gemma-4-26b-a4b-it: {context: 256000, output: 8192}
 dispatcher_deadline: 15m
 witness_binary: /usr/local/bin/wg-witness

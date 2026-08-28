@@ -113,6 +113,22 @@ def budget_from_tfvars(environment: str) -> tuple[float, dict[str, float]]:
 # spend counter for the month. So the field names get established by creating
 # ONE rule in the dashboard and reading it back with this script's GET, and then
 # they go in the file below and never need the dashboard again.
+# Workers AI billing. 'postpaid' | 'unified' — the enum, learned from the API's
+# own rejection rather than guessed.
+#
+# 'unified' spends the prepaid credit balance instead of billing Workers AI
+# usage separately, which is what makes frontier Workers AI models reachable at
+# all: on 'postpaid' the account is refused with "This account is not allowed to
+# access @cf/moonshotai/kimi-k3" no matter how many credits are loaded. Loading
+# credits and switching the gateway are two separate actions and only the first
+# is obvious.
+#
+# Managed here because the PUT below is a full replace. A field this script does
+# not resend is reset to its default, so leaving billing mode out would silently
+# revert it the next time anyone changed a budget — the same trap the comment on
+# the body already warns about for rate limits and authentication.
+WORKERS_AI_BILLING = "unified"
+
 SPEND_RULES = Path(__file__).resolve().parent.parent / "infra" / "gateway" / "spend_rules.json"
 
 
@@ -261,7 +277,12 @@ def main() -> int:
         existing = (g.get("spend_limits") or {}).get("rules") or []
         wanted = [pool_rule(budget)] + extra_rules(gid)
 
-        if (g.get("spend_limits") or {}).get("enabled") and rules_match(existing, wanted):
+        billing_ok = g.get("workers_ai_billing_mode") == WORKERS_AI_BILLING
+        if not billing_ok:
+            print(f"  {gid}: Workers AI billing is "
+                  f"{g.get('workers_ai_billing_mode')!r}, want {WORKERS_AI_BILLING!r}")
+
+        if billing_ok and (g.get("spend_limits") or {}).get("enabled") and rules_match(existing, wanted):
             ids = ", ".join(r.get("id", "?") for r in existing)
             print(f"  {gid}: ${budget:g} per 30 days "
                   f"({shares[domain]:.0%} of the ${pool:g} pool)"
@@ -283,6 +304,7 @@ def main() -> int:
             "rate_limiting_interval": g.get("rate_limiting_interval", 60),
             "rate_limiting_limit": g.get("rate_limiting_limit", 120),
             "rate_limiting_technique": g.get("rate_limiting_technique", "sliding"),
+            "workers_ai_billing_mode": WORKERS_AI_BILLING,
             "spend_limits": {
                 "enabled": True,
                 # camelCase. The snake_case the provider sends is rejected.
@@ -311,6 +333,10 @@ def main() -> int:
         check = call("GET", f"/accounts/{account}/ai-gateway/gateways/{gid}", token)
         limits = (check.get("result") or {}).get("spend_limits") or {}
         rules = limits.get("rules") or []
+
+        if check.get("result", {}).get("workers_ai_billing_mode") != WORKERS_AI_BILLING:
+            failures.append(f"{gid}: billing mode did not stick: "
+                            f"{check.get('result', {}).get('workers_ai_billing_mode')!r}")
 
         if not limits.get("enabled") or not rules:
             failures.append(f"{gid}: no spend limit after writing one")

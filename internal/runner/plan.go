@@ -229,7 +229,7 @@ var GatewayModels = map[string]ModelLimits{
 	"workers-ai/@cf/moonshotai/kimi-k2.6":               {Context: 262144, Output: 8192},
 	"workers-ai/@cf/moonshotai/kimi-k3":                 {Context: 262144, Output: 8192},
 	"workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731": {Context: 1310720, Output: 8192},
-	"workers-ai/@cf/zai-org/glm-5.3-flash":              {Context: 1048576, Output: 8192},
+	"workers-ai/@cf/zai-org/glm-5.3-flash":              {Context: 1310720, Output: 8192},
 	"workers-ai/@cf/google/gemma-4-26b-a4b-it":          {Context: 256000, Output: 8192},
 	"workers-ai/@cf/qwen/qwen3-30b-a3b-fp8":             {Context: 32768, Output: 4096},
 }
