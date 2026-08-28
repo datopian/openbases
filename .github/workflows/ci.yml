@@ -190,6 +190,15 @@ jobs:
       - name: per-bead budgets resolve and sum at the same level
         run: psql -v ON_ERROR_STOP=1 -f test/integration/budgets.sql
 
+      # Personal API tokens: who can see whose, revocation taking effect on the
+      # next lookup, and the CHECK constraints biting. The constraints are the
+      # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes
+      # and the bounded lifetime in the schema precisely so a caller that skips
+      # the Go validation still cannot store the row, and that claim is only
+      # worth something if something proves it.
+      - name: api tokens are scoped, revocable, and constrained
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/api_tokens.sql
+
       # The cost importer, end to end against a stub gateway: paging, the
       # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
       # the real binary rather than SQL alone, because the decisions being
