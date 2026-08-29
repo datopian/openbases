@@ -24,6 +24,8 @@ DESC = {
  "POST /v1/tokens": ("Mint a personal API token", "Requires an interactive Access session. A token cannot mint a token: a leaked credential able to produce its own successor makes revocation meaningless. The secret is returned exactly once and never stored."),
  "GET /v1/tokens": ("List the caller's tokens", "Includes revoked and expired ones, so 'why did this stop working' stays answerable. Never returns a secret."),
  "DELETE /v1/tokens/{id}": ("Revoke a token", "Effective on the next request; there is no cache in front of the lookup."),
+ "GET /v1/events": ("Events since a cursor", "Cursor-paginated. The cursor is an event id, not an offset: an offset shifts under inserts, so a client paging an append-only log with OFFSET silently skips rows exactly when the log is busiest."),
+ "GET /v1/events/stream": ("Follow events as they happen", "Server-sent events. Send Last-Event-ID to resume where you left off; with no cursor the stream starts from now rather than replaying history. Use this instead of polling: an agent polling /v1/work per agent forever is a cost with no ceiling."),
  "GET /v1/budget/check": ("Whether a bead may be dispatched", "Execution-node path, authorised by its own path-bound Access application."),
  "POST /v1/agent-health": ("Report agent health", "Execution-node path (ADR-0019)."),
  "POST /v1/node/work/claim": ("Claim a queued job", "Execution-node path."),
@@ -38,7 +40,7 @@ ERR = {"type":"object","required":["error"],"properties":{
 
 CODES = ["token_scope_insufficient","role_grant_missing","route_not_declared","rate_limited",
          "spend_cap_reached","idempotency_key_conflict","invalid_idempotency_key",
-         "token_self_service_forbidden","not_implemented","invalid_expiry","scope_or_lifetime_refused","invalid_until"]
+         "token_self_service_forbidden","not_implemented","invalid_expiry","scope_or_lifetime_refused","invalid_until","invalid_cursor"]
 
 paths = collections.OrderedDict()
 for r in routes:
