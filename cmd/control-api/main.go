@@ -21,6 +21,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/datopian/workgraph/internal/apispec"
 	"github.com/datopian/workgraph/internal/approvals"
 	"github.com/datopian/workgraph/internal/attention"
 	"github.com/datopian/workgraph/internal/authn"
@@ -245,6 +246,17 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
+	})
+
+	// The contract, served unauthenticated (wg-p4h.5).
+	//
+	// Outside the /v1/ mux on purpose. A client that must authenticate in order
+	// to discover how to authenticate is a bad first five minutes, and the
+	// document contains no secrets — it describes shapes, not data.
+	mux.HandleFunc("GET /v1/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		_, _ = w.Write(apispec.OpenAPI)
 	})
 
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
