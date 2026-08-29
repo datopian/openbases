@@ -64,6 +64,20 @@ resource "cloudflare_ai_gateway" "cell" {
   # trail is not the trade to make here (plan section 20.2).
   zdr = false
 
+  # Workers AI billing, declared for the same reason the log settings below are.
+  #
+  # "unified" spends the prepaid credit balance instead of billing Workers AI
+  # separately, which is what makes the frontier open-weight models reachable —
+  # on "postpaid" the account is refused whatever the balance.
+  #
+  # Terraform owns it because Terraform owns this resource. It was first set by
+  # scripts/ai_gateway_spend_limits.py, and a plan immediately wanted to revert
+  # it: `workers_ai_billing_mode = "unified" -> "postpaid"`. Two owners of one
+  # field, and the loser was whichever ran last — with no error either way, just
+  # credits quietly going unused again. The script now verifies this rather than
+  # setting it, so drift is reported by whichever runs and changed by only one.
+  workers_ai_billing_mode = "unified"
+
   # Log retention, declared explicitly rather than left to the server.
   #
   # Cloudflare fills these in on create. Leaving them undeclared makes every

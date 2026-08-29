@@ -19,6 +19,13 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    # Only for the Workspace Events delivery fabric (wg-8yv.34). Google Cloud
+    # hosts nothing else — no application, no data at rest — and the module is
+    # skipped entirely until a project id is configured.
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 6.0"
+    }
   }
 
   # State encryption is configured through the TF_ENCRYPTION environment
