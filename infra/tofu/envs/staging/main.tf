@@ -28,3 +28,23 @@ module "environment" {
   admin_ssh_key_ids = var.admin_ssh_key_ids
   admin_ssh_cidrs   = var.admin_ssh_cidrs
 }
+
+# Workspace Events delivery fabric (WP-H1, unblocked by wg-8yv.34).
+#
+# count rather than a commented-out block: the module is inert until someone
+# sets google_project_id, and a plan with it unset is a plan with no Google
+# resources in it at all. That keeps `tofu plan` honest for everyone who has no
+# Google credentials, which is everyone until this is turned on.
+module "google_events" {
+  source = "../../modules/google-events"
+  count  = var.google_project_id == "" ? 0 : 1
+
+  project_id  = var.google_project_id
+  region      = var.google_region
+  environment = "staging"
+
+  # Pub/Sub pushes to the control API, which is behind Cloudflare Access. The
+  # endpoint must therefore be reachable by Google, which is a separate decision
+  # from the one this module makes — see the runbook.
+  push_endpoint = "https://${var.hostname}/v1/google/events"
+}
