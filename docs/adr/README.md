@@ -46,3 +46,4 @@ old one, exactly as knowledge records are superseded rather than overwritten.
 - [ADR-0023](0023-direct-agent-runner.md) — Running agents directly, not through Gas Town
 - [ADR-0024](0024-multi-provider-agent-runtimes.md) — Multi-provider agent runtimes, with the runtime chosen per run
 - [ADR-0025](0025-api-first-external-clients.md) — Reachable from the tools people already use, not only from its own interface
+- [ADR-0026](0026-role-permission-matrix.md) — The role-to-action matrix (proposed, awaiting a human ruling)
