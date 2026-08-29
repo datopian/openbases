@@ -58,6 +58,14 @@ var routeActions = map[string]routeAction{
 	"GET /v1/inbox":                  {Action: authz.OrganisationRead},
 	"GET /v1/inbox/branches":         {Action: authz.OrganisationRead},
 
+	// Attention items: a person's own inbox, scoped by row-level security to
+	// rows they already hold. Updating your own inbox is not an organisational
+	// action, which is why these carry work.update rather than something
+	// broader.
+	"POST /v1/attention/{id}/snooze":   {Action: authz.WorkUpdate},
+	"POST /v1/attention/{id}/delegate": {Action: authz.WorkAssign},
+	"POST /v1/attention/{id}/resolve":  {Action: authz.WorkUpdate},
+
 	// Writes that spend money or change the graph.
 	"POST /v1/work/plan":            {Action: authz.WorkCreate},
 	"POST /v1/work/{bead}/dispatch": {Action: authz.AgentDispatch},
