@@ -178,6 +178,7 @@ func usage() {
   wg project list|show <slug>
   wg tokens list              this credential's siblings
   wg spec                     the OpenAPI contract
+  wg mcp                      run as an MCP server over stdio
 
   --json                      the API's own shape, on any command
 

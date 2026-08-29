@@ -98,6 +98,10 @@ func run(cmd string, args []string, jsonOut bool) (int, error) {
 		return project(args, jsonOut)
 	case "tokens":
 		return get("/v1/tokens", jsonOut, renderTokens)
+	case "mcp":
+		// Local stdio MCP server, for a client that would rather call a tool
+		// than run a command.
+		return mcpServe()
 	case "spec":
 		// The contract, so a client author never has to ask where it is.
 		return get("/v1/openapi.json", true, nil)
