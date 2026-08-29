@@ -48,6 +48,21 @@ type ControlAPI struct {
 	AccessTeamDomain string
 	AccessAudience   string
 
+	// AuthzEnforce switches the role-to-action check from reporting to
+	// refusing. It defaults to FALSE, and the default is the point.
+	//
+	// ADR-0026 records the risk plainly: until that matrix, a person's reach was
+	// bounded only by row-level security, so nobody has ever needed a
+	// role_grants row to use the interface. Enforcing before checking that real
+	// users hold real grants would lock people out mid-task, and the first to
+	// find out would be somebody trying to work.
+	//
+	// So the check runs either way, and while this is false it logs what it
+	// WOULD have refused. That turns "does everyone hold the right grants" from
+	// a question somebody has to reason about into one the logs answer, and the
+	// switch is flipped once they are quiet.
+	AuthzEnforce bool
+
 	// CellAccessAudience is the AUD of the Access application that fronts the
 	// git-credential endpoint. Accepted ONLY on that path.
 	CellAccessAudience string
@@ -120,6 +135,10 @@ func LoadControlAPI() (ControlAPI, error) {
 
 		AccessTeamDomain: os.Getenv("WG_ACCESS_TEAM_DOMAIN"),
 		AccessAudience:   os.Getenv("WG_ACCESS_AUD"),
+		// Anything other than "true" leaves it reporting rather than refusing.
+		// Defaulting a permission gate to ON before its data is verified is how
+		// a safety feature becomes an outage.
+		AuthzEnforce: os.Getenv("WG_AUTHZ_ENFORCE") == "true",
 
 		CellAccessAudience:       os.Getenv("WG_CELL_ACCESS_AUD"),
 		CellHealthAccessAudience: os.Getenv("WG_CELL_HEALTH_ACCESS_AUD"),
