@@ -44,10 +44,17 @@ var _ = errors.Is
 // again, the test panics rather than quietly passing.
 func TestResolverKeepsAUserIDAnAuthenticatorAlreadyEstablished(t *testing.T) {
 	r := NewResolver(nil) // must never be dereferenced
+
+	// Composed, and obviously not real. The first version of this test carried
+	// the actual id of the live staging token that found the bug. That is not a
+	// secret — an id identifies a credential rather than granting it — but it
+	// names one that exists, and the secret scan flagged it, which is the
+	// scanner being more careful than the author.
+	tokenID := "00000000-0000-0000-0000-" + "0000000000ff"
 	in := authn.Identity{
-		Subject: "token:cfb4d751-81a6-4964-a410-6e13de1b9ff6",
-		UserID:  "2a3008b7-8758-4be3-9c02-bea38d524a41",
-		TokenID: "cfb4d751-81a6-4964-a410-6e13de1b9ff6",
+		Subject: "token:" + tokenID,
+		UserID:  "11111111-1111-1111-1111-111111111111",
+		TokenID: tokenID,
 	}
 
 	out, err := r.Resolve(context.Background(), in)
