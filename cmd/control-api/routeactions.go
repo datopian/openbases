@@ -115,6 +115,15 @@ func checkRouteAction(pattern string, id authn.Identity) (ok bool, reason string
 	return true, ""
 }
 
+// actionFor returns the action a route requires, or "" when it requires none.
+func actionFor(pattern string) authz.Action {
+	ra, ok := routeActions[pattern]
+	if !ok || ra.Public {
+		return ""
+	}
+	return ra.Action
+}
+
 // declaredRoutes returns the patterns this table covers, sorted.
 func declaredRoutes() []string {
 	out := make([]string, 0, len(routeActions))
