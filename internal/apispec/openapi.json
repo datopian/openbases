@@ -59,7 +59,8 @@
           "not_implemented",
           "invalid_expiry",
           "scope_or_lifetime_refused",
-          "invalid_until"
+          "invalid_until",
+          "invalid_cursor"
         ],
         "description": "Stable codes. token_scope_insufficient and role_grant_missing are deliberately distinct: one means this credential may not, the other means you may not, and they have different fixes."
       }
@@ -221,6 +222,84 @@
           }
         },
         "description": "Execution-node path, authorised by its own path-bound Access application."
+      }
+    },
+    "/v1/events": {
+      "get": {
+        "summary": "Events since a cursor",
+        "operationId": "get_v1_events",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Cursor-paginated. The cursor is an event id, not an offset: an offset shifts under inserts, so a client paging an append-only log with OFFSET silently skips rows exactly when the log is busiest."
+      }
+    },
+    "/v1/events/stream": {
+      "get": {
+        "summary": "Follow events as they happen",
+        "operationId": "get_v1_events_stream",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Server-sent events. Send Last-Event-ID to resume where you left off; with no cursor the stream starts from now rather than replaying history. Use this instead of polling: an agent polling /v1/work per agent forever is a cost with no ceiling."
       }
     },
     "/v1/inbox": {

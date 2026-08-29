@@ -66,6 +66,12 @@ var routeActions = map[string]routeAction{
 	"POST /v1/attention/{id}/delegate": {Action: authz.WorkAssign},
 	"POST /v1/attention/{id}/resolve":  {Action: authz.WorkUpdate},
 
+	// The event log. organisation.read rather than something narrower: the
+	// stream spans projects, and row-level security is what decides which
+	// events a caller actually sees.
+	"GET /v1/events":        {Action: authz.OrganisationRead},
+	"GET /v1/events/stream": {Action: authz.OrganisationRead},
+
 	// Writes that spend money or change the graph.
 	"POST /v1/work/plan":            {Action: authz.WorkCreate},
 	"POST /v1/work/{bead}/dispatch": {Action: authz.AgentDispatch},
