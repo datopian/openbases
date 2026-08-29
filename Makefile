@@ -82,12 +82,17 @@ build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 		-o $(BIN)/linux-amd64/dispatcher ./cmd/dispatcher
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
 		-o $(BIN)/linux-amd64/work ./cmd/work
+	@# wg is the HTTP client, and belongs on a laptop rather than a node — but it
+	@# is cross-compiled here so a node can carry one for an incident where the
+	@# database is the thing that is broken.
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+		-o $(BIN)/linux-amd64/wg ./cmd/wg
 	@# migrate belongs here for the same reason, and for one more: it embeds the
 	@# migrations, so a stale hand-built copy on a node applies a stale schema
 	@# while reporting success.
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
 		-o $(BIN)/linux-amd64/migrate ./cmd/migrate
-	@echo "built: $(BIN)/linux-amd64/{witness,monitor,worker,control-api,reconcile,costimport,registry,budget,runner,dispatcher,work,migrate}"
+	@echo "built: $(BIN)/linux-amd64/{witness,monitor,worker,control-api,reconcile,costimport,registry,budget,runner,dispatcher,work,wg,migrate}"
 
 verify-versions: ## Check installed gt/bd/dolt against versions.lock
 	@bash scripts/verify_versions.sh
