@@ -95,3 +95,15 @@ variable "ai_gateway_store_id" {
   type        = string
   default     = "10ba352dd98c4f2db387148e7313e451"
 }
+
+variable "google_project_id" {
+  description = "Google Cloud project used SOLELY as the Pub/Sub delivery fabric for Workspace Events. Empty disables the module entirely (wg-8yv.34)."
+  type        = string
+  default     = ""
+}
+
+variable "google_region" {
+  description = "Region for Pub/Sub resources."
+  type        = string
+  default     = "europe-west1"
+}

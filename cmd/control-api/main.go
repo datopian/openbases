@@ -24,6 +24,7 @@ import (
 	"github.com/datopian/workgraph/internal/approvals"
 	"github.com/datopian/workgraph/internal/attention"
 	"github.com/datopian/workgraph/internal/authn"
+	"github.com/datopian/workgraph/internal/authz"
 	"github.com/datopian/workgraph/internal/budget"
 	"github.com/datopian/workgraph/internal/chiefofstaff"
 	"github.com/datopian/workgraph/internal/config"
@@ -194,11 +195,13 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	var decisions *approvals.Store
 	var apiTokens *tokens.Store
 	limiter := tokens.NewLimiter()
+	var grants *authz.Store
 	if db != nil {
 		cos = chiefofstaff.NewStore(db)
 		inbox = attention.NewStore(db)
 		decisions = approvals.NewStore(db)
 		apiTokens = tokens.NewStore(db)
+		grants = authz.NewStore(db)
 	}
 
 	var gh *githubapp.Client
@@ -1174,6 +1177,41 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 					"resets":      "midnight UTC",
 				})
 				return
+			}
+		}
+
+		// The owner half: does the PERSON hold this action? ADR-0026 decided
+		// the role-to-action matrix; 0040_role_permissions.sql stores it.
+		//
+		// SHADOW MODE by default. Until this matrix existed, a person's reach
+		// was bounded only by row-level security, so nobody has ever needed a
+		// role_grants row to use the interface. Enforcing before checking that
+		// real users hold real grants would lock people out mid-task, and the
+		// first to find out would be somebody trying to work. So the check runs
+		// and reports, and WG_AUTHZ_ENFORCE=true turns reporting into refusing
+		// once the logs are quiet.
+		if grants != nil {
+			if action := actionFor(pattern); action != "" && id.UserID != "" {
+				err := grants.Authorize(r.Context(), authz.Request{
+					UserID: id.UserID,
+					Action: action,
+				})
+				if err != nil {
+					if !cfg.AuthzEnforce {
+						log.Warn("authorisation would refuse this request",
+							"pattern", pattern, "action", action,
+							"user", id.UserID, "token", id.TokenID,
+							"note", "reporting only; set WG_AUTHZ_ENFORCE=true to refuse")
+					} else {
+						log.Info("authorisation refused",
+							"pattern", pattern, "action", action, "user", id.UserID)
+						writeJSON(w, http.StatusForbidden, map[string]any{
+							"error": "your role does not grant that action",
+							"code":  "role_grant_missing",
+						})
+						return
+					}
+				}
 			}
 		}
 

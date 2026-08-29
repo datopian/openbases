@@ -123,10 +123,15 @@ def budget_from_tfvars(environment: str) -> tuple[float, dict[str, float]]:
 # credits and switching the gateway are two separate actions and only the first
 # is obvious.
 #
-# Managed here because the PUT below is a full replace. A field this script does
-# not resend is reset to its default, so leaving billing mode out would silently
-# revert it the next time anyone changed a budget — the same trap the comment on
-# the body already warns about for rate limits and authentication.
+# VERIFIED here, not set here. Terraform owns this field, because Terraform owns
+# the gateway resource — and when both wrote it, a plan immediately wanted to
+# revert `unified` back to `postpaid`. Two owners of one field, the loser being
+# whichever ran last, with no error either way: just credits quietly going
+# unused again.
+#
+# It is still resent in the PUT below, because that PUT is a full replace and a
+# field this script omits is reset to its default. Resending the value we expect
+# is not a second owner; it is refusing to clobber the first one.
 WORKERS_AI_BILLING = "unified"
 
 SPEND_RULES = Path(__file__).resolve().parent.parent / "infra" / "gateway" / "spend_rules.json"
@@ -279,8 +284,12 @@ def main() -> int:
 
         billing_ok = g.get("workers_ai_billing_mode") == WORKERS_AI_BILLING
         if not billing_ok:
-            print(f"  {gid}: Workers AI billing is "
-                  f"{g.get('workers_ai_billing_mode')!r}, want {WORKERS_AI_BILLING!r}")
+            # Reported, not silently corrected. If this is wrong the Terraform
+            # that owns it is wrong, and fixing it here would hide that until
+            # the next apply put it back.
+            failures.append(f"{gid}: Workers AI billing is "
+                            f"{g.get('workers_ai_billing_mode')!r}, want {WORKERS_AI_BILLING!r}; "
+                            f"Terraform owns this field — check infra/tofu/modules/environment/ai_gateway.tf")
 
         if billing_ok and (g.get("spend_limits") or {}).get("enabled") and rules_match(existing, wanted):
             ids = ", ".join(r.get("id", "?") for r in existing)
