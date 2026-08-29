@@ -21,18 +21,34 @@ import (
 // exists in the source.
 func registered(t *testing.T) []string {
 	t.Helper()
-	src, err := os.ReadFile("main.go")
+	// Every .go file in the package, not just main.go.
+	//
+	// This scanned main.go alone and reported a stale entry the moment
+	// wg-p4h.4 registered routes from writes.go — the test failing for the
+	// right reason and the wrong cause. A guard that only looks where routes
+	// used to live stops guarding the moment somebody adds a file.
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("reading main.go: %v", err)
+		t.Fatalf("reading the package directory: %v", err)
 	}
 	re := regexp.MustCompile(`authed\.HandleFunc\("((?:GET|POST|PATCH|PUT|DELETE) [^"]+)"`)
 	var out []string
-	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
-		out = append(out, m[1])
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+			out = append(out, m[1])
+		}
 	}
 	sort.Strings(out)
 	if len(out) == 0 {
-		t.Fatal("found no routes in main.go; the pattern this test scans for has changed")
+		t.Fatal("found no routes in the package; the pattern this test scans for has changed")
 	}
 	return out
 }

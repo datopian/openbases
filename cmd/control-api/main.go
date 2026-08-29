@@ -31,6 +31,7 @@ import (
 	"github.com/datopian/workgraph/internal/domain"
 	"github.com/datopian/workgraph/internal/githubapp"
 	"github.com/datopian/workgraph/internal/httplog"
+	"github.com/datopian/workgraph/internal/idempotency"
 	"github.com/datopian/workgraph/internal/tokens"
 	"github.com/datopian/workgraph/internal/version"
 	"github.com/datopian/workgraph/internal/webui"
@@ -194,6 +195,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	var inbox *attention.Store
 	var decisions *approvals.Store
 	var apiTokens *tokens.Store
+	var idem *idempotency.Store
 	limiter := tokens.NewLimiter()
 	var grants *authz.Store
 	if db != nil {
@@ -201,6 +203,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		inbox = attention.NewStore(db)
 		decisions = approvals.NewStore(db)
 		apiTokens = tokens.NewStore(db)
+		idem = idempotency.NewStore(db)
 		grants = authz.NewStore(db)
 	}
 
@@ -1096,6 +1099,9 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			"path":  r.URL.Path,
 		})
 	})
+
+	// The write surface over domain code that already exists (wg-p4h.4).
+	registerWrites(authed, inbox, idem, log)
 
 	// The action check sits between authentication and the handler (wg-p4h.3).
 	//
