@@ -1,7 +1,10 @@
 # ADR-0026: The role-to-action matrix
 
-- **Status:** proposed — **this is a draft for a human to correct, not an agent's decision**
+- **Status:** accepted
 - **Date:** 2026-08-29
+- **Accepted by:** Anuar Ustayev, 2026-08-29, as drafted — including all eight cells flagged
+  below for a ruling. Those are now decisions rather than proposals, and changing one is a
+  further ADR.
 - **Bead:** wg-p4h.12
 - **Plan reference:** §8.2, §14.3, §10.1
 - **Relates to:** [ADR-0009](0009-approval-digest-binding.md), [ADR-0014](0014-governed-self-improvement.md), [ADR-0025](0025-api-first-external-clients.md)
@@ -19,7 +22,7 @@ reads scoped role grants from PostgreSQL", and no such implementation exists —
 `GrantSet` used by tests.
 
 Plan §8.2 lists the roles and lists the actions, in prose, and deliberately does not map them. This
-is that mapping, proposed.
+is that mapping.
 
 **Why an agent should not simply decide this.** Six of the nineteen actions are
 `authz.Action.Protected()`, meaning they normally require a durable human approval, so the matrix
@@ -27,10 +30,10 @@ also decides *who can be asked for that approval*. ADR-0014's guarantee that not
 own protected change depends on the answer. Getting a cell wrong here is not a bug that surfaces in
 a test; it is a permission somebody has and nobody noticed.
 
-So this is written to be **corrected**, and the section after the matrix names every cell I am not
-confident about, with the argument on both sides.
+So it was drafted to be **corrected**: the section after the matrix named every cell that was not
+obvious, with the argument on both sides, and those were ruled on rather than waved through.
 
-## Decision (proposed)
+## Decision
 
 `•` granted · `—` not granted · `!` protected action, granted but still requiring an approval
 
@@ -76,48 +79,48 @@ and do not start agents.
 be the actor once an approval exists — never that the approval is skipped. `secret.manage` and
 `policy.manage` are admin-only *and* protected, so even the admin acts against a recorded decision.
 
-## The cells I am least sure of — please rule on these
+## The eight cells that needed a ruling, and got one
 
-These are the ones worth your attention. The rest of the matrix follows fairly directly from §8.2's
-role descriptions.
+These were flagged as the cells an agent should not decide quietly. They were reviewed and accepted
+as drafted. The arguments against each are kept, because the next person to disagree deserves the
+case that was already made rather than having to reconstruct it.
 
-**1. `approval.decide` for `organisation_admin`: proposed NO.** *For:* an admin locked out of
+**1. `approval.decide` for `organisation_admin`: NO.** *For:* an admin locked out of
 approvals cannot unblock anything at 3am, and there may be only one of them. *Against:* the admin
 defines policy and holds every secret; if they also approve, no protected action has an independent
-check. I chose separation. If the team is small enough that this is impractical, the honest fix is a
+check. Separation was chosen. If the team is small enough that this is impractical, the honest fix is a
 break-glass path that is audited, not a permanent grant.
 
-**2. `approval.decide` for `external_client`: proposed YES.** §8.2 says external clients are
+**2. `approval.decide` for `external_client`: YES.** §8.2 says external clients are
 "read-only **or approval-only**", so this is the plan's own words. But it means a non-employee can
 satisfy a protected action. Correct for "client signs off on their own deliverable", wrong if it
 ever leaks to a broader action class.
 
-**3. `pull_request.merge` for `organisation_admin`: proposed YES (protected).** Consistent with
+**3. `pull_request.merge` for `organisation_admin`: YES (protected).** Consistent with
 administering all projects. Arguable that merging is project work, not administration.
 
-**4. `marketing.publish` for `organisation_admin`: proposed NO.** Publishing in the company's name
+**4. `marketing.publish` for `organisation_admin`: NO.** Publishing in the company's name
 is a function lead's or executive's call, not an infrastructure administrator's. Easy to disagree
 with.
 
-**5. `knowledge.classification.downgrade`: proposed EXECUTIVE ONLY.** Plan §14.3 requires "an
+**5. `knowledge.classification.downgrade`: EXECUTIVE ONLY.** Plan §14.3 requires "an
 authorised human with classification-downgrade permission" and this is the most dangerous
-non-technical action in the set — it is how restricted client material becomes publishable. I gave
-it to exactly one role. Possibly it should be a per-person grant rather than a role at all.
+non-technical action in the set — it is how restricted client material becomes publishable. It is given to exactly one role. Possibly it should be a per-person grant rather than a role at all.
 
-**6. `work.create` for `executive`: proposed NO.** §8.2 gives the executive "portfolio visibility,
+**6. `work.create` for `executive`: NO.** §8.2 gives the executive "portfolio visibility,
 approvals, sensitive summaries" — no execution. But an executive who cannot file a bead will ask
 someone else to, and the graph loses the requester.
 
-**7. `agent.dispatch` for `contributor`: proposed NO.** The cost argument above. Against it: a
+**7. `agent.dispatch` for `contributor`: NO.** The cost argument above. Against it: a
 contributor who cannot dispatch cannot actually do the work Workgraph exists to route to them.
 Revisit once `wg-p4h.9`'s per-token spend caps exist, which may make this safe.
 
-**8. `audit.read` for `portfolio_lead`: proposed NO.** Audit records span projects and carry other
+**8. `audit.read` for `portfolio_lead`: NO.** Audit records span projects and carry other
 people's actions. A portfolio lead sees their portfolio's work through RLS already.
 
 ## Consequences
 
-Once agreed, this becomes `role_permissions` seeded by migration, an `authz.Authorizer` over it, and
+This becomes `role_permissions` seeded by migration, an `authz.Authorizer` over it, and
 the second half of the check in `cmd/control-api`. That is roughly a day's work and is not the hard
 part.
 
