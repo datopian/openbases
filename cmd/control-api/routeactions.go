@@ -152,3 +152,16 @@ func describeRoute(pattern string) string {
 func patternOf(r *http.Request) string {
 	return strings.TrimSpace(r.Pattern)
 }
+
+// spendsMoney reports whether a route can cause model inference to happen.
+//
+// The daily spend cap gates only these. Refusing a read because a dispatch
+// budget is exhausted would make an exhausted token useless for the one thing
+// its owner most needs next — finding out what it spent the money on.
+func spendsMoney(pattern string) bool {
+	switch pattern {
+	case "POST /v1/work/plan", "POST /v1/work/{bead}/dispatch":
+		return true
+	}
+	return false
+}
