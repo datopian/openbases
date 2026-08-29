@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -195,6 +196,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	var decisions *approvals.Store
 	var apiTokens *tokens.Store
 	var idem *idempotency.Store
+	limiter := tokens.NewLimiter()
 	var grants *authz.Store
 	if db != nil {
 		cos = chiefofstaff.NewStore(db)
@@ -1132,6 +1134,58 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			})
 			return
 		}
+		// Per-token rate limit (wg-p4h.9).
+		//
+		// ADR-0022 gates spend per bead, which stops one bead running away and
+		// does nothing about a client creating four hundred beads each within
+		// budget. This is the missing ceiling, and it is per TOKEN so one
+		// misconfigured tool throttles itself rather than its owner.
+		//
+		// Sessions are exempt: a person clicking a button is their own rate
+		// limit, and keying them all on an empty token id would throttle every
+		// browser user together.
+		if id.ViaToken() && apiTokens != nil {
+			perMinute, budget, err := apiTokens.Limits(r.Context(), id.TokenID)
+			if err != nil {
+				// Unknown limits are not permission to proceed unmetered, but
+				// they are also not the caller's fault. Log and admit at the
+				// default rather than refusing valid work over a read failure.
+				log.Warn("reading token limits", "token", id.TokenID, "error", err)
+				perMinute = 60
+			}
+
+			if ok, retry := limiter.Allow(id.TokenID, perMinute); !ok {
+				secs := int(retry.Seconds()) + 1
+				w.Header().Set("Retry-After", strconv.Itoa(secs))
+				log.Info("token rate limited",
+					"token", id.TokenID, "user", id.UserID, "rate", perMinute)
+				writeJSON(w, http.StatusTooManyRequests, map[string]any{
+					"error":       "too many requests for this token",
+					"code":        "rate_limited",
+					"retry_after": secs,
+				})
+				return
+			}
+
+			// The spend cap applies only to what spends. Reading the inbox
+			// costs nothing, and refusing it because a dispatch budget is
+			// exhausted would make an exhausted token useless for the one thing
+			// its owner most needs to do next: find out what happened.
+			if budget.Exceeded && spendsMoney(pattern) {
+				log.Info("token spend cap reached",
+					"token", id.TokenID, "user", id.UserID,
+					"cap_cents", budget.CapCents, "spent_cents", budget.SpentCents)
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error":       "this token has reached its daily spend cap",
+					"code":        "spend_cap_reached",
+					"cap_cents":   budget.CapCents,
+					"spent_cents": budget.SpentCents,
+					"resets":      "midnight UTC",
+				})
+				return
+			}
+		}
+
 		// The owner half: does the PERSON hold this action? ADR-0026 decided
 		// the role-to-action matrix; 0040_role_permissions.sql stores it.
 		//
