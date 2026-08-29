@@ -49,7 +49,12 @@ build: ## Build all binaries into ./bin (without the web interface; see release)
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/agentd      ./cmd/agentd
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/witness     ./cmd/witness
 	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/monitor     ./cmd/monitor
-	@echo "built: $(BIN)/control-api $(BIN)/worker $(BIN)/agentd $(BIN)/witness $(BIN)/monitor"
+	@# wg belongs here more than anything else in this list. It is the one binary
+	@# a person runs on their OWN machine, and it was reachable only through
+	@# build-linux — which cross-compiles for the nodes, where nobody uses it. So
+	@# `make build` on a laptop produced everything except the laptop tool.
+	@$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/wg          ./cmd/wg
+	@echo "built: $(BIN)/control-api $(BIN)/worker $(BIN)/agentd $(BIN)/witness $(BIN)/monitor $(BIN)/wg"
 
 build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 	@# The nodes are linux/amd64 and development happens on macOS, so a binary

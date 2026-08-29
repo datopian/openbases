@@ -180,7 +180,18 @@ func login(args []string) (int, error) {
 
 	token := os.Getenv("WG_TOKEN")
 	if token == "" {
-		fmt.Fprintln(os.Stderr, "Paste the token (it will not be echoed to the terminal by wg), then press Enter:")
+		// Says what is true. wg does not echo the token, but the TERMINAL does
+		// when a person types or pastes into it, and the old wording — "it will
+		// not be echoed" — read as a promise that the secret stays off the
+		// screen. It does not, and somebody trusting that would paste a live
+		// credential into a shared screen or a recorded session.
+		//
+		// The pipe form avoids it entirely and is what the prompt now
+		// recommends, because it is the only version where the secret never
+		// reaches the terminal, the scrollback, or shell history.
+		fmt.Fprintln(os.Stderr, "Paste the token and press Enter.")
+		fmt.Fprintln(os.Stderr, "Note: your terminal will show it. To avoid that, pipe it instead:")
+		fmt.Fprintln(os.Stderr, "  <command that prints the token> | wg login")
 		b, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return exitError, fmt.Errorf("reading the token: %w", err)
