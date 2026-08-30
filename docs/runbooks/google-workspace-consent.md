@@ -79,19 +79,43 @@ grants an automated system read access to every meeting recording and every
 Drive file in the tenant. That is the whole point of it being a human decision
 recorded in a bead rather than a line of Terraform.
 
-## 5. One question I cannot answer from here
+## 5. Which drives, and one question I cannot answer from here
 
-**Is Drive Workspace Events enabled and production-approved for the Datopian
-tenant?**
+**Which drives.** Three shared drives to start, recorded in
+[`infra/sources/shared_drives.json`](../../infra/sources/shared_drives.json):
+**All**, **BizDev**, **Delivery** — the ones every employee can already read.
+
+You do not need to look up their IDs. `drives.list` is covered by the
+`drive.readonly` scope from step 4, so the connector enumerates them and records
+the IDs itself. Names are for people; IDs are what the API takes and the only
+thing stable across a rename.
+
+That starting set is a useful shape as well as a convenient one: a drive whose
+membership is the whole company cannot leak to the whole company, so the
+isolation tests can be built before the drives that need them rather than after.
+**Adding a drive with narrower membership means giving it the visibility its
+membership implies, not `internal`** — ADR-0013 makes every derived artefact
+inherit the strictest classification of its sources, so a mistake there is how a
+client-confidential document ends up quoted in a summary the whole company reads.
+
+**The question:** is Drive Workspace Events enabled and production-approved for
+the Datopian tenant?
 
 Drive events through the Workspace Events API have been gated per-tenant. If
-they are not available, the connector must use the stable `changes.watch` and
-`changes.list` fallback instead — which works, but is a different subscription
+they are not available, the connector uses the stable `changes.watch` /
+`changes.list` fallback instead — which works, and is a different subscription
 lifecycle and a different piece of code.
 
+Either way, shared drives change the shape of it. Both paths take a `driveId`
+and keep their own page token, so three drives means three subscriptions and
+three cursors rather than one of each. And both `supportsAllDrives` and
+`includeItemsFromAllDrives` default to **false**: leave them off and the API
+returns nothing from a shared drive, successfully and with no error, which is
+the failure mode that looks like an empty drive.
+
 Check in the Admin console, or attempt a Drive subscription once step 4 is done.
-The answer changes what WP-H1 builds, so it is worth establishing before the
-code is written rather than after.
+The answer changes what WP-H1 builds, so it is worth establishing before the code
+is written rather than after.
 
 ## 6. Then, from the repository
 
@@ -119,6 +143,9 @@ Google credentials, which is everyone until this is turned on.
 - the service account **JSON key** (1Password)
 - the service account **client ID**, so the delegation can be verified
 - **yes or no** on Drive Workspace Events for the tenant (step 5)
+
+Not needed: the shared drive IDs. Those are enumerated with the credentials from
+step 3.
 
 With those, WP-H1 (`wg-8yv.20`) is unblocked and the other four Phase H P0s
 behind it can start.
