@@ -83,6 +83,32 @@ EOF
   leaves two valid keys, which is more exposure than before, not less.
 EOF
       ;;
+    google_service_account_key) cat <<'EOF'
+  ORDER MATTERS: create the new key BEFORE deleting the old one, and expect
+  BOTH to work in between. Google allows several user-managed keys per service
+  account, which is what makes this rotation windowless — and also what makes
+  forgetting step 4 leave a live credential behind.
+
+  This is the most sensitive credential here. Through domain-wide delegation it
+  reads every Meet recording and every Drive file in the tenant, so a key left
+  valid is not a tidiness problem.
+
+    1. gcloud iam service-accounts keys create /dev/stdout \
+         --iam-account=workgraph-events@<PROJECT_ID>.iam.gserviceaccount.com
+       to stdout, never to a file: the working tree is a git checkout.
+    2. rotate it in (this script, with --value '<the JSON, one line>')
+    3. confirm it works — the run below prints how
+    4. gcloud iam service-accounts keys delete <OLD_KEY_ID> \
+         --iam-account=workgraph-events@<PROJECT_ID>.iam.gserviceaccount.com
+       List them first: keys list --managed-by=user. Deleting the wrong one is
+       recoverable only by rotating again.
+
+  Step 4 is the rotation. Steps 1 to 3 only add a key.
+
+  Delegation does NOT need redoing: it is bound to the service account's
+  oauth2ClientId, which a new key does not change.
+EOF
+      ;;
     ai_gateway_token|cloudflare_api_token) cat <<'EOF'
   ORDER MATTERS: create the new token BEFORE revoking the old one.
     1. Cloudflare dashboard > create a new token with the same permissions
@@ -117,6 +143,9 @@ if [ "$RECORD_ONLY" -eq 0 ]; then
         echo "  generated a new 64-character value" ;;
       *)
         echo "  this credential cannot be generated locally; supply it with --value" >&2
+        if [ "$NAME" = "google_service_account_key" ]; then
+          echo "  (the value is the whole JSON on one line, single-quoted)" >&2
+        fi
         echo
         provider_steps "$NAME"
         exit 2 ;;
