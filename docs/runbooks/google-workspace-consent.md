@@ -12,6 +12,11 @@ connector runs on our own control node.
 Everything below is a human action with administrative authority. None of it can
 be scripted from here, which is why this is a runbook rather than a script.
 
+**Steps 1 to 3 can be delegated** to anyone or anything with `gcloud` access —
+[`google-sre-agent-prompt.md`](google-sre-agent-prompt.md) is a copy-pasteable
+prompt for that. Step 4 cannot: domain-wide delegation is a Workspace Admin
+console action and is deliberately a human approval.
+
 ## 1. A Google Cloud project
 
 Either create one — `datopian-workgraph-events` is a reasonable name — or
