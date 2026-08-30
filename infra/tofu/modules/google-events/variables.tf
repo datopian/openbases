@@ -30,3 +30,8 @@ variable "message_retention_duration" {
   type        = string
   default     = "604800s" # 7 days
 }
+
+variable "push_service_account" {
+  description = "Service account Pub/Sub signs the push OIDC token as (ADR-0026). It needs no roles: it is an identity to sign with, not a principal that acts."
+  type        = string
+}

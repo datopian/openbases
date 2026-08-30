@@ -47,4 +47,8 @@ module "google_events" {
   # endpoint must therefore be reachable by Google, which is a separate decision
   # from the one this module makes — see the runbook.
   push_endpoint = "https://${var.hostname}/v1/google/events"
+
+  # The service account already used for the connector. Pub/Sub only needs an
+  # identity to sign the OIDC token as; it grants nothing by being named here.
+  push_service_account = "workgraph-events@${var.google_project_id}.iam.gserviceaccount.com"
 }

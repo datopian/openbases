@@ -105,6 +105,19 @@ resource "google_pubsub_subscription" "workspace_events" {
 
   push_config {
     push_endpoint = var.push_endpoint
+
+    # Google signs a JWT for every delivery and the handler verifies it
+    # (ADR-0026). Without this the endpoint's only protection is that its URL is
+    # not widely known, which is the position the GitHub webhook is in and the
+    # one this deliberately does not repeat.
+    #
+    # The audience is the endpoint itself. A token minted for another
+    # Google-fronted service then fails here, which is the difference between
+    # proving a request came from Google and proving it was meant for us.
+    oidc_token {
+      service_account_email = var.push_service_account
+      audience              = var.push_endpoint
+    }
   }
 
   dead_letter_policy {

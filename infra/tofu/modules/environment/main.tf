@@ -404,6 +404,49 @@ resource "cloudflare_zero_trust_access_application" "github_webhook" {
   ]
 }
 
+# Google Pub/Sub pushes Workspace Events here (WP-H1, ADR-0026).
+#
+# Same shape as the GitHub webhook and for the same reason — Google cannot
+# complete an Access challenge — but NOT the same security posture, and the
+# difference is the point.
+#
+# The webhook's bypass IS its boundary: an HMAC over the payload, with the
+# comment beside it observing that the signature is the only thing between that
+# endpoint and anyone who learns its URL. Here the bypass is only a routing
+# decision. Pub/Sub attaches an OIDC token that Google signs, and the handler
+# verifies it against Google's public keys, the issuer, and an audience bound to
+# this endpoint. The control node holds nothing that could forge a delivery.
+#
+# One path, on one hostname. Not a prefix: the endpoints a person uses are not
+# under it, and widening this to /v1/google would quietly extend an
+# unauthenticated route over anything added there later.
+resource "cloudflare_zero_trust_access_policy" "pubsub_push_bypass" {
+  account_id = var.cloudflare_account_id
+  name       = "${local.name}-pubsub-push-bypass"
+  decision   = "bypass"
+
+  include = [
+    {
+      everyone = {}
+    }
+  ]
+}
+
+resource "cloudflare_zero_trust_access_application" "pubsub_push" {
+  account_id       = var.cloudflare_account_id
+  name             = "${local.name}-pubsub-push"
+  domain           = "${var.hostname}/v1/google/events"
+  type             = "self_hosted"
+  session_duration = "0s"
+
+  policies = [
+    {
+      id         = cloudflare_zero_trust_access_policy.pubsub_push_bypass.id
+      precedence = 1
+    }
+  ]
+}
+
 resource "cloudflare_zero_trust_access_application" "ssh" {
   count = var.ssh_hostname != "" ? 1 : 0
 
