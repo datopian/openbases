@@ -76,6 +76,13 @@ unaffected until you do the following:
   db_app_password         ALTER ROLE workgraph_app PASSWORD '<new>'
   github_app_private_key  App settings > Private keys > delete the old key
   ai_gateway_token        Cloudflare > AI Gateway > revoke the token
+  google_service_account_key
+                          gcloud iam service-accounts keys delete <KEY_ID> \
+                            --iam-account=workgraph-events@<PROJECT_ID>.iam.gserviceaccount.com
+                          List first with keys list --managed-by=user. Through
+                          domain-wide delegation this key reads every Meet
+                          recording and Drive file in the tenant, so an old key
+                          left valid is a live credential, not clutter.
   cloudflare_api_token    Cloudflare > Manage Account > API Tokens > revoke
   hcloud_token            Hetzner Console > Security > API tokens
 
