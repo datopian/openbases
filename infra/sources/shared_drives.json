@@ -42,5 +42,39 @@
       "visibility": "internal",
       "why": "readable by everyone in the company"
     }
-  ]
+  ],
+  "drive_subscription": {
+    "_doc": [
+      "The Drive subscription shape that validates against these drives, established",
+      "by probing each field and each event type on 2026-08-30 rather than from the",
+      "documentation \u2014 which lists types that a shared-drive target rejects.",
+      "",
+      "includeDescendants must be true and is IMMUTABLE. A shared-drive subscription",
+      "without it is refused outright, and one created with it cannot be changed, so",
+      "this is not a default to discover later.",
+      "",
+      "Two documented types are NOT in the list, and for different reasons:",
+      "",
+      "  file.v3.content    'One or more event types are incorrectly formatted' \u2014",
+      "                     not valid against a shared-drive target at all.",
+      "  file.v3.untrashed  PERMISSION_DENIED, consistently, on a scope that accepts",
+      "                     trashed. So a file restored from the bin raises no event",
+      "                     and ingestion will not see it come back. Reconciliation",
+      "                     has to cover that, or the gap has to be accepted",
+      "                     deliberately \u2014 widening the scope to close it is a",
+      "                     domain-wide grant and a worse trade."
+    ],
+    "includeDescendants": true,
+    "eventTypes": [
+      "google.workspace.drive.file.v3.created",
+      "google.workspace.drive.file.v3.deleted",
+      "google.workspace.drive.file.v3.moved",
+      "google.workspace.drive.file.v3.renamed",
+      "google.workspace.drive.file.v3.trashed",
+      "google.workspace.drive.permission.v3.created",
+      "google.workspace.drive.permission.v3.edited",
+      "google.workspace.drive.permission.v3.deleted"
+    ],
+    "verified": "2026-08-30, validateOnly against All, BizDev and Delivery"
+  }
 }
