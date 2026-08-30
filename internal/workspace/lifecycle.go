@@ -1,0 +1,273 @@
+// Package workspace decides what to do about Google Workspace event
+// subscriptions (WP-H1).
+//
+// Deciding is separated from doing for the reason the runner, the witness and
+// the cost mapping are: every decision here has an expensive wrong answer and
+// each is trivial as a table-driven test, while arranging the same case against
+// a live tenant means waiting for a subscription to expire.
+//
+// The expensive wrong answers, specifically. Renewing too late loses events
+// silently — an expired subscription stops delivering and says nothing.
+// Renewing too eagerly burns quota and mints churn. Treating a source we no
+// longer allow as merely "not due for renewal" leaves it delivering. And
+// deciding a subscription is missing when it is only unread deletes one that
+// works.
+package workspace
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+)
+
+// Visibility is what artefacts derived from a source inherit (ADR-0013).
+type Visibility string
+
+const (
+	Internal     Visibility = "internal"
+	Confidential Visibility = "confidential"
+	Restricted   Visibility = "restricted"
+)
+
+// Kind is which Google product a source belongs to.
+type Kind string
+
+const (
+	KindDrive Kind = "drive"
+	KindMeet  Kind = "meet"
+)
+
+// Source is an allow-listed thing we may ingest from.
+type Source struct {
+	ID         string
+	Kind       Kind
+	ExternalID string
+	Name       string
+	Visibility Visibility
+	Enabled    bool
+}
+
+// TargetResource is what Google's subscription API takes.
+//
+// Built rather than stored, so a source cannot carry a hand-typed resource name
+// that disagrees with its own id.
+func (s Source) TargetResource() (string, error) {
+	id := strings.TrimSpace(s.ExternalID)
+	if id == "" {
+		return "", fmt.Errorf("source %q has no external id", s.Name)
+	}
+	switch s.Kind {
+	case KindDrive:
+		return "//drive.googleapis.com/drives/" + id, nil
+	case KindMeet:
+		return "//meet.googleapis.com/" + id, nil
+	default:
+		return "", fmt.Errorf("source %q has unknown kind %q", s.Name, s.Kind)
+	}
+}
+
+// State is Google's view of a subscription.
+type State string
+
+const (
+	StatePending   State = "pending"
+	StateActive    State = "active"
+	StateSuspended State = "suspended"
+	StateDeleted   State = "deleted"
+	StateFailed    State = "failed"
+)
+
+// Subscription is what we believe Google is holding for a source.
+type Subscription struct {
+	SourceID   string
+	GoogleName string
+	State      State
+	ExpiresAt  time.Time
+	EventTypes []string
+}
+
+// Action is what reconciliation decided to do about one source.
+type Action string
+
+const (
+	// ActionNone leaves a healthy subscription alone.
+	ActionNone Action = "none"
+	// ActionCreate makes one that does not exist.
+	ActionCreate Action = "create"
+	// ActionRenew extends one before it expires.
+	ActionRenew Action = "renew"
+	// ActionReactivate is Google's own verb for a suspended subscription. It is
+	// NOT the same as create: reactivating keeps the subscription id, so events
+	// that arrived during the suspension are not re-delivered under a new one.
+	ActionReactivate Action = "reactivate"
+	// ActionReplace deletes and recreates. Needed when what we want cannot be
+	// reached by renewing — a changed event-type set, or a subscription Google
+	// has deleted.
+	ActionReplace Action = "replace"
+	// ActionDelete removes a subscription for a source we no longer allow.
+	ActionDelete Action = "delete"
+)
+
+// Decision pairs an action with the reason for it.
+//
+// The reason is not decoration. Reconciliation runs unattended and its output is
+// read after something has gone wrong, when "renew" alone does not say whether
+// the subscription was nearly expired or the event types had drifted.
+type Decision struct {
+	SourceID string
+	Action   Action
+	Reason   string
+}
+
+// Policy is the timing reconciliation works to.
+type Policy struct {
+	// RenewBefore is how long ahead of expiry to renew.
+	//
+	// It must exceed the reconciliation interval, or a subscription can expire
+	// between two runs that both considered it healthy. Validate enforces that
+	// rather than leaving it to whoever sets the two numbers.
+	RenewBefore time.Duration
+	// Interval is how often reconciliation runs.
+	Interval time.Duration
+}
+
+// DefaultPolicy renews a day ahead, reconciling hourly.
+//
+// A Workspace Events subscription lasts at most seven days, so a day is roughly
+// a seventh of the life — enough to survive a night of failed runs without
+// renewing on every pass.
+var DefaultPolicy = Policy{RenewBefore: 24 * time.Hour, Interval: time.Hour}
+
+// Validate refuses a policy that would lose events.
+func (p Policy) Validate() error {
+	if p.Interval <= 0 {
+		return fmt.Errorf("reconciliation interval must be positive")
+	}
+	if p.RenewBefore <= 0 {
+		return fmt.Errorf("renewal window must be positive")
+	}
+	if p.RenewBefore <= p.Interval {
+		// The failure this prevents: a subscription expiring between two runs
+		// that each saw it as healthy, which presents as a source that quietly
+		// stops delivering.
+		return fmt.Errorf("renewal window %s must exceed the reconciliation interval %s, "+
+			"or a subscription can expire between two runs that both saw it as healthy",
+			p.RenewBefore, p.Interval)
+	}
+	return nil
+}
+
+// Reconcile decides what to do about every source and every subscription.
+//
+// Both directions matter. A source with no subscription needs one; a
+// subscription whose source is gone or disabled needs removing. Walking only
+// the sources would leave the second running forever, which is the shape of
+// "a removed permission prevents new retrieval" failing.
+func Reconcile(sources []Source, subs []Subscription, want []string, now time.Time, p Policy) ([]Decision, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+
+	bySource := make(map[string]Subscription, len(subs))
+	for _, s := range subs {
+		bySource[s.SourceID] = s
+	}
+	known := make(map[string]bool, len(sources))
+
+	var out []Decision
+	for _, src := range sources {
+		known[src.ID] = true
+		sub, exists := bySource[src.ID]
+
+		if !src.Enabled {
+			if exists && sub.State != StateDeleted {
+				out = append(out, Decision{src.ID, ActionDelete,
+					"the source is disabled and its subscription is still " + string(sub.State)})
+			}
+			continue
+		}
+
+		switch {
+		case !exists, sub.GoogleName == "":
+			out = append(out, Decision{src.ID, ActionCreate, "no subscription exists for an enabled source"})
+
+		case sub.State == StateDeleted, sub.State == StateFailed:
+			// Google will not renew what it has deleted, and a failed
+			// subscription does not recover by being asked again.
+			out = append(out, Decision{src.ID, ActionReplace,
+				"the subscription is " + string(sub.State) + " and cannot be renewed"})
+
+		case sub.State == StateSuspended:
+			out = append(out, Decision{src.ID, ActionReactivate,
+				"the subscription is suspended and reactivating keeps its id"})
+
+		case !sameTypes(sub.EventTypes, want):
+			// Renewing extends a subscription; it does not change what it
+			// listens for. A drifted set has to be replaced or the new types
+			// never arrive — silently, because the old ones keep working.
+			out = append(out, Decision{src.ID, ActionReplace,
+				"the event types have drifted from what we now subscribe to"})
+
+		case sub.ExpiresAt.IsZero():
+			// Active with no expiry is not a subscription we can reason about.
+			// Treating it as healthy means never renewing it.
+			out = append(out, Decision{src.ID, ActionReplace,
+				"the subscription is active with no recorded expiry"})
+
+		case !sub.ExpiresAt.After(now):
+			out = append(out, Decision{src.ID, ActionReplace,
+				"the subscription has already expired"})
+
+		case sub.ExpiresAt.Sub(now) <= p.RenewBefore:
+			out = append(out, Decision{src.ID, ActionRenew,
+				fmt.Sprintf("expires in %s, inside the %s renewal window",
+					sub.ExpiresAt.Sub(now).Round(time.Minute), p.RenewBefore)})
+
+		default:
+			out = append(out, Decision{src.ID, ActionNone,
+				fmt.Sprintf("healthy, expires in %s", sub.ExpiresAt.Sub(now).Round(time.Minute))})
+		}
+	}
+
+	// The other direction: a live subscription whose source is no longer
+	// allow-listed at all.
+	for _, sub := range subs {
+		if known[sub.SourceID] || sub.State == StateDeleted {
+			continue
+		}
+		out = append(out, Decision{sub.SourceID, ActionDelete,
+			"the subscription has no allow-listed source"})
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].SourceID < out[j].SourceID })
+	return out, nil
+}
+
+// sameTypes compares two event-type sets ignoring order and duplicates.
+func sameTypes(a, b []string) bool {
+	norm := func(in []string) []string {
+		seen := map[string]bool{}
+		for _, s := range in {
+			if s = strings.TrimSpace(s); s != "" {
+				seen[s] = true
+			}
+		}
+		out := make([]string, 0, len(seen))
+		for s := range seen {
+			out = append(out, s)
+		}
+		sort.Strings(out)
+		return out
+	}
+	x, y := norm(a), norm(b)
+	if len(x) != len(y) {
+		return false
+	}
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
+}
