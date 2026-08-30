@@ -31,10 +31,11 @@ linked.
 
 Report the **project ID**, which may differ from the name if that name was taken.
 
-## 2. Enable exactly four APIs
+## 2. Enable exactly five APIs
 
 ```bash
 gcloud services enable \
+  cloudresourcemanager.googleapis.com \
   pubsub.googleapis.com \
   workspaceevents.googleapis.com \
   meet.googleapis.com \
@@ -42,9 +43,13 @@ gcloud services enable \
   --project <PROJECT_ID>
 ```
 
-Four, and only four. Do not enable anything else, however useful it looks — the
+Five, and only five. Do not enable anything else, however useful it looks — the
 value of a project with one job is that its IAM and its attack surface can be
 read at a glance.
+
+`cloudresourcemanager` is there because our Terraform enables the other four by
+calling it, so it cannot enable itself. Without it a plan does not fail cleanly:
+it reports nothing to do, with the real error buried in refresh output.
 
 ## 3. Service account
 

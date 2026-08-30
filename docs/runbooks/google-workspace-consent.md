@@ -30,11 +30,17 @@ whose IAM you can reason about.
 ## 2. Enable four APIs on that project
 
 ```
+cloudresourcemanager.googleapis.com
 pubsub.googleapis.com
 workspaceevents.googleapis.com
 meet.googleapis.com
 drive.googleapis.com
 ```
+
+`cloudresourcemanager` is the one that is easy to miss and hard to diagnose.
+OpenTofu enables the other four by calling it, so it cannot turn on the thing it
+needs in order to turn things on — and a plan without it does not fail cleanly.
+It reports nothing to do, with the real error buried in refresh output.
 
 `gcloud services enable pubsub.googleapis.com workspaceevents.googleapis.com meet.googleapis.com drive.googleapis.com --project <PROJECT_ID>`
 

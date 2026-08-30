@@ -11,6 +11,16 @@ locals {
   name = "workgraph-workspace-events-${var.environment}"
 }
 
+# PREREQUISITE, and it cannot be met from here: cloudresourcemanager.googleapis.com
+# must already be enabled on the project.
+#
+# google_project_service enables an API by calling the Cloud Resource Manager
+# API, so Terraform cannot turn on the thing it needs in order to turn things
+# on. Without it a plan does not fail cleanly either — it reports
+# "0 to add, 0 to change" with the real error buried in refresh output, which is
+# how this looked like a module that had nothing left to do.
+#
+#   gcloud services enable cloudresourcemanager.googleapis.com --project <ID>
 resource "google_project_service" "required" {
   for_each = toset([
     "pubsub.googleapis.com",
@@ -41,13 +51,33 @@ resource "google_pubsub_topic" "workspace_events" {
   depends_on = [google_project_service.required]
 }
 
-# Google's Workspace Events service publishes into the topic, so it needs
-# publisher rights on it. This is the only principal granted that.
+# Google publishes into the topic, so its publisher needs rights on it — and
+# the publisher is PER APPLICATION, not one account for Workspace Events.
+#
+# This was written as a single `workspace-events@system.gserviceaccount.com`,
+# which does not exist. The apply failed with "Service account
+# workspace-events@system.gserviceaccount.com does not exist", which reads like
+# a provisioning delay for an account that has not appeared yet, and is not:
+# the name was invented. Google names one per source (chat-api-push for Chat).
+#
+# Two, because we ingest from both Meet and Drive. Granting only the one whose
+# events arrive first would look like it worked until the other source went
+# quiet — and a subscription that silently delivers nothing is the failure this
+# whole pipeline is least able to notice.
+locals {
+  event_publishers = {
+    meet  = "meet-api-event-push@system.gserviceaccount.com"
+    drive = "drive-api-event-push@system.gserviceaccount.com"
+  }
+}
+
 resource "google_pubsub_topic_iam_member" "workspace_events_publisher" {
+  for_each = local.event_publishers
+
   project = var.project_id
   topic   = google_pubsub_topic.workspace_events.name
   role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:workspace-events@system.gserviceaccount.com"
+  member  = "serviceAccount:${each.value}"
 }
 
 # Undeliverable messages go here rather than being retried forever or dropped.
