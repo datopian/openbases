@@ -52,8 +52,32 @@ that project only:
 | `roles/pubsub.admin` | creates and manages the topic and subscription |
 | `roles/serviceusage.serviceUsageAdmin` | enables the four APIs above |
 
-Then create a JSON key for it. That key is what lets OpenTofu manage the
-project. Send it through 1Password, not email or Slack.
+Then create a JSON key for it:
+
+```bash
+gcloud iam service-accounts keys create /dev/stdout \
+  --iam-account=workgraph-events@<PROJECT_ID>.iam.gserviceaccount.com
+```
+
+**It goes into SOPS, not a password manager.** `infra/secrets/<env>.enc.yaml`
+already holds the GitHub App private key for exactly these reasons: it is
+encrypted, in Git, reviewed, versioned, and `scripts/with_secrets.sh` decrypts it
+into a directory that dies with the process rather than leaving a credential on
+disk. A key in a password manager has to be fetched by a person and pasted
+somewhere; this one is deployed by the same command as everything else.
+
+```bash
+sops infra/secrets/staging.enc.yaml
+# add, on one line:
+#   google_service_account_key: '{"type":"service_account",...}'
+```
+
+`with_secrets.sh` then exports `GOOGLE_APPLICATION_CREDENTIALS` pointing at it,
+which is the variable both OpenTofu's Google provider and Google's client
+libraries read. Nothing else has to know where the key is.
+
+Writing it to `/dev/stdout` above rather than to a file is deliberate: the key
+never touches the working tree, which is a git checkout.
 
 ## 4. Domain-wide delegation, and the scopes
 
@@ -145,7 +169,7 @@ Google credentials, which is everyone until this is turned on.
 ## What to send back
 
 - the **project ID**
-- the service account **JSON key** (1Password)
+- the service account **JSON key**, added to SOPS as `google_service_account_key`
 - the service account **client ID**, so the delegation can be verified
 - **yes or no** on Drive Workspace Events for the tenant (step 5)
 
