@@ -113,7 +113,17 @@ if printf '%s\n' "$plain" | grep -q '^google_service_account_key:'; then
   gkeydir="$(mktemp -d)"
   chmod 700 "$gkeydir"
   trap 'rm -rf "$keydir" "$gkeydir"' EXIT INT TERM
-  read_key google_service_account_key > "$gkeydir/google-events.json"
+  # sops --extract, not read_key.
+  #
+  # read_key strips "name: " and returns the rest of the line, which is right
+  # for a bare token and wrong here: SOPS re-emits a value containing braces and
+  # quotes as a SINGLE-QUOTED YAML scalar, so the extracted text began and ended
+  # with an apostrophe and the file was not JSON. The failure surfaced as
+  # "Expecting value: line 1 column 1", which says nothing about quoting.
+  #
+  # --extract asks SOPS for the value rather than parsing its output, so YAML
+  # quoting is SOPS's problem and not a regex's.
+  sops -d --extract '["google_service_account_key"]' "$FILE" > "$gkeydir/google-events.json"
   chmod 600 "$gkeydir/google-events.json"
   # The name Google's client libraries and the OpenTofu provider both read.
   export GOOGLE_APPLICATION_CREDENTIALS="$gkeydir/google-events.json"
