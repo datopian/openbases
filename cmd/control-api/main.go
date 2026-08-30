@@ -39,6 +39,7 @@ import (
 	"github.com/datopian/workgraph/internal/webui"
 	"github.com/datopian/workgraph/internal/witness"
 	"github.com/datopian/workgraph/internal/work"
+	"github.com/datopian/workgraph/internal/workspace"
 )
 
 func main() {
@@ -1258,6 +1259,31 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	// This is the single documented exception to "everything under /v1 requires
 	// an identity", and cmd/control-api asserts it is the only one — an
 	// exception that is tested is a decision; an untested one is a hole.
+	// The SECOND documented exception, and the last: Google Pub/Sub pushes
+	// Workspace Events here and cannot complete an Access challenge either.
+	//
+	// Unlike the webhook, the bypass is not the boundary. Pub/Sub attaches an
+	// OIDC token that Google signs and this verifies against Google's public
+	// keys, the issuer and an audience bound to this endpoint (ADR-0026). The
+	// node holds no secret that could forge a delivery.
+	//
+	// Registered only when an audience is configured. A receiver with an empty
+	// audience would accept any Google-signed token, which is worse than having
+	// no endpoint at all because it looks like verification.
+	if cfg.PubSubPushAudience != "" {
+		receiver := &workspace.Receiver{
+			Validator: &workspace.PushValidator{
+				Audience:       cfg.PubSubPushAudience,
+				ServiceAccount: cfg.PubSubPushServiceAccount,
+			},
+			DB:  db,
+			Log: log,
+		}
+		mux.Handle("POST /v1/google/events", receiver)
+	} else {
+		log.Warn("Pub/Sub push endpoint not registered: no audience configured")
+	}
+
 	mux.HandleFunc("POST /v1/integrations/github/webhook", func(w http.ResponseWriter, r *http.Request) {
 		delivery, err := githubapp.VerifyWebhook(r,
 			[]byte(cfg.GitHubWebhookSecret), []byte(cfg.GitHubWebhookSecretPrevious))

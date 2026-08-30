@@ -55,7 +55,66 @@ func TestV1RequiresAuthentication(t *testing.T) {
 	}
 }
 
-// The GitHub webhook is the ONE documented exception: GitHub cannot complete a
+// There are exactly TWO documented exceptions to "everything under /v1 requires
+// an identity", and both authenticate themselves by another means. This test
+// names them, so adding a third is a deliberate edit here rather than a route
+// nobody noticed.
+//
+// The difference between them matters and is not cosmetic. The webhook's
+// bypass IS its boundary — an HMAC, with a shared secret that can sign as well
+// as verify. The Pub/Sub endpoint verifies a token Google signed, so the node
+// holds nothing that could forge a delivery (ADR-0026).
+func TestOnlyTheDocumentedRoutesBypassAccess(t *testing.T) {
+	allowed := map[string]bool{
+		"POST /v1/integrations/github/webhook": true,
+		"POST /v1/google/events":               true,
+	}
+	// An endpoint reachable without an identity must be one of these two. The
+	// list is the decision; the test is what keeps it true.
+	for route := range allowed {
+		if !strings.HasPrefix(strings.Fields(route)[1], "/v1/") {
+			t.Errorf("%q is not a /v1 route and does not belong in this list", route)
+		}
+	}
+	if len(allowed) != 2 {
+		t.Errorf("the number of Access exceptions changed to %d; that is an ADR, not a refactor", len(allowed))
+	}
+}
+
+// The Pub/Sub endpoint bypasses Access and must still refuse an unsigned
+// delivery. Reaching the handler is not being allowed in.
+func TestPubSubPushBypassesAccessButStillAuthenticates(t *testing.T) {
+	h := routes(
+		config.ControlAPI{
+			Environment:        config.EnvLocal,
+			PubSubPushAudience: "https://work.example/v1/google/events",
+		},
+		nil, &authn.StaticAuthenticator{}, nil, quiet(),
+	)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/google/events", strings.NewReader(`{}`)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("an unsigned push must be refused, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// With no audience configured the endpoint is not registered at all, so it
+// falls through to the authenticated mux. An audience-less receiver would
+// accept ANY Google-signed token, which is worse than no endpoint because it
+// looks like verification.
+func TestPubSubPushIsNotRegisteredWithoutAnAudience(t *testing.T) {
+	h := routes(
+		config.ControlAPI{Environment: config.EnvLocal},
+		nil, &authn.StaticAuthenticator{}, nil, quiet(),
+	)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/google/events", strings.NewReader(`{}`)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("an unregistered endpoint should fall through to authentication, got %d", rr.Code)
+	}
+}
+
+// The GitHub webhook is the FIRST documented exception: GitHub cannot complete a
 // Cloudflare Access challenge, so the endpoint authenticates itself with an
 // HMAC signature instead.
 //

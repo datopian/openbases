@@ -94,6 +94,14 @@ type ControlAPI struct {
 	// the ones a person uses to CREATE work.
 	CellWorkAccessAudience string
 
+	// PubSubPushAudience is the audience Google signs its push OIDC token for
+	// (ADR-0026). Empty leaves the endpoint unregistered — an audience-less
+	// receiver would accept any Google-signed token.
+	PubSubPushAudience string
+	// PubSubPushServiceAccount is the identity Pub/Sub signs as, checked so a
+	// token for a different service account in the same project is refused.
+	PubSubPushServiceAccount string
+
 	// GitHubWebhookSecret authenticates inbound webhooks. GitHub cannot pass a
 	// Cloudflare Access challenge, so this shared secret is the only thing
 	// standing between the endpoint and anyone who learns its URL.
