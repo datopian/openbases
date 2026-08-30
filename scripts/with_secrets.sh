@@ -81,7 +81,7 @@ export R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com
 if printf '%s\n' "$plain" | grep -q '^github_app_private_key: |'; then
   keydir="$(mktemp -d)"
   chmod 700 "$keydir"
-  trap 'rm -rf "$keydir"' EXIT INT TERM
+  trap 'rm -rf "$keydir" "${gkeydir:-}"' EXIT INT TERM
   # Strip ALL leading whitespace, not a fixed amount.
   #
   # The plaintext was written with a two-space indent, so this used to strip
@@ -95,6 +95,28 @@ if printf '%s\n' "$plain" | grep -q '^github_app_private_key: |'; then
     | sed '1d;/^[^[:space:]]/d;s/^[[:space:]]*//' > "$keydir/github-app.pem"
   chmod 600 "$keydir/github-app.pem"
   export GITHUB_APP_PRIVATE_KEY_PATH="$keydir/github-app.pem"
+fi
+
+# The Google service account key, materialised the same way and for the same
+# reasons (wg-8yv.34).
+#
+# JSON rather than a PEM, so no indent-stripping is needed — but it is a single
+# line in the encrypted file and a file on disk is what Google's libraries take,
+# so it gets the same mktemp directory and the same trap.
+#
+# This is why the answer to "where do I put the key" is not 1Password. The
+# repository already has a vault: an encrypted file that is IN Git, reviewed,
+# versioned, and decrypted into a directory that dies with the process. A
+# credential in a password manager has to be fetched by a person and pasted
+# somewhere; this one is deployed by the same command as everything else.
+if printf '%s\n' "$plain" | grep -q '^google_service_account_key:'; then
+  gkeydir="$(mktemp -d)"
+  chmod 700 "$gkeydir"
+  trap 'rm -rf "$keydir" "$gkeydir"' EXIT INT TERM
+  read_key google_service_account_key > "$gkeydir/google-events.json"
+  chmod 600 "$gkeydir/google-events.json"
+  # The name Google's client libraries and the OpenTofu provider both read.
+  export GOOGLE_APPLICATION_CREDENTIALS="$gkeydir/google-events.json"
 fi
 
 unset plain

@@ -80,18 +80,23 @@ level. Project scope only.
 ## 4. Key
 
 ```bash
-gcloud iam service-accounts keys create workgraph-events.json \
+gcloud iam service-accounts keys create /dev/stdout \
   --iam-account=workgraph-events@<PROJECT_ID>.iam.gserviceaccount.com
 ```
 
-This file is a long-lived credential for an account that will hold domain-wide
-read access to Meet and Drive. Put it in 1Password and tell me the item name.
-Do not paste it into chat, a ticket, email, or a commit.
+Written to stdout, not to a file: this is a long-lived credential for an account
+that will hold domain-wide read access to Meet and Drive, and it must not land
+on local disk — least of all inside a git working tree.
 
-If the organisation has a policy against service account keys
-(`iam.disableServiceAccountKeyCreation`), stop and tell me — Workload Identity
-Federation is a better answer and changes what I ask for, but I would rather
-know than have the constraint worked around.
+Hand the JSON to me directly. It goes into our own encrypted secrets file, which
+is the repository's vault: SOPS-encrypted, in Git, reviewed, and decrypted into
+a directory that dies with the process. You do not need 1Password or any other
+password manager for this.
+
+If the organisation forbids service account keys
+(`iam.disableServiceAccountKeyCreation` **enforced**, not merely defined), stop
+and tell me — Workload Identity Federation is a better answer and changes what I
+ask for, but I would rather know than have the constraint worked around.
 
 ## 5. The client ID I need
 
@@ -144,7 +149,7 @@ Report back:
 - the **project ID**
 - the service account **email**
 - the **oauth2ClientId** from step 5
-- the **1Password item** holding the key
+- the **key JSON** itself, handed over directly
 - the output of both verification commands
 - anything you had to do differently, and why
 

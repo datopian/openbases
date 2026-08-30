@@ -86,3 +86,7 @@ ai_budget_shares = {
   internal = 0.2
   client   = 0.1
 }
+
+# Workspace Events delivery fabric (wg-8yv.34). Empty disables the module
+# entirely; set, it creates the Pub/Sub topic and push subscription.
+google_project_id = "datopian-workgraph-events"
