@@ -1,0 +1,42 @@
+{
+  "_doc": [
+    "The shared drives WP-H1 ingests, and the visibility everything derived from",
+    "each one inherits (ADR-0013).",
+    "",
+    "Starting set, chosen 2026-08-28: the three drives every employee can already",
+    "read. That is deliberate as a first cut — a drive whose membership is the",
+    "whole company cannot leak to the whole company, so the isolation tests can",
+    "come before the drives that need them rather than after.",
+    "",
+    "`id` is filled in by enumeration, not by hand: drives.list is covered by the",
+    "drive.readonly scope we already need, so the connector reads the IDs itself",
+    "and records them here. Names are for people; IDs are what the API takes and",
+    "the only thing stable across a rename.",
+    "",
+    "Adding a drive with narrower membership means adding it with the visibility",
+    "its membership implies — NOT internal. ADR-0013 makes every derived artefact",
+    "inherit the strictest classification of its sources, so getting this wrong",
+    "here is how a client-confidential document ends up quoted in a summary that",
+    "the whole company can read."
+  ],
+  "drives": [
+    {
+      "name": "All",
+      "id": "",
+      "visibility": "internal",
+      "why": "readable by everyone in the company"
+    },
+    {
+      "name": "BizDev",
+      "id": "",
+      "visibility": "internal",
+      "why": "readable by everyone in the company"
+    },
+    {
+      "name": "Delivery",
+      "id": "",
+      "visibility": "internal",
+      "why": "readable by everyone in the company"
+    }
+  ]
+}
