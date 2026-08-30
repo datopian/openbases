@@ -133,24 +133,28 @@ membership implies, not `internal`** — ADR-0013 makes every derived artefact
 inherit the strictest classification of its sources, so a mistake there is how a
 client-confidential document ends up quoted in a summary the whole company reads.
 
-**The question:** is Drive Workspace Events enabled and production-approved for
-the Datopian tenant?
+**Answered, 2026-08-30: Drive Workspace Events IS available for this tenant.**
+No fallback is needed and WP-H1 builds the event path.
 
-Drive events through the Workspace Events API have been gated per-tenant. If
-they are not available, the connector uses the stable `changes.watch` /
-`changes.list` fallback instead — which works, and is a different subscription
-lifecycle and a different piece of code.
+Probed rather than asked: a `subscriptions.create` with `validateOnly=true`
+against `//drive.googleapis.com/drives/0ACuIgKcIt7SPUk9PVA` got past event-type
+validation and past any tenant gate, failing only on our own Pub/Sub IAM —
+"You don't have permission to access Pub/Sub topic ...", which is the publisher
+grant the apply had not yet made. A tenant without Drive events refuses earlier
+and differently.
 
-Either way, shared drives change the shape of it. Both paths take a `driveId`
-and keep their own page token, so three drives means three subscriptions and
-three cursors rather than one of each. And both `supportsAllDrives` and
-`includeItemsFromAllDrives` default to **false**: leave them off and the API
-returns nothing from a shared drive, successfully and with no error, which is
-the failure mode that looks like an empty drive.
+Also established in the same probe, and worth keeping:
 
-Check in the Admin console, or attempt a Drive subscription once step 4 is done.
-The answer changes what WP-H1 builds, so it is worth establishing before the code
-is written rather than after.
+Meet works end to end. `conferenceRecords.list` returns 200 under delegation
+with a real record visible, so `meetings.space.readonly` is correctly bound.
+
+`google.workspace.drive.file.v3.content` is rejected as "incorrectly formatted"
+against a shared-drive target, while `file.v3.created` and
+`permission.v3.created` are accepted. The event type list in Google's
+documentation is not all valid for every target, so the set WP-H1 subscribes to
+needs probing one at a time rather than pasting the documented list.
+
+
 
 ## 6. Then, from the repository
 
@@ -177,10 +181,9 @@ Google credentials, which is everyone until this is turned on.
 - the **project ID**
 - the service account **JSON key**, added to SOPS as `google_service_account_key`
 - the service account **client ID**, so the delegation can be verified
-- **yes or no** on Drive Workspace Events for the tenant (step 5)
-
-Not needed: the shared drive IDs. Those are enumerated with the credentials from
-step 3.
+Nothing further. The drive IDs were enumerated with the credentials from step 3
+and are recorded in `infra/sources/shared_drives.json`; the Drive events question
+is answered above.
 
 With those, WP-H1 (`wg-8yv.20`) is unblocked and the other four Phase H P0s
 behind it can start.
