@@ -183,14 +183,15 @@ func TestClassesAreDistinct(t *testing.T) {
 			t.Errorf("class %s scores %v, outside the 0..1 scale the other inbox rules use", c.Name, c.Score)
 		}
 	}
-	// The five WP-I1 required, plus service (wg-95y) and cost_import (wg-7jz),
-	// which cover failures found by running the platform rather than planning
-	// it. Asserted as a count so that adding one is a deliberate edit here
-	// rather than something that slips in.
-	if len(Classes) != 7 {
-		t.Errorf("got %d classes, want 7", len(Classes))
+	// The five WP-I1 required, plus service (wg-95y), cost_import (wg-7jz) and
+	// workspace_sources (wg-8yv.20) — the three that cover failures found by
+	// running the platform rather than planning it. Asserted as a count so that
+	// adding one is a deliberate edit here rather than something that slips in.
+	if len(Classes) != 8 {
+		t.Errorf("got %d classes, want 8", len(Classes))
 	}
-	for _, required := range []string{"api", "webhook", "agent_stall", "disk", "backup", "service", "cost_import"} {
+	for _, required := range []string{"api", "webhook", "agent_stall", "disk", "backup",
+		"service", "cost_import", "workspace_sources"} {
 		found := false
 		for _, c := range Classes {
 			if c.Name == required {

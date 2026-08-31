@@ -155,12 +155,33 @@ var (
 		Runbook: "docs/runbooks/cost-import-stale.md",
 		Score:   0.7,
 	}
+
+	// A Google Workspace subscription that has expired, been suspended, or
+	// failed to renew.
+	//
+	// This is the failure the whole WP-H1 timer exists to prevent, and it is
+	// invisible without a check: Google expires a subscription within days, and
+	// when one lapses the source simply stops delivering. Nothing errors,
+	// nothing is slow, no request fails. Sources go quiet one at a time over the
+	// following week and the first sign is somebody asking why a meeting never
+	// turned into work.
+	//
+	// Scored above cost import and below backup. No user is blocked, but every
+	// hour it goes unnoticed is an hour of meetings and file changes that will
+	// never be ingested — and unlike a backlog, the missed events do not
+	// accumulate somewhere waiting to be processed. They are gone.
+	ClassWorkspaceSources = Class{
+		Name:    "workspace_sources",
+		Rule:    "platform_workspace_subscription_lapsed",
+		Runbook: "docs/runbooks/workspace-subscriptions.md",
+		Score:   0.75,
+	}
 )
 
 // Classes is every class, in the order a report prints them.
 var Classes = []Class{
 	ClassAPI, ClassService, ClassWebhook, ClassAgentStall,
-	ClassDisk, ClassBackup, ClassCostImport,
+	ClassDisk, ClassBackup, ClassCostImport, ClassWorkspaceSources,
 }
 
 // Finding is the verdict on one class.
@@ -208,6 +229,20 @@ type Thresholds struct {
 	// make for the budget check, which was refusing every dispatch on a quiet
 	// environment.
 	CostImportMaxAge time.Duration
+	// SubscriptionRenewalGrace is how close to expiry an active Google
+	// Workspace subscription may get before the renewer is presumed stopped.
+	//
+	// Measured against the expiry, not against the last renewal: a subscription
+	// Google gives seven days does not need renewing daily, so "last renewed
+	// three days ago" is healthy. What is never healthy is an expiry closer than
+	// the reconciler's own renewal window, because that means a pass which
+	// should have renewed it either did not run or did not succeed.
+	//
+	// Must be SHORTER than workspace.DefaultPolicy.RenewBefore (24h), or the
+	// alert fires during correct operation — every subscription passes through
+	// the renewal window on its way to being renewed. Twelve hours leaves the
+	// reconciler twelve hourly passes to do its job before anybody is told.
+	SubscriptionRenewalGrace time.Duration
 }
 
 // DefaultThresholds are the values the deployment uses unless overridden.
@@ -223,5 +258,9 @@ func DefaultThresholds() Thresholds {
 		// Three hourly import periods, matching the reasoning above: one missed
 		// run is normal, three consecutive misses means it is not running.
 		CostImportMaxAge: 3 * time.Hour,
+		// Half the reconciler's 24-hour renewal window. Twelve hourly passes to
+		// renew a subscription before anybody is told, and still twelve hours of
+		// warning before it actually lapses.
+		SubscriptionRenewalGrace: 12 * time.Hour,
 	}
 }
