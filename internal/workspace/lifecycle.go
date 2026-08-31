@@ -185,6 +185,34 @@ func (w Wants) For(k Kind) ([]string, error) {
 	return types, nil
 }
 
+// Filter is the query subscriptions.list requires.
+//
+// The filter is not optional and must name at least one event type — the
+// discovery document says "Required" and the server answers an empty filter
+// with INVALID_ARGUMENT. Getting this wrong is quiet: listing fails, adoption
+// is skipped with a warning, and the reconciler never notices the subscription
+// it lost track of.
+//
+// One consequence worth naming: a stray subscription created with event types
+// we no longer ask for cannot be enumerated at all, because every query has to
+// name the types it wants. Such a stray is found only by its target coming up
+// in a create that Google refuses as a duplicate.
+func (w Wants) Filter() string {
+	seen := map[string]bool{}
+	var terms []string
+	for _, types := range w {
+		for _, t := range types {
+			if t == "" || seen[t] {
+				continue
+			}
+			seen[t] = true
+			terms = append(terms, `event_types:"`+t+`"`)
+		}
+	}
+	sort.Strings(terms)
+	return strings.Join(terms, " OR ")
+}
+
 // Reconcile decides what to do about every source and every subscription.
 //
 // Both directions matter. A source with no subscription needs one; a
