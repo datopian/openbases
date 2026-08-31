@@ -178,7 +178,11 @@ func (r *Reconciler) Run(ctx context.Context) (Report, error) {
 //     the subscription running means Google keeps sending them and the topic
 //     keeps paying for them.
 func (r *Reconciler) adopt(ctx context.Context, sources []Source, subs []Subscription) ([]Subscription, error) {
-	live, err := r.Events.List(ctx, "")
+	filter := r.Wants.Filter()
+	if filter == "" {
+		return nil, fmt.Errorf("no event types are configured at all, so there is nothing to reconcile")
+	}
+	live, err := r.Events.List(ctx, filter)
 	if err != nil {
 		// Not fatal to the pass. Renewing the subscriptions we do know about is
 		// more valuable than refusing to act because we could not enumerate;

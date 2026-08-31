@@ -538,3 +538,20 @@ func TestAFailedInventoryReadStillRenews(t *testing.T) {
 		t.Errorf("changed = %d, want the renewal to have gone through", rep.Changed)
 	}
 }
+
+// subscriptions.list refuses an empty filter with INVALID_ARGUMENT: the
+// discovery document marks it required and says at least one event type must be
+// named. An empty one fails quietly — listing errors, adoption is skipped with a
+// warning, and the subscription we lost track of is never found.
+func TestTheInventoryReadNamesEventTypes(t *testing.T) {
+	f := want.Filter()
+	if !strings.Contains(f, `event_types:"`) {
+		t.Fatalf("filter = %q, which the API rejects", f)
+	}
+	if strings.Count(f, "event_types:") != len(driveTypes)+len(meetTypes) {
+		t.Errorf("filter = %q; every wanted type has to be named or its subscriptions are invisible", f)
+	}
+	if (Wants{}).Filter() != "" {
+		t.Error("an empty Wants produced a filter")
+	}
+}
