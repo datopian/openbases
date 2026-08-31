@@ -215,8 +215,8 @@ func TestAHealthyPassCallsNothing(t *testing.T) {
 	if got := mutations(g.calls); len(got) != 0 {
 		t.Errorf("changed something on a healthy pass: %v", got)
 	}
-	if len(g.calls) != 1 {
-		t.Errorf("calls = %v; a pass reads Google's inventory exactly once", g.calls)
+	if len(g.calls) != len(want) {
+		t.Errorf("calls = %v; a pass reads Google's inventory once per kind", g.calls)
 	}
 	if rep.Changed != 0 || len(st.recorded) != 0 {
 		t.Errorf("changed %d and wrote %d rows on a healthy pass", rep.Changed, len(st.recorded))
@@ -539,20 +539,55 @@ func TestAFailedInventoryReadStillRenews(t *testing.T) {
 	}
 }
 
-// subscriptions.list refuses an empty filter with INVALID_ARGUMENT: the
-// discovery document marks it required and says at least one event type must be
-// named. An empty one fails quietly — listing errors, adoption is skipped with a
-// warning, and the subscription we lost track of is never found.
-func TestTheInventoryReadNamesEventTypes(t *testing.T) {
-	f := want.Filter()
-	if !strings.Contains(f, `event_types:"`) {
-		t.Fatalf("filter = %q, which the API rejects", f)
+// subscriptions.list refuses an empty filter with INVALID_ARGUMENT, and refuses
+// one naming more than one Workspace application with
+// UNSUPPORTED_EVENTS_COMBINATION. Both fail quietly: listing errors, adoption is
+// skipped with a warning, and the subscription we lost track of is never found.
+func TestTheInventoryReadNamesOneApplicationsEventTypes(t *testing.T) {
+	drive, err := want.Filter(KindDrive)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Count(f, "event_types:") != len(driveTypes)+len(meetTypes) {
-		t.Errorf("filter = %q; every wanted type has to be named or its subscriptions are invisible", f)
+	if strings.Count(drive, "event_types:") != len(driveTypes) {
+		t.Errorf("drive filter = %q; every wanted type has to be named or its subscriptions are invisible", drive)
 	}
-	if (Wants{}).Filter() != "" {
+	if strings.Contains(drive, ".meet.") {
+		t.Errorf("drive filter names Meet types: %q — the API rejects the combination", drive)
+	}
+	meet, err := want.Filter(KindMeet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(meet, ".drive.") {
+		t.Errorf("meet filter names Drive types: %q", meet)
+	}
+	if _, err := (Wants{}).Filter(KindDrive); err == nil {
 		t.Error("an empty Wants produced a filter")
+	}
+	if got := want.Kinds(); len(got) != 2 {
+		t.Errorf("kinds = %v", got)
+	}
+}
+
+// One inventory read per kind, because one query cannot cover both.
+func TestTheInventoryIsReadOncePerKind(t *testing.T) {
+	st := &fakeStore{
+		sources: []Source{src("a", true)},
+		subs:    []Subscription{sub("a", StateActive, 5*24*time.Hour)},
+	}
+	g := &fakeGoogle{}
+	if _, err := newReconciler(t, st, g).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lists := 0
+	for _, c := range g.calls {
+		if c == "GET /subscriptions" {
+			lists++
+		}
+	}
+	if lists != len(want) {
+		t.Errorf("listed %d time(s) for %d kind(s); a query naming two applications is rejected",
+			lists, len(want))
 	}
 }
 
@@ -608,5 +643,48 @@ func TestTheVerifiedSourcesAreUsableAsWants(t *testing.T) {
 	}
 	if v.Meet.SpaceID == "" || v.Meet.Visibility == "" {
 		t.Error("the Meet source is missing a space id or a visibility")
+	}
+}
+
+// Drift is repaired without a gap: one patch, the same subscription id, no
+// delete. A replacement would lose every event arriving between the delete and
+// the create, and change the id for no reason.
+func TestDriftIsRepairedWithoutDeletingAnything(t *testing.T) {
+	st := &fakeStore{
+		sources: []Source{src("a", true)},
+		subs: []Subscription{sub("a", StateActive, 5*24*time.Hour,
+			"google.workspace.drive.file.v3.created")},
+	}
+	g := &fakeGoogle{}
+	rep, err := newReconciler(t, st, g).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Failed != 0 {
+		t.Fatalf("failed: %v", rep.Err())
+	}
+	calls := mutations(g.calls)
+	for _, c := range calls {
+		if strings.HasPrefix(c, "DELETE") || strings.HasPrefix(c, "POST /subscriptions") {
+			t.Errorf("drift was repaired by replacement (%v); the events in the gap are lost", calls)
+		}
+	}
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], "PATCH") {
+		t.Errorf("calls = %v, want a single patch", calls)
+	}
+	if st.recorded["a"].Name != "subscriptions/a" {
+		t.Errorf("the id changed to %q", st.recorded["a"].Name)
+	}
+}
+
+// An empty type set is what a misconfiguration looks like. Sending it turns a
+// working subscription into a rejected patch.
+func TestAnEmptyEventTypeSetIsNotPatched(t *testing.T) {
+	g := &fakeGoogle{}
+	if _, err := g.server(t).SetEventTypes(context.Background(), "subscriptions/a", nil); err == nil {
+		t.Fatal("an empty event-type list was sent")
+	}
+	if len(g.calls) != 0 {
+		t.Errorf("called %v", g.calls)
 	}
 }

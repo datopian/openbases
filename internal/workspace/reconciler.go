@@ -178,21 +178,39 @@ func (r *Reconciler) Run(ctx context.Context) (Report, error) {
 //     the subscription running means Google keeps sending them and the topic
 //     keeps paying for them.
 func (r *Reconciler) adopt(ctx context.Context, sources []Source, subs []Subscription) ([]Subscription, error) {
-	filter := r.Wants.Filter()
-	if filter == "" {
-		return nil, fmt.Errorf("no event types are configured at all, so there is nothing to reconcile")
-	}
-	live, err := r.Events.List(ctx, filter)
-	if err != nil {
-		// Not fatal to the pass. Renewing the subscriptions we do know about is
-		// more valuable than refusing to act because we could not enumerate;
-		// the cost of skipping is that an unrecorded subscription survives one
-		// more hour.
-		if r.Log != nil {
-			r.Log.Warn("could not list subscriptions; skipping adoption",
-				"error", err)
+	// One query per kind. The filter may name event types from only one
+	// Workspace application at a time, so a single query covering Drive and
+	// Meet is rejected outright.
+	var live []GoogleSubscription
+	// Deduplicated by name across the per-kind queries. A subscription that
+	// matched two queries would otherwise be handled twice — harmless for a
+	// delete, but an adoption written twice makes the second write look like a
+	// duplicate subscription on the same source.
+	seenLive := map[string]bool{}
+	for _, kind := range r.Wants.Kinds() {
+		filter, err := r.Wants.Filter(kind)
+		if err != nil {
+			return nil, err
 		}
-		return subs, nil
+		found, err := r.Events.List(ctx, filter)
+		if err != nil {
+			// Not fatal to the pass. Renewing the subscriptions we do know
+			// about is more valuable than refusing to act because we could not
+			// enumerate one kind; the cost of skipping is that an unrecorded
+			// subscription survives one more hour.
+			if r.Log != nil {
+				r.Log.Warn("could not list subscriptions; skipping adoption for this kind",
+					"kind", string(kind), "error", err)
+			}
+			continue
+		}
+		for _, g := range found {
+			if g.Name == "" || seenLive[g.Name] {
+				continue
+			}
+			seenLive[g.Name] = true
+			live = append(live, g)
+		}
 	}
 
 	byTarget := make(map[string]Source, len(sources))
@@ -303,6 +321,14 @@ func (r *Reconciler) apply(ctx context.Context, d Decision, src Source, existing
 
 	case ActionRenew:
 		g, err := r.Events.Renew(ctx, existing.GoogleName)
+		return r.record(ctx, d.SourceID, g, existing, err)
+
+	case ActionUpdate:
+		types, err := r.Wants.For(src.Kind)
+		if err != nil {
+			return r.record(ctx, d.SourceID, GoogleSubscription{}, existing, err)
+		}
+		g, err := r.Events.SetEventTypes(ctx, existing.GoogleName, types)
 		return r.record(ctx, d.SourceID, g, existing, err)
 
 	case ActionReactivate:

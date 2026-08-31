@@ -9,7 +9,7 @@ What keeps Drive and Meet discovery working, how it fails, and what to do.
 
 1. Reads the allow-list and what we believe, through `system_event_sources()`.
 2. Asks Google what it actually holds, and adopts or deletes what does not match.
-3. Decides one action per source: none, create, renew, reactivate, replace, delete.
+3. Decides one action per source: none, create, renew, update, reactivate, replace, delete.
 4. Applies each and writes back the result — including failures.
 
 It is idempotent. A second pass immediately after a first applies nothing, and
@@ -93,6 +93,20 @@ scripts/on.sh staging control "sudo -u postgres psql -X -d workgraph -c \
 
 `last_renewed_at` never advances on a failure, so it answers "when did this last
 actually work".
+
+## Changing which event types we listen for
+
+Edit `internal/workspace/sources.json` and deploy. The next pass patches each
+subscription in place — the API's patch method accepts `event_types`, so the
+subscription id survives and no window exists in which nothing is subscribed.
+
+Every entry in that file was established one at a time with `validateOnly`,
+because the documented list contains types a shared-drive target rejects. One
+wrong entry is not a degraded subscription: Google refuses the whole create, so
+the source silently never subscribes. That happened on the first deployment —
+`permission.v3.updated` does not exist, the verified name is
+`permission.v3.edited` — which is why the file is embedded and there is only one
+copy of the list.
 
 ## Adding a source
 
