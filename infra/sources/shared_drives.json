@@ -76,5 +76,58 @@
       "google.workspace.drive.permission.v3.deleted"
     ],
     "verified": "2026-08-30, validateOnly against All, BizDev and Delivery"
+  },
+  "meet": {
+    "_doc": [
+      "The registered recurring Meet (wg-8yv.38, chosen 2026-08-30).",
+      "",
+      "Innovation Team Sync, Monday to Thursday, used for the DataHub.io product.",
+      "Transcription is on by default for it, which is what makes it ingestable at",
+      "all \u2014 events fire whether or not a transcript exists, and a meeting with",
+      "transcription off produces events carrying nothing.",
+      "",
+      "The meeting is SOMETIMES SKIPPED. A week with no transcript is therefore",
+      "silence, not an incident, and monitoring separates the two: subscription",
+      "health is alerted on, content arrival is not. What IS an incident is a",
+      "conference record existing with no transcript retrieved, because that is",
+      "the shape of ingestion breaking rather than of a quiet week (ADR-0027).",
+      "",
+      "internal because the attendees are Datopian staff and the subject is our own",
+      "product. A client-confidential meeting would need its own visibility and",
+      "would not belong in the same registry entry (ADR-0013).",
+      "",
+      "space_id is what the subscription targets. The code above is an alias that",
+      "resolves to it (spaces/FS4Sj-9MIY0B), and an alias is the same trap as a drive",
+      "name: typeable, human, and not what the API is stable on."
+    ],
+    "space_code": "tfy-qcsa-twb",
+    "display_name": "Innovation Team Sync",
+    "visibility": "internal",
+    "cadence": "Mon-Thu, sometimes skipped",
+    "purpose": "DataHub.io product",
+    "transcription": "on by default",
+    "space_id": "FS4Sj-9MIY0B",
+    "subscription": {
+      "_doc": [
+        "Verified by probing on 2026-08-30. transcript.v2.file and recording.v2.file",
+        "are documented and REJECTED as 'incorrectly formatted', the same way",
+        "file.v3.content is for drives.",
+        "",
+        "Two types, and the pair is the design. conference.v2.ended says a meeting",
+        "happened; transcript.v2.ended says a transcript is retrievable. Together they",
+        "separate the two silences ADR-0027 cares about: no conference event at all is",
+        "a skipped meeting and not an incident, while a conference that ended with no",
+        "transcript following is ingestion breaking.",
+        "",
+        "participant.v2.joined validates and is deliberately NOT subscribed to. It is",
+        "attendance data we have no use for, and least privilege applies to what we",
+        "collect as much as to what we can reach."
+      ],
+      "eventTypes": [
+        "google.workspace.meet.conference.v2.ended",
+        "google.workspace.meet.transcript.v2.ended"
+      ],
+      "verified": "2026-08-30, validateOnly against spaces/FS4Sj-9MIY0B"
+    }
   }
 }
