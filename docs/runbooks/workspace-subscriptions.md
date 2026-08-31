@@ -122,13 +122,28 @@ fails in a way that looks like the previous one succeeding:
    ```
 
    A `push_config` with no `oidc_token` block means Google pushes unsigned and
-   the receiver refuses every delivery. And even with the block, Pub/Sub's own
-   service agent needs `roles/iam.serviceAccountTokenCreator` on the push
-   identity (`google_service_account_iam_member.pubsub_token_creator`) — without
-   it Google cannot mint a token per delivery and **nothing reaches the
-   endpoint at all**: no request, no refusal, no log line. Which reads exactly
-   like "no events have happened yet", and is the most misleading failure in
-   this whole path.
+   the receiver refuses every delivery.
+
+   And even with the block, Pub/Sub's own service agent needs
+   `roles/iam.serviceAccountTokenCreator` on the push identity:
+
+   ```bash
+   gcloud iam service-accounts get-iam-policy \
+     workgraph-events@datopian-workgraph-events.iam.gserviceaccount.com \
+     --project datopian-workgraph-events
+   ```
+
+   Without that binding Google cannot mint a token per delivery and **nothing
+   reaches the endpoint at all** — no request, no refusal, no log line. Which
+   reads exactly like "no events have happened yet", and is the most misleading
+   failure in this whole path.
+
+   The grant is a documented prerequisite rather than Terraform-managed, because
+   OpenTofu authenticates as that same service account and managing it would
+   mean letting a credential edit its own IAM policy. Google's console makes the
+   grant silently when push auth is set up through the UI; the API does not.
+   Both the command and the reasoning are at the top of
+   `infra/tofu/modules/google-events/main.tf`.
 
    Both were in that state on 2026-08-31: the module gained the `oidc_token`
    block after the subscription was created, and no apply had updated it.
