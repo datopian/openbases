@@ -102,15 +102,41 @@ func TestPubSubPushBypassesAccessButStillAuthenticates(t *testing.T) {
 // falls through to the authenticated mux. An audience-less receiver would
 // accept ANY Google-signed token, which is worse than no endpoint because it
 // looks like verification.
+//
+// Asserted on the BODY, not the status. Both paths answer 401, so a status-only
+// test passes whether the endpoint is registered or not — which is how the
+// endpoint came to be unregistered in staging for a week with a green test
+// suite: config.LoadControlAPI never read WG_PUBSUB_PUSH_AUDIENCE, so the
+// audience was always empty and this test could not tell.
 func TestPubSubPushIsNotRegisteredWithoutAnAudience(t *testing.T) {
-	h := routes(
+	unregistered := httptest.NewRecorder()
+	routes(
 		config.ControlAPI{Environment: config.EnvLocal},
 		nil, &authn.StaticAuthenticator{}, nil, quiet(),
-	)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/google/events", strings.NewReader(`{}`)))
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("an unregistered endpoint should fall through to authentication, got %d", rr.Code)
+	).ServeHTTP(unregistered, httptest.NewRequest("POST", "/v1/google/events", strings.NewReader(`{}`)))
+
+	registered := httptest.NewRecorder()
+	routes(
+		config.ControlAPI{
+			Environment:        config.EnvLocal,
+			PubSubPushAudience: "https://work.example/v1/google/events",
+		},
+		nil, &authn.StaticAuthenticator{}, nil, quiet(),
+	).ServeHTTP(registered, httptest.NewRequest("POST", "/v1/google/events", strings.NewReader(`{}`)))
+
+	if unregistered.Code != http.StatusUnauthorized || registered.Code != http.StatusUnauthorized {
+		t.Fatalf("both must refuse: unregistered=%d registered=%d",
+			unregistered.Code, registered.Code)
+	}
+	// The receiver answers 401 with no body at all; the authenticated mux
+	// answers with a JSON error. That difference is the only observable
+	// evidence that the route is mounted.
+	if registered.Body.Len() != 0 {
+		t.Errorf("the receiver returned a body %q; it answers 401 with none", registered.Body.String())
+	}
+	if unregistered.Body.Len() == 0 {
+		t.Error("the unregistered path returned no body, so it is indistinguishable " +
+			"from the receiver and this test cannot fail")
 	}
 }
 

@@ -50,6 +50,34 @@ func TestLoadControlAPI_LocalDefaults(t *testing.T) {
 	}
 }
 
+// Every field the environment file sets has to reach the struct. This one did
+// not: PubSubPushAudience was declared, consumed by cmd/control-api to decide
+// whether to register the Pub/Sub push endpoint, and never read — so the
+// endpoint was never registered even though the deployed environment file set
+// the variable and the consuming code looked right.
+//
+// The general shape of the bug is worse than the instance: a guard reading
+// "register only when configured" behaves as "never register" when the config
+// never arrives, and nothing about it looks wrong.
+func TestLoadControlAPI_ReadsEveryDeployedVariable(t *testing.T) {
+	t.Setenv("WG_ENV", "local")
+	t.Setenv("WG_DATABASE_URL", "postgres://localhost/wg")
+	t.Setenv("WG_PUBSUB_PUSH_AUDIENCE", "https://work.example/v1/google/events")
+	t.Setenv("WG_PUBSUB_PUSH_SERVICE_ACCOUNT", "pusher@example.iam.gserviceaccount.com")
+
+	c, err := LoadControlAPI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PubSubPushAudience != "https://work.example/v1/google/events" {
+		t.Errorf("PubSubPushAudience = %q; the push endpoint is not registered without it",
+			c.PubSubPushAudience)
+	}
+	if c.PubSubPushServiceAccount != "pusher@example.iam.gserviceaccount.com" {
+		t.Errorf("PubSubPushServiceAccount = %q", c.PubSubPushServiceAccount)
+	}
+}
+
 func TestEnvironmentValid(t *testing.T) {
 	for _, e := range []Environment{EnvLocal, EnvStaging, EnvProduction} {
 		if !e.Valid() {
