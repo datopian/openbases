@@ -20,6 +20,7 @@ DECLARE
   meet_id uuid;
   ghost uuid := '00000000-0000-0000-0000-0000000000ff';
   got text;
+  renewed_before timestamptz;
 BEGIN
   -- The four sources the plan names: three shared drives and one recurring
   -- meeting. Seeded, not created by the reconciler, so that adding a source is
@@ -104,6 +105,13 @@ BEGIN
     RAISE EXCEPTION 'recording the same subscription twice produced % rows', n;
   END IF;
 
+  -- Captured before the failure, because everything here runs in one
+  -- transaction and now() is frozen inside it: "later than a second ago" cannot
+  -- tell a value the failure wrote from the one the success above wrote.
+  RESET ROLE;
+  SELECT last_renewed_at INTO renewed_before FROM event_subscriptions WHERE source_id = drive_id;
+  SET LOCAL ROLE workgraph_app;
+
   PERFORM system_record_subscription(drive_id, 'subscriptions/d1', 'failed',
                                      NULL, '["google.workspace.drive.file.v3.created"]'::jsonb,
                                      'the delegation is missing drive.readonly');
@@ -118,9 +126,15 @@ BEGIN
   -- last_renewed_at must not advance on a failure, or "when did this last work"
   -- stops being answerable at exactly the moment it is asked.
   SELECT count(*) INTO n FROM event_subscriptions
-   WHERE source_id = drive_id AND last_error IS NOT NULL AND last_renewed_at > now() - interval '1 second';
+   WHERE source_id = drive_id AND last_error IS NULL;
   IF n <> 0 THEN
-    RAISE EXCEPTION 'a failed attempt advanced last_renewed_at';
+    RAISE EXCEPTION 'the failure was not recorded against the subscription';
+  END IF;
+  SELECT count(*) INTO n FROM event_subscriptions
+   WHERE source_id = drive_id AND last_renewed_at IS DISTINCT FROM renewed_before;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'a failed attempt changed last_renewed_at; "when did this last '
+      'actually work" stops being answerable at the moment it is asked';
   END IF;
 
   -- -----------------------------------------------------------------
