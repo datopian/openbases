@@ -27,6 +27,18 @@ resource "google_project_service" "required" {
     "workspaceevents.googleapis.com",
     "meet.googleapis.com",
     "drive.googleapis.com",
+    # Reading or setting a service account's IAM policy goes through this API,
+    # and it is NOT in the bundle Google pre-enables on a new project. Without
+    # it the token-creator grant below fails with accessNotConfigured on
+    # "Error retrieving IAM policy for service account" — which names IAM, the
+    # service account, and the project number, and does not obviously mean "an
+    # API is off".
+    #
+    # Second instance of the same shape as the cloudresourcemanager note above:
+    # a call that manages permissions needs its own API on first, and the error
+    # arrives from the resource that wanted it rather than from anything about
+    # enablement.
+    "iam.googleapis.com",
   ])
 
   project = var.project_id
