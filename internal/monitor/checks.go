@@ -410,3 +410,128 @@ func orUnknown(s string) string {
 	}
 	return s
 }
+
+// WorkspaceSource is one allow-listed Google Workspace source and what we
+// believe about its subscription.
+type WorkspaceSource struct {
+	Name    string
+	Kind    string
+	Enabled bool
+	// State is our record of Google's lifecycle state, or empty when no
+	// subscription exists.
+	State     string
+	ExpiresAt time.Time
+	LastError string
+}
+
+// EvaluateWorkspaceSources judges every allow-listed source's subscription.
+//
+// It deliberately does NOT check whether events are arriving. A Meet source
+// legitimately produces nothing for days — the meeting is Mon-Thu and is
+// sometimes skipped or held with transcription off — and a Drive source is quiet
+// at weekends. An alert on delivery silence would fire during correct operation,
+// which is how alerting systems get muted in week one.
+//
+// What it checks is the thing that is never healthy: an enabled source whose
+// subscription is missing, not active, already expired, or closer to expiry than
+// the reconciler's own renewal window. Each of those means a pass that should
+// have renewed it did not run or did not succeed — and the consequence is not a
+// backlog. Events that arrive with no live subscription are never sent at all.
+func EvaluateWorkspaceSources(sources []WorkspaceSource, now time.Time, t Thresholds) Finding {
+	f := Finding{Class: ClassWorkspaceSources, Observed: map[string]any{}}
+
+	// Declared, like backup streams: a discovered check reports on the
+	// subscriptions that exist, so an empty allow-list — migrations not applied,
+	// or the table read through the wrong path — reads as "nothing to report".
+	if len(sources) == 0 {
+		f.Failing = true
+		f.Summary = "no Google Workspace source is allow-listed, so nothing is being ingested"
+		return f
+	}
+
+	report := make([]map[string]any, 0, len(sources))
+	var problems []string
+	enabled := 0
+
+	for _, s := range sources {
+		entry := map[string]any{"name": s.Name, "kind": s.Kind, "enabled": s.Enabled}
+		if !s.Enabled {
+			// A disabled source is a decision, not a fault. Its subscription
+			// having been deleted is the correct end state.
+			entry["state"] = "disabled"
+			report = append(report, entry)
+			continue
+		}
+		enabled++
+		entry["state"] = s.State
+		if s.LastError != "" {
+			entry["last_error"] = s.LastError
+		}
+
+		switch {
+		case s.State == "" || s.State == "pending":
+			problems = append(problems, s.Name+" has no subscription")
+
+		case s.State != "active":
+			// suspended, failed or deleted. Each has its own repair in the
+			// reconciler, and each means nothing is arriving now.
+			msg := s.Name + " is " + s.State
+			if s.LastError != "" {
+				msg += " (" + firstLine(s.LastError) + ")"
+			}
+			problems = append(problems, msg)
+
+		case s.ExpiresAt.IsZero():
+			// Active with no expiry is not a subscription anything can reason
+			// about, including the renewer.
+			problems = append(problems, s.Name+" is active with no recorded expiry")
+
+		case !s.ExpiresAt.After(now):
+			entry["expired_for_sec"] = int(now.Sub(s.ExpiresAt).Seconds())
+			problems = append(problems, fmt.Sprintf("%s expired %s ago", s.Name, round(now.Sub(s.ExpiresAt))))
+
+		case s.ExpiresAt.Sub(now) <= t.SubscriptionRenewalGrace:
+			// Inside the renewal window for longer than the reconciler should
+			// need. Not yet lost, which is the point of alerting here.
+			entry["expires_in_sec"] = int(s.ExpiresAt.Sub(now).Seconds())
+			problems = append(problems, fmt.Sprintf("%s expires in %s and has not been renewed (limit %s)",
+				s.Name, round(s.ExpiresAt.Sub(now)), t.SubscriptionRenewalGrace))
+
+		default:
+			entry["expires_in_sec"] = int(s.ExpiresAt.Sub(now).Seconds())
+		}
+		if !s.ExpiresAt.IsZero() {
+			entry["expires_at"] = s.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		report = append(report, entry)
+	}
+
+	f.Observed["sources"] = report
+	f.Observed["enabled"] = enabled
+
+	if enabled == 0 {
+		f.Failing = true
+		f.Summary = "every Google Workspace source is disabled, so nothing is being ingested"
+		return f
+	}
+	if len(problems) > 0 {
+		f.Failing = true
+		f.Summary = joinAnd(problems)
+		return f
+	}
+	f.Summary = fmt.Sprintf("%d Workspace subscription(s) active and renewed", enabled)
+	return f
+}
+
+// firstLine trims a stored error to its first line for a summary. Google's
+// errors are multi-line JSON, and an alert summary that carries all of it is one
+// nobody reads.
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 120 {
+		s = s[:120] + "…"
+	}
+	return strings.TrimSpace(s)
+}

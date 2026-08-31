@@ -154,6 +154,67 @@ func (c Collector) ReadBackupReceipts() []BackupStream {
 // Each check is independent: one that cannot be gathered becomes a FAILING
 // finding rather than aborting the pass, so a broken database connection does
 // not also hide the disk filling up.
+// ObserveWorkspaceSources reads every allow-listed source and its subscription.
+//
+// Through system_event_sources() rather than the tables, because all three are
+// behind FORCE ROW LEVEL SECURITY and the monitor has no user identity. Reading
+// the table directly would return nothing, which the evaluator would correctly
+// report as "no source is allow-listed" — a true statement about what this
+// connection can see and a false one about the system.
+func (c Collector) ObserveWorkspaceSources(ctx context.Context) ([]WorkspaceSource, error) {
+	if c.DB == nil {
+		return nil, errors.New("no database")
+	}
+	rows, err := c.DB.QueryContext(ctx,
+		`SELECT display_name, kind, enabled, state, expires_at FROM system_event_sources()`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []WorkspaceSource
+	for rows.Next() {
+		var w WorkspaceSource
+		var state sql.NullString
+		var expires sql.NullTime
+		if err := rows.Scan(&w.Name, &w.Kind, &w.Enabled, &state, &expires); err != nil {
+			return nil, err
+		}
+		w.State = state.String
+		if expires.Valid {
+			w.ExpiresAt = expires.Time
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// The last error is a separate read because system_event_sources() does not
+	// carry it: it exists to drive reconciliation, and an error message is for
+	// humans. Failing here is not fatal — a subscription in a bad state is worth
+	// alerting on with or without the reason.
+	errRows, err := c.DB.QueryContext(ctx,
+		`SELECT s.display_name, sub.last_error
+		   FROM event_subscriptions sub
+		   JOIN event_sources s ON s.id = sub.source_id
+		  WHERE sub.last_error IS NOT NULL`)
+	if err == nil {
+		defer errRows.Close()
+		reasons := map[string]string{}
+		for errRows.Next() {
+			var name, reason string
+			if err := errRows.Scan(&name, &reason); err == nil {
+				reasons[name] = reason
+			}
+		}
+		for i := range out {
+			out[i].LastError = reasons[out[i].Name]
+		}
+	}
+	return out, nil
+}
+
 func (c Collector) Run(ctx context.Context, now time.Time, t Thresholds) []Finding {
 	findings := []Finding{EvaluateAPI(c.ProbeAPI(ctx))}
 
@@ -184,6 +245,12 @@ func (c Collector) Run(ctx context.Context, now time.Time, t Thresholds) []Findi
 		findings = append(findings, gatherFailed(ClassCostImport, err))
 	} else {
 		findings = append(findings, EvaluateCostImport(imports, now, t))
+	}
+
+	if sources, err := c.ObserveWorkspaceSources(ctx); err != nil {
+		findings = append(findings, gatherFailed(ClassWorkspaceSources, err))
+	} else {
+		findings = append(findings, EvaluateWorkspaceSources(sources, now, t))
 	}
 
 	findings = append(findings, EvaluateBackup(c.ReadBackupReceipts(), now))
@@ -221,6 +288,7 @@ func (c Collector) RunWithoutDatabase(ctx context.Context, now time.Time, t Thre
 		gatherFailed(ClassWebhook, noDB),
 		gatherFailed(ClassAgentStall, noDB),
 		gatherFailed(ClassCostImport, noDB),
+		gatherFailed(ClassWorkspaceSources, noDB),
 	}
 	if fs, err := c.MeasureDisk(); err != nil {
 		findings = append(findings, gatherFailed(ClassDisk, err))

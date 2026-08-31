@@ -27,6 +27,26 @@ So the timer interval is load-bearing. Raising `OnUnitActiveSec` above 24h makes
 the reconciler refuse to run at all, which is deliberate: loudly broken beats
 quietly deaf.
 
+## The alert
+
+`platform_workspace_subscription_lapsed`, raised by the monitor when an enabled
+source's subscription is missing, not active, already expired, or closer to
+expiry than 12 hours without having been renewed. That last threshold is half
+the reconciler's own 24-hour renewal window, so the timer gets twelve hourly
+passes to do its job before anybody is told, and there is still twelve hours of
+warning before the subscription actually lapses.
+
+**Delivery silence is deliberately not an alert.** A Meet source produces nothing
+for days — the meeting is Mon–Thu and is sometimes skipped or held with
+transcription off — and the Drive sources are quiet at weekends. An alert that
+fires during correct operation gets muted in week one, and then the one that
+matters is muted too.
+
+What the alert catches is the failure this timer exists to prevent: Google
+expires a subscription within days, and when one lapses the source simply stops
+delivering. Nothing errors, nothing is slow, no request fails, and unlike a
+backlog the missed events do not accumulate anywhere. They are never sent.
+
 ## Checking it
 
 ```bash
