@@ -117,7 +117,7 @@ recorded in a bead rather than a line of Terraform.
 ## 5. Which drives, and one question I cannot answer from here
 
 **Which drives.** Three shared drives to start, recorded in
-[`infra/sources/shared_drives.json`](../../infra/sources/shared_drives.json):
+[`internal/workspace/sources.json`](../../internal/workspace/sources.json):
 **All**, **BizDev**, **Delivery** — the ones every employee can already read.
 
 You do not need to look up their IDs. `drives.list` is covered by the
@@ -182,7 +182,7 @@ Google credentials, which is everyone until this is turned on.
 - the service account **JSON key**, added to SOPS as `google_service_account_key`
 - the service account **client ID**, so the delegation can be verified
 Nothing further. The drive IDs were enumerated with the credentials from step 3
-and are recorded in `infra/sources/shared_drives.json`; the Drive events question
+and are recorded in `internal/workspace/sources.json`; the Drive events question
 is answered above.
 
 With those, WP-H1 (`wg-8yv.20`) is unblocked and the other four Phase H P0s
