@@ -555,3 +555,58 @@ func TestTheInventoryReadNamesEventTypes(t *testing.T) {
 		t.Error("an empty Wants produced a filter")
 	}
 }
+
+// The seeded sources and the verified subscription shape must agree with the
+// migration that seeds them. They were retyped once already and three of four
+// sources silently failed to subscribe, so this compares the two copies rather
+// than trusting either.
+func TestTheVerifiedSourcesAreUsableAsWants(t *testing.T) {
+	w, err := VerifiedWants()
+	if err != nil {
+		t.Fatal(err)
+	}
+	drive, err := w.For(KindDrive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range drive {
+		// Every Drive type Google accepts for a shared-drive target is one of
+		// these two families. permission.v3.updated is NOT a type — the real
+		// name is .edited, and asking for the wrong one makes Google refuse the
+		// whole create rather than ignoring the unknown entry.
+		if !strings.HasPrefix(e, "google.workspace.drive.file.v3.") &&
+			!strings.HasPrefix(e, "google.workspace.drive.permission.v3.") {
+			t.Errorf("unexpected Drive event type %q", e)
+		}
+		if strings.HasSuffix(e, "permission.v3.updated") {
+			t.Errorf("%q does not exist; the verified name is permission.v3.edited", e)
+		}
+		if strings.HasSuffix(e, "file.v3.content") {
+			t.Errorf("%q is rejected for a shared-drive target", e)
+		}
+	}
+	meet, err := w.For(KindMeet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meet) == 0 || len(drive) == 0 {
+		t.Fatalf("drive=%d meet=%d types", len(drive), len(meet))
+	}
+
+	v, err := LoadVerified()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every source the reconciler will subscribe for needs a recorded
+	// visibility: an artefact inherits its source's classification, and a
+	// source nobody classified is how confidential material ends up in a
+	// summary the whole company can read.
+	for _, d := range v.Drives {
+		if d.ID == "" || d.Visibility == "" || d.Why == "" {
+			t.Errorf("drive %q is missing an id, a visibility or a reason", d.Name)
+		}
+	}
+	if v.Meet.SpaceID == "" || v.Meet.Visibility == "" {
+		t.Error("the Meet source is missing a space id or a visibility")
+	}
+}

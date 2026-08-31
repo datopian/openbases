@@ -70,6 +70,16 @@ func main() {
 
 	store := &workspace.DB{Conn: db}
 
+	// The event types come from the embedded sources.json, which is the copy
+	// that was established against the live API one type at a time. Retyping
+	// them into Go is how the first deployment came to ask for
+	// permission.v3.updated — which does not exist, so Google refused the whole
+	// create and three of four sources silently never subscribed.
+	verified, err := workspace.VerifiedWants()
+	if err != nil {
+		fail(log, "reading the verified source definitions", err)
+	}
+
 	if *summary {
 		if err := printSummary(ctx, store, *since); err != nil {
 			fail(log, "summarising deliveries", err)
@@ -80,7 +90,7 @@ func main() {
 	r := &workspace.Reconciler{
 		Store:  store,
 		Topic:  *topic,
-		Wants:  wants(),
+		Wants:  verified,
 		Policy: workspace.DefaultPolicy,
 		Log:    log,
 		DryRun: *dryRun,
@@ -123,38 +133,6 @@ func main() {
 		// even though it did not crash.
 		log.Error("some sources could not be reconciled", "error", rep.Err())
 		os.Exit(1)
-	}
-}
-
-// wants is the event types we subscribe to, per kind.
-//
-// In code, not configuration. Every one of these was established by
-// validateOnly against the live API, and the set is not free to vary: Drive
-// rejects `file.v3.updated` (there is no such type) and rejects
-// `file.v3.content` for a shared-drive target, while Meet rejects
-// `transcript.v2.file`. A wrong entry does not degrade gracefully — the whole
-// create call is refused, so the source silently never subscribes.
-func wants() workspace.Wants {
-	return workspace.Wants{
-		workspace.KindDrive: {
-			"google.workspace.drive.file.v3.created",
-			"google.workspace.drive.file.v3.deleted",
-			"google.workspace.drive.file.v3.moved",
-			"google.workspace.drive.file.v3.renamed",
-			"google.workspace.drive.file.v3.trashed",
-			"google.workspace.drive.permission.v3.created",
-			"google.workspace.drive.permission.v3.deleted",
-			"google.workspace.drive.permission.v3.updated",
-		},
-		workspace.KindMeet: {
-			// conference.v2.ended is what tells us a meeting happened at all;
-			// transcript.v2.ended is what tells us there is something to read.
-			// Both, because the meeting is sometimes held with transcription
-			// off and sometimes skipped entirely, and "no transcript" is a fact
-			// worth knowing rather than silence.
-			"google.workspace.meet.conference.v2.ended",
-			"google.workspace.meet.transcript.v2.ended",
-		},
 	}
 }
 
