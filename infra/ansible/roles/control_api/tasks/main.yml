@@ -319,3 +319,59 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# ---------------------------------------------------------------------------
+# Google Workspace event subscriptions (WP-H1)
+# ---------------------------------------------------------------------------
+
+- name: Install the workspace reconciler binary
+  ansible.builtin.copy:
+    src: "{{ control_api_local_workspace_binary }}"
+    dest: "{{ control_api_workspace_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: control_api_local_workspace_binary | default('') | length > 0
+
+# This key impersonates any user in the domain for Drive and Meet reads, so its
+# mode is part of the security model rather than tidiness.
+- name: Install the Google service-account key
+  ansible.builtin.copy:
+    src: "{{ control_api_local_google_key }}"
+    dest: "{{ control_api_google_key_path }}"
+    owner: "{{ control_api_user }}"
+    group: "{{ control_api_user }}"
+    mode: "0600"
+  when: control_api_local_google_key | default('') | length > 0
+  no_log: true
+
+- name: Install the workspace reconciliation unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - workgraph-workspace.service
+    - workgraph-workspace.timer
+  when: control_api_local_workspace_binary | default('') | length > 0
+
+- name: Check whether the workspace reconciler is fully configured
+  ansible.builtin.stat:
+    path: "{{ control_api_workspace_binary }}"
+  register: control_api_workspace_stat
+
+# Enabled only with a binary, a key, a subject and a topic. A timer that fires
+# every hour into an immediate failure is noise that trains people to ignore
+# the one failure that matters.
+- name: Enable the workspace reconciliation timer
+  ansible.builtin.systemd_service:
+    name: workgraph-workspace.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - control_api_workspace_stat.stat.exists
+    - control_api_google_subject | default('') | length > 0
+    - control_api_google_topic | default('') | length > 0

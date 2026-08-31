@@ -1,0 +1,43 @@
+[Unit]
+Description=Workgraph Google Workspace subscription reconciliation
+Documentation=https://github.com/datopian/company-workgraph#wp-h1
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ control_api_user }}
+Group={{ control_api_user }}
+EnvironmentFile=/etc/workgraph/control-api.env
+
+LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+
+# The delegated identity. A service account cannot hold Drive or Meet resources
+# of its own, so every call is made as a real user in the domain.
+Environment=WG_GOOGLE_SUBJECT={{ control_api_google_subject }}
+Environment=WG_GOOGLE_PUBSUB_TOPIC={{ control_api_google_topic }}
+Environment=GOOGLE_APPLICATION_CREDENTIALS={{ control_api_google_key_path }}
+
+ExecStart={{ control_api_workspace_binary }}
+
+# This key can read every file in three shared drives as any user in the
+# domain. Same hardening as the API, and ProtectSystem=strict means the key is
+# reachable only because it is under /etc/workgraph, which is not writable here.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

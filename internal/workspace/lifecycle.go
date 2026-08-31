@@ -162,13 +162,36 @@ func (p Policy) Validate() error {
 	return nil
 }
 
+// Wants is the event types we subscribe to, per source kind.
+//
+// Per kind rather than one set for everything, because Drive and Meet accept
+// disjoint event types and neither accepts the other's. A single set would make
+// every Meet subscription look drifted from what we want, and drift is repaired
+// by replacement — so the reconciler would delete and recreate every Meet
+// subscription on every pass, forever, while reporting success.
+type Wants map[Kind][]string
+
+// For reports the event types wanted for a kind.
+func (w Wants) For(k Kind) ([]string, error) {
+	types, ok := w[k]
+	if !ok || len(types) == 0 {
+		// Refused rather than treated as "want nothing". An empty set compares
+		// unequal to whatever the subscription actually has, so the source
+		// would be replaced on every pass; and a subscription created with no
+		// event types is rejected by Google anyway, so the loop would never
+		// even converge on something broken.
+		return nil, fmt.Errorf("no event types are configured for %s sources", k)
+	}
+	return types, nil
+}
+
 // Reconcile decides what to do about every source and every subscription.
 //
 // Both directions matter. A source with no subscription needs one; a
 // subscription whose source is gone or disabled needs removing. Walking only
 // the sources would leave the second running forever, which is the shape of
 // "a removed permission prevents new retrieval" failing.
-func Reconcile(sources []Source, subs []Subscription, want []string, now time.Time, p Policy) ([]Decision, error) {
+func Reconcile(sources []Source, subs []Subscription, want Wants, now time.Time, p Policy) ([]Decision, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
@@ -183,6 +206,14 @@ func Reconcile(sources []Source, subs []Subscription, want []string, now time.Ti
 	for _, src := range sources {
 		known[src.ID] = true
 		sub, exists := bySource[src.ID]
+
+		wantTypes, err := want.For(src.Kind)
+		if err != nil {
+			// Not skipped. A source we cannot decide about is a source that
+			// silently stops being reconciled, which is the failure this whole
+			// package exists to make impossible.
+			return nil, fmt.Errorf("source %s (%s): %w", src.ID, src.Name, err)
+		}
 
 		if !src.Enabled {
 			if exists && sub.State != StateDeleted {
@@ -206,7 +237,7 @@ func Reconcile(sources []Source, subs []Subscription, want []string, now time.Ti
 			out = append(out, Decision{src.ID, ActionReactivate,
 				"the subscription is suspended and reactivating keeps its id"})
 
-		case !sameTypes(sub.EventTypes, want):
+		case !sameTypes(sub.EventTypes, wantTypes):
 			// Renewing extends a subscription; it does not change what it
 			// listens for. A drifted set has to be replaced or the new types
 			// never arrive — silently, because the old ones keep working.
