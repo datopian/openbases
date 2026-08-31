@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-08-31T11:55:00Z",
+  "captured_at": "2026-08-31T13:12:00Z",
   "environment": "staging",
   "bead": "wg-8yv.20",
   "work_package": "WP-H1",
@@ -26,7 +26,7 @@
       "name": "All",
       "state": "active",
       "enabled": true,
-      "expires_at": "2026-09-07T11:53:57.287748+00:00",
+      "expires_at": "2026-09-07T13:10:41.953638+00:00",
       "visibility": "internal",
       "event_type_count": 8
     },
@@ -44,7 +44,7 @@
       "name": "Delivery",
       "state": "active",
       "enabled": true,
-      "expires_at": "2026-09-07T11:54:13.916226+00:00",
+      "expires_at": "2026-09-07T13:10:58.206939+00:00",
       "visibility": "internal",
       "event_type_count": 8
     },
@@ -60,7 +60,7 @@
   ],
   "acceptance": {
     "script": "scripts/accept_workspace_events.sh",
-    "run_at": "2026-08-31T11:53Z",
+    "run_at": "2026-08-31T13:10Z",
     "results": [
       {
         "criterion": "every allow-listed source has exactly one active subscription",
@@ -86,10 +86,48 @@
         "detail": "a delivery naming an unknown drive resolved to no source"
       },
       {
-        "criterion": "a real Meet or Drive event is discovered automatically",
-        "result": "blocked",
-        "detail": "the path-scoped Cloudflare Access bypass application for /v1/google/events is not applied, so Google's push receives a 302 at the edge. Everything behind it is verified: the receiver is registered and refuses unsigned pushes with an empty-body 401."
+        "criterion": "an allow-listed Drive source change is detected and attributed",
+        "result": "pass",
+        "detail": "file.v3.created and file.v3.trashed for the probe file both arrived, each attributed to the All shared drive through the subscription that produced it. Attribution needed fixing: Google's ce-subject names the file, not the drive (migration 0047)."
+      },
+      {
+        "criterion": "the recurring Meet generates a transcript or smart-note event and is discovered automatically",
+        "result": "outstanding",
+        "detail": "The subscription is active for conference.v2.ended and transcript.v2.ended on spaces/FS4Sj-9MIY0B. Cannot be forced: Innovation Team Sync is Mon-Thu and is sometimes skipped or held with transcription off. Awaiting the next held meeting."
       }
     ]
-  }
+  },
+  "deliveries": {
+    "note": "The full chain, proven end to end: Drive change -> Workspace Events -> Pub/Sub -> OIDC-signed push -> Cloudflare Access bypass -> receiver -> attributed receipt. The created event was published at 12:08 while push authentication was still misconfigured; Pub/Sub retried it and it arrived at 12:59 once the OIDC token and both IAM bindings were in place, which also demonstrates that a delivery is not lost while the path is being repaired.",
+    "receipts": [
+      {
+        "target": "googleapis.com/drive/v3/files/1c70_FeU54lxUtUWeTDU6BDiARl8AoESU",
+        "event_type": "google.workspace.drive.file.v3.trashed",
+        "message_id": "21593357841391583",
+        "received_at": "2026-08-31T12:57:39.082347+00:00",
+        "attributed_to": "All"
+      },
+      {
+        "target": "googleapis.com/drive/v3/files/1c70_FeU54lxUtUWeTDU6BDiARl8AoESU",
+        "event_type": "google.workspace.drive.file.v3.created",
+        "message_id": "21592484310422284",
+        "received_at": "2026-08-31T12:59:34.899351+00:00",
+        "attributed_to": "All"
+      }
+    ]
+  },
+  "prerequisites_not_managed_in_code": [
+    {
+      "what": "roles/iam.serviceAccountTokenCreator for service-66861991474@gcp-sa-pubsub.iam.gserviceaccount.com on the push identity",
+      "why": "so Google can mint the OIDC token it signs each delivery with",
+      "why_not_in_code": "OpenTofu authenticates as that same service account; managing this would let a credential decide who may impersonate it",
+      "detect": "gcloud iam service-accounts get-iam-policy workgraph-events@datopian-workgraph-events.iam.gserviceaccount.com"
+    },
+    {
+      "what": "roles/iam.serviceAccountUser for workgraph-events@ on itself",
+      "why": "the iam.serviceAccounts.actAs permission, required of the caller of UpdateSubscription",
+      "why_not_in_code": "same reason; grants nothing new, since acting as itself is what holding its own key means",
+      "detect": "same command"
+    }
+  ]
 }
