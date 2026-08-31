@@ -305,6 +305,14 @@ func (r *Reconciler) apply(ctx context.Context, d Decision, src Source, existing
 		g, err := r.Events.Renew(ctx, existing.GoogleName)
 		return r.record(ctx, d.SourceID, g, existing, err)
 
+	case ActionUpdate:
+		types, err := r.Wants.For(src.Kind)
+		if err != nil {
+			return r.record(ctx, d.SourceID, GoogleSubscription{}, existing, err)
+		}
+		g, err := r.Events.SetEventTypes(ctx, existing.GoogleName, types)
+		return r.record(ctx, d.SourceID, g, existing, err)
+
 	case ActionReactivate:
 		g, err := r.Events.Reactivate(ctx, existing.GoogleName)
 		if err == nil && g.LifecycleState() == StateActive {

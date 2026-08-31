@@ -610,3 +610,46 @@ func TestTheVerifiedSourcesAreUsableAsWants(t *testing.T) {
 		t.Error("the Meet source is missing a space id or a visibility")
 	}
 }
+
+// Drift is repaired without a gap: one patch, the same subscription id, no
+// delete. A replacement would lose every event arriving between the delete and
+// the create, and change the id for no reason.
+func TestDriftIsRepairedWithoutDeletingAnything(t *testing.T) {
+	st := &fakeStore{
+		sources: []Source{src("a", true)},
+		subs: []Subscription{sub("a", StateActive, 5*24*time.Hour,
+			"google.workspace.drive.file.v3.created")},
+	}
+	g := &fakeGoogle{}
+	rep, err := newReconciler(t, st, g).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Failed != 0 {
+		t.Fatalf("failed: %v", rep.Err())
+	}
+	calls := mutations(g.calls)
+	for _, c := range calls {
+		if strings.HasPrefix(c, "DELETE") || strings.HasPrefix(c, "POST /subscriptions") {
+			t.Errorf("drift was repaired by replacement (%v); the events in the gap are lost", calls)
+		}
+	}
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], "PATCH") {
+		t.Errorf("calls = %v, want a single patch", calls)
+	}
+	if st.recorded["a"].Name != "subscriptions/a" {
+		t.Errorf("the id changed to %q", st.recorded["a"].Name)
+	}
+}
+
+// An empty type set is what a misconfiguration looks like. Sending it turns a
+// working subscription into a rejected patch.
+func TestAnEmptyEventTypeSetIsNotPatched(t *testing.T) {
+	g := &fakeGoogle{}
+	if _, err := g.server(t).SetEventTypes(context.Background(), "subscriptions/a", nil); err == nil {
+		t.Fatal("an empty event-type list was sent")
+	}
+	if len(g.calls) != 0 {
+		t.Errorf("called %v", g.calls)
+	}
+}

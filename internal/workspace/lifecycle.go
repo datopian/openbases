@@ -105,9 +105,14 @@ const (
 	// NOT the same as create: reactivating keeps the subscription id, so events
 	// that arrived during the suspension are not re-delivered under a new one.
 	ActionReactivate Action = "reactivate"
+	// ActionUpdate changes what a subscription listens for, in place. The patch
+	// method accepts event_types, so the id survives and no window exists with
+	// no subscription — which a replacement would leave, losing every event
+	// that arrived inside it.
+	ActionUpdate Action = "update"
 	// ActionReplace deletes and recreates. Needed when what we want cannot be
-	// reached by renewing — a changed event-type set, or a subscription Google
-	// has deleted.
+	// reached by patching at all — a subscription Google has deleted, one that
+	// failed, or one whose expiry we cannot reason about.
 	ActionReplace Action = "replace"
 	// ActionDelete removes a subscription for a source we no longer allow.
 	ActionDelete Action = "delete"
@@ -266,10 +271,14 @@ func Reconcile(sources []Source, subs []Subscription, want Wants, now time.Time,
 				"the subscription is suspended and reactivating keeps its id"})
 
 		case !sameTypes(sub.EventTypes, wantTypes):
-			// Renewing extends a subscription; it does not change what it
-			// listens for. A drifted set has to be replaced or the new types
-			// never arrive — silently, because the old ones keep working.
-			out = append(out, Decision{src.ID, ActionReplace,
+			// Updated in place, not replaced. The patch method accepts
+			// event_types, so the id survives and there is no window with no
+			// subscription — a replacement would lose every event that arrived
+			// between the delete and the create. Renewing alone would not do:
+			// it extends a subscription without changing what it listens for,
+			// so the new types would never arrive, silently, because the old
+			// ones keep working.
+			out = append(out, Decision{src.ID, ActionUpdate,
 				"the event types have drifted from what we now subscribe to"})
 
 		case sub.ExpiresAt.IsZero():

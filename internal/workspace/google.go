@@ -221,6 +221,28 @@ func (e *Events) Renew(ctx context.Context, name string) (GoogleSubscription, er
 	return e.await(ctx, op)
 }
 
+// SetEventTypes changes what a subscription listens for, in place.
+//
+// A PATCH of event_types, which the v1 patch method accepts alongside ttl and
+// expire_time. Worth knowing, because the alternative is delete-then-create:
+// that changes the subscription id and leaves a window with no subscription at
+// all, so every event in that window is lost. Drift in the type set is the one
+// kind of drift that does not need a replacement.
+func (e *Events) SetEventTypes(ctx context.Context, name string, types []string) (GoogleSubscription, error) {
+	if len(types) == 0 {
+		// Google would reject this, but the reason to refuse it here is that an
+		// empty set is what a misconfiguration looks like, and sending it turns
+		// a working subscription into a rejected patch.
+		return GoogleSubscription{}, fmt.Errorf("refusing to set an empty event-type list on %s", name)
+	}
+	var op operation
+	path := "/" + strings.TrimPrefix(name, "/") + "?updateMask=event_types"
+	if err := e.do(ctx, http.MethodPatch, path, map[string]any{"eventTypes": types}, &op); err != nil {
+		return GoogleSubscription{}, err
+	}
+	return e.await(ctx, op)
+}
+
 // Reactivate revives a suspended subscription, keeping its id.
 func (e *Events) Reactivate(ctx context.Context, name string) (GoogleSubscription, error) {
 	var op operation

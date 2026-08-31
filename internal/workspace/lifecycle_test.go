@@ -99,15 +99,19 @@ func TestAnEnabledSourceWithNoSubscriptionGetsOne(t *testing.T) {
 	}
 }
 
-// Renewing extends a subscription; it does not change what it listens for. A
-// drifted set has to be replaced, or the new event types never arrive — and
-// they never arrive SILENTLY, because the old ones keep working.
-func TestDriftedEventTypesForceAReplacement(t *testing.T) {
+// Renewing extends a subscription; it does not change what it listens for, so a
+// drifted set has to be acted on or the new event types never arrive — and they
+// never arrive SILENTLY, because the old ones keep working.
+//
+// Patched in place rather than replaced: the patch method accepts event_types,
+// so the id survives and there is no window with no subscription. A replacement
+// would lose every event that arrived between the delete and the create.
+func TestDriftedEventTypesArePatchedInPlace(t *testing.T) {
 	s := sub("a", StateActive, 5*24*time.Hour, "google.workspace.drive.file.v3.created")
 	ds, _ := Reconcile([]Source{src("a", true)}, []Subscription{s}, want, now, DefaultPolicy)
 	d := only(t, ds, "a")
-	if d.Action != ActionReplace {
-		t.Fatalf("action = %q, want replace", d.Action)
+	if d.Action != ActionUpdate {
+		t.Fatalf("action = %q, want update — replacing loses the events in the gap", d.Action)
 	}
 	if !strings.Contains(d.Reason, "drift") {
 		t.Errorf("reason = %q", d.Reason)
