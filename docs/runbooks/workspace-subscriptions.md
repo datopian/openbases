@@ -84,6 +84,43 @@ had one. Only subscriptions pointing at *our* topic are ever deleted: the
 service account is shared between environments, and deleting by "we do not
 recognise it" alone would have staging delete production's subscriptions.
 
+**Nothing arrives, and the subscriptions are all active.** The subscription is
+only the first half. Check the delivery path in this order, because each step
+fails in a way that looks like the previous one succeeding:
+
+1. Is the endpoint reachable from outside without an Access challenge?
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+     https://work-staging.openbases.com/v1/google/events -d '{}'
+   ```
+
+   `302` means Cloudflare Access is intercepting it at the edge and Google's
+   push never reaches us. The path-scoped bypass application
+   (`cloudflare_zero_trust_access_application.pubsub_push`) is not applied —
+   check `tofu state list | grep pubsub_push`. `401` is correct: the request
+   reached the receiver and was refused for having no token.
+
+2. Is the receiver registered at all?
+
+   ```bash
+   scripts/on.sh staging control "journalctl -u control-api --since today -o cat \
+     | grep 'push endpoint not registered'"
+   ```
+
+   Any match means `WG_PUBSUB_PUSH_AUDIENCE` did not reach the process. Note
+   that an unregistered route and a registered one both answer 401 — they differ
+   only in the body, which the receiver leaves empty. `make infra-check` now
+   fails when a deployed variable is not read by any Go file, which is how this
+   was missed for a week.
+
+3. Are deliveries arriving but failing?
+
+   ```bash
+   scripts/on.sh staging control "journalctl -u control-api --since today -o cat \
+     | grep 'refused a push delivery'"
+   ```
+
 **A source stuck in `failed`** — read `last_error`:
 
 ```bash
@@ -119,6 +156,18 @@ can read. Then deploy; the next pass subscribes.
 Removing one: set `enabled = false` in a migration. The next pass deletes the
 subscription rather than letting it expire, because left alone it keeps
 delivering for days after someone revoked access.
+
+## The delegated identity
+
+`WG_GOOGLE_SUBJECT` is currently a person's own Workspace address. Domain-wide
+delegation cannot mint a token for the service account itself — Drive and Meet
+resources belong to users — so the reconciler has to act as somebody.
+
+That somebody should not be a person. Every subscription and every read is
+attributed to them, their leaving the company breaks discovery, and their own
+Drive access defines what the platform can see. The replacement is a dedicated
+Workspace account with no mailbox, added to the three shared drives as a viewer,
+and set as the subject. Until then this is a known deviation, not a design.
 
 ## What this does not do
 

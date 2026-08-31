@@ -1,0 +1,95 @@
+{
+  "captured_at": "2026-08-31T11:55:00Z",
+  "environment": "staging",
+  "bead": "wg-8yv.20",
+  "work_package": "WP-H1",
+  "google_project": "datopian-workgraph-events",
+  "topic": "projects/datopian-workgraph-events/topics/workgraph-workspace-events-staging",
+  "delegation": {
+    "service_account": "workgraph-events@datopian-workgraph-events.iam.gserviceaccount.com",
+    "oauth2_client_id": "102065960434834149554",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/meetings.space.readonly"
+    ],
+    "subject_kind": "a person's Workspace address; a dedicated account is outstanding"
+  },
+  "reconciliation": {
+    "unit": "workgraph-workspace.timer",
+    "interval": "1h",
+    "renewal_window": "24h",
+    "note": "Policy.Validate refuses a window that does not exceed the interval"
+  },
+  "sources": [
+    {
+      "kind": "drive",
+      "name": "All",
+      "state": "active",
+      "enabled": true,
+      "expires_at": "2026-09-07T11:53:57.287748+00:00",
+      "visibility": "internal",
+      "event_type_count": 8
+    },
+    {
+      "kind": "drive",
+      "name": "BizDev",
+      "state": "active",
+      "enabled": true,
+      "expires_at": "2026-09-07T11:31:43.023219+00:00",
+      "visibility": "internal",
+      "event_type_count": 8
+    },
+    {
+      "kind": "drive",
+      "name": "Delivery",
+      "state": "active",
+      "enabled": true,
+      "expires_at": "2026-09-07T11:54:13.916226+00:00",
+      "visibility": "internal",
+      "event_type_count": 8
+    },
+    {
+      "kind": "meet",
+      "name": "Innovation Team Sync",
+      "state": "active",
+      "enabled": true,
+      "expires_at": "2026-09-07T08:44:33.255554+00:00",
+      "visibility": "internal",
+      "event_type_count": 2
+    }
+  ],
+  "acceptance": {
+    "script": "scripts/accept_workspace_events.sh",
+    "run_at": "2026-08-31T11:53Z",
+    "results": [
+      {
+        "criterion": "every allow-listed source has exactly one active subscription",
+        "result": "pass"
+      },
+      {
+        "criterion": "an expiring subscription is renewed keeping its identity",
+        "result": "pass",
+        "detail": "expiry moved to 2026-09-07T11:53:57Z, subscription id unchanged"
+      },
+      {
+        "criterion": "a second pass changes nothing (no duplicate effects)",
+        "result": "pass"
+      },
+      {
+        "criterion": "a revoked source is unsubscribed immediately, and returning restores it",
+        "result": "pass",
+        "detail": "Delivery disabled -> state deleted; re-enabled -> state active"
+      },
+      {
+        "criterion": "a source that is not allow-listed is ignored",
+        "result": "pass",
+        "detail": "a delivery naming an unknown drive resolved to no source"
+      },
+      {
+        "criterion": "a real Meet or Drive event is discovered automatically",
+        "result": "blocked",
+        "detail": "the path-scoped Cloudflare Access bypass application for /v1/google/events is not applied, so Google's push receives a 302 at the edge. Everything behind it is verified: the receiver is registered and refuses unsigned pushes with an empty-body 401."
+      }
+    ]
+  }
+}
