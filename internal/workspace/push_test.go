@@ -61,7 +61,7 @@ func TestADeliveryWithNoMessageIdIsRefusedWithoutRetry(t *testing.T) {
 // Google has moved these attribute names once already, so the decoder falls
 // back to the payload rather than recording a delivery it cannot describe.
 func TestTheEventIsDescribedFromAttributesOrFromTheBody(t *testing.T) {
-	et, target := describe(mustEnvelope(t, envelope("m", "google.workspace.drive.file.v3.created",
+	et, target, _ := describe(mustEnvelope(t, envelope("m", "google.workspace.drive.file.v3.created",
 		"//drive.googleapis.com/drives/0AC")))
 	if et != "google.workspace.drive.file.v3.created" || !strings.Contains(target, "0AC") {
 		t.Errorf("attributes not read: %q %q", et, target)
@@ -75,7 +75,7 @@ func TestTheEventIsDescribedFromAttributesOrFromTheBody(t *testing.T) {
 	var m PushMessage
 	m.Message.ID = "m2"
 	m.Message.Data = base64.StdEncoding.EncodeToString(inner)
-	et, target = describe(m)
+	et, target, _ = describe(m)
 	if et != "google.workspace.drive.file.v3.trashed" || !strings.Contains(target, "0AD") {
 		t.Errorf("payload fallback not used: %q %q", et, target)
 	}
@@ -84,8 +84,45 @@ func TestTheEventIsDescribedFromAttributesOrFromTheBody(t *testing.T) {
 	var empty PushMessage
 	empty.Message.ID = "m3"
 	empty.Message.Data = "not-base64!!"
-	if et, target = describe(empty); et != "" || target != "" {
-		t.Errorf("described an undescribable delivery: %q %q", et, target)
+	if et, target, sub := describe(empty); et != "" || target != "" || sub != "" {
+		t.Errorf("described an undescribable delivery: %q %q %q", et, target, sub)
+	}
+}
+
+// The subscription is the only attribute that can attribute a delivery to a
+// source, so it is read from the real shape Google sends.
+//
+// This is the actual first delivery received on staging, 2026-08-31: ce-subject
+// names the FILE and the drive appears nowhere, which is why matching the target
+// against an allow-listed drive id recorded every event with no source.
+func TestTheSubscriptionIsTakenFromTheDelivery(t *testing.T) {
+	real := `{"message":{"messageId":"21593357841391583",` +
+		`"orderingKey":"workspaceevents.googleapis.com/subscriptions/drive-file-1E7uX",` +
+		`"attributes":{` +
+		`"ce-type":"google.workspace.drive.file.v3.trashed",` +
+		`"ce-source":"workspaceevents.googleapis.com/subscriptions/drive-file-1E7uX",` +
+		`"ce-subject":"googleapis.com/drive/v3/files/1c70_FeU54lxUtUWeTDU6BDiARl8AoESU"}}}`
+	et, target, sub := describe(mustEnvelope(t, real))
+	if et != "google.workspace.drive.file.v3.trashed" {
+		t.Errorf("event type = %q", et)
+	}
+	if !strings.Contains(target, "files/1c70_") {
+		t.Errorf("target = %q, want the file named by ce-subject", target)
+	}
+	if sub != "workspaceevents.googleapis.com/subscriptions/drive-file-1E7uX" {
+		t.Errorf("subscription = %q; without it the delivery cannot be attributed", sub)
+	}
+	if strings.Contains(target, "drives/") {
+		t.Error("the target names a drive; the real delivery names a file, and a " +
+			"test that assumes otherwise cannot catch the attribution bug")
+	}
+
+	// orderingKey alone, for the day the attribute names move again.
+	var keyed PushMessage
+	keyed.Message.ID = "m4"
+	keyed.Message.OrderingKey = "workspaceevents.googleapis.com/subscriptions/meet-spaces-49a8"
+	if _, _, sub = describe(keyed); !strings.Contains(sub, "meet-spaces-49a8") {
+		t.Errorf("orderingKey not used as a fallback: %q", sub)
 	}
 }
 

@@ -187,7 +187,53 @@ BEGIN
     RAISE EXCEPTION 'msg-1 was recorded twice; Pub/Sub redelivers, so this is '
       'the duplicate effect the acceptance criterion forbids';
   END IF;
+
+  -- -----------------------------------------------------------------
+  -- A delivery from an allow-listed source RESOLVES to that source
+  -- -----------------------------------------------------------------
+  -- This is the assertion that makes the "unknown source" one below mean
+  -- anything. Until 2026-08-31 every real delivery resolved to NULL, because
+  -- Google's ce-subject names the FILE and the drive appears nowhere — so the
+  -- unknown-source test passed whether the allow-list worked or not.
+  PERFORM system_record_subscription(meet_id, 'subscriptions/meet-spaces-abc', 'active',
+                                     now() + interval '3 days',
+                                     '["google.workspace.meet.transcript.v2.ended"]'::jsonb, NULL);
+  IF NOT system_record_event('msg-attributed',
+                             'google.workspace.meet.transcript.v2.ended',
+                             'googleapis.com/meet/v2/conferenceRecords/xyz',
+                             '{}'::jsonb,
+                             'workspaceevents.googleapis.com/subscriptions/meet-spaces-abc') THEN
+    RAISE EXCEPTION 'the attributed delivery was not recorded';
+  END IF;
   RESET ROLE;
+
+  SELECT count(*) INTO n FROM event_receipts
+   WHERE message_id = 'msg-attributed' AND source_id = meet_id;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'a delivery naming an allow-listed source''s subscription '
+      'resolved to no source; every event would be unattributable and the '
+      'unknown-source assertion below would be unfalsifiable';
+  END IF;
+
+  -- The subscription is kept for evidence, not only for the join: "which
+  -- subscription produced this" is the first question asked when deliveries stop.
+  SELECT count(*) INTO n FROM event_receipts
+   WHERE message_id = 'msg-attributed' AND subscription IS NULL;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'the producing subscription was not recorded';
+  END IF;
+
+  -- And an unknown subscription still resolves to nothing.
+  SET LOCAL ROLE workgraph_app;
+  PERFORM system_record_event('msg-stray', 'google.workspace.drive.file.v3.created',
+                              'googleapis.com/drive/v3/files/whatever', '{}'::jsonb,
+                              'workspaceevents.googleapis.com/subscriptions/not-ours');
+  RESET ROLE;
+  SELECT count(*) INTO n FROM event_receipts
+   WHERE message_id = 'msg-stray' AND source_id IS NOT NULL;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'a delivery from a subscription we do not hold was attributed to a source';
+  END IF;
 END $$;
 
 ROLLBACK;
