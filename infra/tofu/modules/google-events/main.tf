@@ -92,6 +92,36 @@ resource "google_pubsub_topic" "dead_letter" {
   depends_on = [google_project_service.required]
 }
 
+# The project's number, for the Pub/Sub service agent's address.
+#
+# A data source rather than a variable: the number is derived from the project
+# id, and asking a human to copy it into tfvars is one more place for the two to
+# disagree.
+data "google_project" "this" {
+  project_id = var.project_id
+}
+
+# Pub/Sub cannot mint an OIDC token unless its own service agent is allowed to
+# act as the identity the token is signed as.
+#
+# This is the grant that makes push authentication work at all, and its absence
+# is invisible from our side: the subscription accepts the oidc_token block,
+# Google then fails to create a token for each delivery, and NOTHING arrives at
+# the endpoint — no request, no refusal, no log line. Which reads exactly like
+# "no events have happened yet".
+#
+# The member is Google's own managed agent, created when the Pub/Sub API is
+# enabled. It is not an identity we control and it can do nothing else with this
+# grant: getOpenIdToken mints a token whose audience is fixed by the
+# subscription.
+resource "google_service_account_iam_member" "pubsub_token_creator" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.push_service_account}"
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+
+  depends_on = [google_project_service.required]
+}
+
 resource "google_pubsub_subscription" "workspace_events" {
   project = var.project_id
   name    = local.name
@@ -129,6 +159,11 @@ resource "google_pubsub_subscription" "workspace_events" {
     minimum_backoff = "10s"
     maximum_backoff = "600s"
   }
+
+  # Without the grant, Google refuses a push subscription that names an identity
+  # its service agent cannot act as — and on an existing subscription it accepts
+  # the update and then silently delivers nothing.
+  depends_on = [google_service_account_iam_member.pubsub_token_creator]
 
   expiration_policy {
     # Never expire the subscription itself. A silently expired subscription is

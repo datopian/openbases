@@ -114,7 +114,26 @@ fails in a way that looks like the previous one succeeding:
    fails when a deployed variable is not read by any Go file, which is how this
    was missed for a week.
 
-3. Are deliveries arriving but failing?
+3. Can Pub/Sub mint the token it needs to push?
+
+   ```bash
+   scripts/with_secrets.sh staging scripts/tofu.sh staging state show \
+     'module.google_events[0].google_pubsub_subscription.workspace_events' | sed -n '/push_config/,/}/p'
+   ```
+
+   A `push_config` with no `oidc_token` block means Google pushes unsigned and
+   the receiver refuses every delivery. And even with the block, Pub/Sub's own
+   service agent needs `roles/iam.serviceAccountTokenCreator` on the push
+   identity (`google_service_account_iam_member.pubsub_token_creator`) — without
+   it Google cannot mint a token per delivery and **nothing reaches the
+   endpoint at all**: no request, no refusal, no log line. Which reads exactly
+   like "no events have happened yet", and is the most misleading failure in
+   this whole path.
+
+   Both were in that state on 2026-08-31: the module gained the `oidc_token`
+   block after the subscription was created, and no apply had updated it.
+
+4. Are deliveries arriving but failing?
 
    ```bash
    scripts/on.sh staging control "journalctl -u control-api --since today -o cat \
