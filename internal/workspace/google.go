@@ -151,8 +151,13 @@ type APIError struct {
 
 func (e *APIError) Error() string {
 	body := e.Body
-	if len(body) > 300 {
-		body = body[:300] + "…"
+	// 2000, not 300. The truncation at 300 cut Google's response off inside the
+	// boilerplate: a rejected event type is named in `details`, which begins
+	// after about 280 characters, so the one fact the message existed to carry
+	// was the one reliably cut off. Three sources failed to subscribe and the
+	// log said only "One or more event types are incorrectly formatted".
+	if len(body) > 2000 {
+		body = body[:2000] + "…"
 	}
 	return fmt.Sprintf("google returned %d: %s", e.Status, body)
 }
