@@ -124,8 +124,19 @@ fails in a way that looks like the previous one succeeding:
    A `push_config` with no `oidc_token` block means Google pushes unsigned and
    the receiver refuses every delivery.
 
-   And even with the block, Pub/Sub's own service agent needs
-   `roles/iam.serviceAccountTokenCreator` on the push identity:
+   And even with the block, the push identity needs **two** bindings, for two
+   different principals:
+
+   - `roles/iam.serviceAccountTokenCreator` for Pub/Sub's service agent, so
+     Google can mint the token it signs each delivery with.
+   - `roles/iam.serviceAccountUser` for whoever calls
+     `CreateSubscription`/`UpdateSubscription`/`ModifyPushConfig` — the
+     `iam.serviceAccounts.actAs` permission. That caller is OpenTofu, running as
+     the same service account, so it is a self-binding.
+
+   They fail differently. Missing `actAs` refuses the apply outright. Missing
+   `tokenCreator` lets everything succeed and delivers nothing, so **a green
+   apply is not evidence the first binding exists**. Check both:
 
    ```bash
    gcloud iam service-accounts get-iam-policy \

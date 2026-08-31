@@ -22,27 +22,43 @@ locals {
 #
 #   gcloud services enable cloudresourcemanager.googleapis.com --project <ID>
 #
-# SECOND PREREQUISITE, and it cannot be met from here either: Pub/Sub's own
-# service agent must be allowed to act as the push identity.
+# SECOND PREREQUISITE, and it cannot be met from here either: TWO IAM bindings
+# on the push identity, for two different principals and two different reasons.
+# Verified against Google's push-authentication documentation rather than
+# recalled, after the first attempt supplied only one of them.
 #
+#   # (a) so Google can MINT the token it signs each delivery with
 #   gcloud iam service-accounts add-iam-policy-binding \
 #     workgraph-events@<ID>.iam.gserviceaccount.com \
 #     --member="serviceAccount:service-<PROJECT NUMBER>@gcp-sa-pubsub.iam.gserviceaccount.com" \
 #     --role="roles/iam.serviceAccountTokenCreator" --project <ID>
 #
-# This grant is what lets Google mint the OIDC token it signs each delivery
-# with, and its absence is the most misleading failure in the whole path:
-# NOTHING reaches the endpoint — no request, no refusal, no log line — which
-# reads exactly like "no events have happened yet".
+#   # (b) so the caller of CreateSubscription/UpdateSubscription/ModifyPushConfig
+#   #     may NOMINATE that identity — the iam.serviceAccounts.actAs permission.
+#   #     The caller here is workgraph-events@ itself, so this is a self-binding.
+#   gcloud iam service-accounts add-iam-policy-binding \
+#     workgraph-events@<ID>.iam.gserviceaccount.com \
+#     --member="serviceAccount:workgraph-events@<ID>.iam.gserviceaccount.com" \
+#     --role="roles/iam.serviceAccountUser" --project <ID>
 #
-# It is deliberately NOT managed here. OpenTofu authenticates as
-# workgraph-events@ itself, so managing this would mean granting that credential
-# the right to edit its own IAM policy — letting a key decide who may
-# impersonate it. Google's console makes this grant silently when push
-# authentication is configured through the UI, which is why it is easy to miss
-# that the API does not.
+# The two fail differently, which is the only good thing about them. Without
+# (b) the apply is refused outright: "Principal initiating the request does not
+# have iam.serviceAccounts.actAs permission". Without (a) everything succeeds
+# and NOTHING reaches the endpoint — no request, no refusal, no log line — which
+# reads exactly like "no events have happened yet". So a green apply is not
+# evidence that (a) is in place.
 #
-# Detecting it:
+# Neither is managed here. OpenTofu authenticates as workgraph-events@ itself,
+# so managing them would mean granting that credential the right to edit its own
+# IAM policy — letting a key decide who may impersonate it. Note that (b) grants
+# nothing the credential does not already have, since acting as itself is what
+# holding its own key means; it is (a) that would be a real widening, and it
+# names a Google-managed agent.
+#
+# Google's console creates both silently when push authentication is configured
+# through the UI, which is why it is easy to miss that the API creates neither.
+#
+# Detecting them — both bindings should be listed:
 #
 #   gcloud iam service-accounts get-iam-policy \
 #     workgraph-events@<ID>.iam.gserviceaccount.com --project <ID>
