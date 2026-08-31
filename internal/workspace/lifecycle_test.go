@@ -204,3 +204,22 @@ func TestTargetResourceIsBuiltFromTheSource(t *testing.T) {
 		t.Error("an unknown kind produced a target")
 	}
 }
+
+// A Meet target needs the spaces/ prefix and the stable space id. The typeable
+// meeting code is an alias — tfy-qcsa-twb resolves to spaces/FS4Sj-9MIY0B — and
+// targeting an alias is the same trap as matching a shared drive by name.
+func TestAMeetTargetUsesTheSpaceResourceName(t *testing.T) {
+	got, err := Source{Kind: KindMeet, ExternalID: "FS4Sj-9MIY0B"}.TargetResource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "//meet.googleapis.com/spaces/FS4Sj-9MIY0B" {
+		t.Errorf("target = %q", got)
+	}
+	// Idempotent when the id already carries the prefix, so a source recorded
+	// either way produces one target rather than spaces/spaces/...
+	got, _ = Source{Kind: KindMeet, ExternalID: "spaces/FS4Sj-9MIY0B"}.TargetResource()
+	if got != "//meet.googleapis.com/spaces/FS4Sj-9MIY0B" {
+		t.Errorf("prefixed id gave %q", got)
+	}
+}
