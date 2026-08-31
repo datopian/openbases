@@ -190,32 +190,53 @@ func (w Wants) For(k Kind) ([]string, error) {
 	return types, nil
 }
 
-// Filter is the query subscriptions.list requires.
+// Filter is the query subscriptions.list requires, for one kind.
 //
-// The filter is not optional and must name at least one event type — the
-// discovery document says "Required" and the server answers an empty filter
-// with INVALID_ARGUMENT. Getting this wrong is quiet: listing fails, adoption
-// is skipped with a warning, and the reconciler never notices the subscription
-// it lost track of.
+// Per kind, and that is not a stylistic choice. The filter is not optional —
+// the discovery document marks it Required and the server rejects an empty one
+// with INVALID_ARGUMENT — and it may name event types from only ONE Workspace
+// application at a time. A single query naming both Drive and Meet types comes
+// back as:
 //
-// One consequence worth naming: a stray subscription created with event types
-// we no longer ask for cannot be enumerated at all, because every query has to
-// name the types it wants. Such a stray is found only by its target coming up
-// in a create that Google refuses as a duplicate.
-func (w Wants) Filter() string {
+//	UNSUPPORTED_EVENTS_COMBINATION: Use event types associated with only one
+//	Workspace application at a time.
+//
+// Getting either wrong is quiet: listing fails, adoption is skipped with a
+// warning, and the subscription we lost track of is never found.
+//
+// One consequence remains, and it comes from the API rather than from us: a
+// stray subscription created with event types we no longer ask for cannot be
+// enumerated at all, because every query has to name the types it wants. Such a
+// stray surfaces only when a create against the same target is refused.
+func (w Wants) Filter(k Kind) (string, error) {
+	types, err := w.For(k)
+	if err != nil {
+		return "", err
+	}
 	seen := map[string]bool{}
 	var terms []string
-	for _, types := range w {
-		for _, t := range types {
-			if t == "" || seen[t] {
-				continue
-			}
-			seen[t] = true
-			terms = append(terms, `event_types:"`+t+`"`)
+	for _, t := range types {
+		if t == "" || seen[t] {
+			continue
 		}
+		seen[t] = true
+		terms = append(terms, `event_types:"`+t+`"`)
+	}
+	if len(terms) == 0 {
+		return "", fmt.Errorf("no usable event types for %s sources", k)
 	}
 	sort.Strings(terms)
-	return strings.Join(terms, " OR ")
+	return strings.Join(terms, " OR "), nil
+}
+
+// Kinds is the source kinds we have event types for, in a stable order.
+func (w Wants) Kinds() []Kind {
+	out := make([]Kind, 0, len(w))
+	for k := range w {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 // Reconcile decides what to do about every source and every subscription.
