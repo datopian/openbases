@@ -71,3 +71,21 @@ control_api_worker_batch: 200
 # rotation is in flight. Empty except during that window; see
 # docs/runbooks/rotate-a-credential.md.
 control_api_github_webhook_secret_previous: ""
+
+# Google Workspace event subscriptions (WP-H1).
+#
+# Empty means not deployed: no binary, no key, no timer. The same pattern as the
+# worker and the witness — a run without a locally built binary changes nothing
+# rather than leaving a unit pointing at a file that is not there.
+control_api_local_workspace_binary: ""
+control_api_workspace_binary: /usr/local/bin/workgraph-workspace
+# The service-account key, materialised from SOPS by scripts/with_secrets.sh
+# into a directory removed when the shell exits. Never in the repository and
+# never in an environment variable as a value.
+control_api_local_google_key: "{{ lookup('env', 'GOOGLE_APPLICATION_CREDENTIALS') }}"
+control_api_google_key_path: /etc/workgraph/google-events.json
+# The Workspace user the reconciler impersonates through domain-wide
+# delegation. Delegation is granted against the service account's
+# oauth2ClientId, so it survives key rotation.
+control_api_google_subject: ""
+control_api_google_topic: ""

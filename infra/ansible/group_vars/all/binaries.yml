@@ -28,3 +28,7 @@ registry_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/regist
 witness_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/witness'], errors='ignore') | default('', true) }}"
 runner_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/runner'], errors='ignore') | default('', true) }}"
 dispatcher_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/dispatcher'], errors='ignore') | default('', true) }}"
+
+# The Workspace subscription reconciler (WP-H1). Its timer is enabled only when
+# the binary, the key, the delegation subject and the topic are all present.
+control_api_local_workspace_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/workspaced'], errors='ignore') | default('', true) }}"

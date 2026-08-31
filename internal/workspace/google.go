@@ -182,9 +182,16 @@ func (e *Events) Create(ctx context.Context, r CreateRequest, validateOnly bool)
 	if validateOnly {
 		path += "?validateOnly=true"
 	}
-	var out GoogleSubscription
-	err := e.do(ctx, http.MethodPost, path, body, &out)
-	return out, err
+	var op operation
+	if err := e.do(ctx, http.MethodPost, path, body, &op); err != nil {
+		return GoogleSubscription{}, err
+	}
+	if validateOnly {
+		// Nothing was created, so there is no subscription to wait for and
+		// nothing to return but the absence of an error.
+		return GoogleSubscription{}, nil
+	}
+	return e.await(ctx, op)
 }
 
 // Get reads one subscription.
@@ -201,27 +208,36 @@ func (e *Events) Get(ctx context.Context, name string) (GoogleSubscription, erro
 // target allows, which is what we always want — a shorter one only means
 // renewing more often.
 func (e *Events) Renew(ctx context.Context, name string) (GoogleSubscription, error) {
-	var out GoogleSubscription
+	var op operation
 	path := "/" + strings.TrimPrefix(name, "/") + "?updateMask=ttl"
-	err := e.do(ctx, http.MethodPatch, path, map[string]string{"ttl": "0s"}, &out)
-	return out, err
+	if err := e.do(ctx, http.MethodPatch, path, map[string]string{"ttl": "0s"}, &op); err != nil {
+		return GoogleSubscription{}, err
+	}
+	return e.await(ctx, op)
 }
 
 // Reactivate revives a suspended subscription, keeping its id.
 func (e *Events) Reactivate(ctx context.Context, name string) (GoogleSubscription, error) {
-	var out GoogleSubscription
-	err := e.do(ctx, http.MethodPost, "/"+strings.TrimPrefix(name, "/")+":reactivate", map[string]any{}, &out)
-	return out, err
+	var op operation
+	if err := e.do(ctx, http.MethodPost, "/"+strings.TrimPrefix(name, "/")+":reactivate", map[string]any{}, &op); err != nil {
+		return GoogleSubscription{}, err
+	}
+	return e.await(ctx, op)
 }
 
 // Delete removes a subscription. A 404 is success: the desired end state is
 // that it does not exist, and it does not.
 func (e *Events) Delete(ctx context.Context, name string) error {
-	err := e.do(ctx, http.MethodDelete, "/"+strings.TrimPrefix(name, "/"), nil, nil)
+	var op operation
+	err := e.do(ctx, http.MethodDelete, "/"+strings.TrimPrefix(name, "/"), nil, &op)
 	var apiErr *APIError
 	if err != nil && asAPIError(err, &apiErr) && apiErr.NotFound() {
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	_, err = e.await(ctx, op)
 	return err
 }
 
@@ -254,6 +270,81 @@ func (e *Events) List(ctx context.Context, filter string) ([]GoogleSubscription,
 		}
 		page = resp.NextPageToken
 	}
+}
+
+// operation is a long-running operation.
+//
+// create, patch, reactivate and delete all return one of these rather than the
+// subscription — verified against the v1 discovery document, which lists
+// Operation as the response type for all four and Subscription only for get.
+// Unmarshalling the Operation straight into a GoogleSubscription is silently
+// wrong in the worst way: `name` comes back as "operations/<id>", so we would
+// store an operation id as the subscription name, find no state and mark it
+// failed, and replace the subscription on every pass while reporting success.
+type operation struct {
+	Name     string          `json:"name"`
+	Done     bool            `json:"done"`
+	Error    *statusError    `json:"error"`
+	Response json.RawMessage `json:"response"`
+}
+
+// statusError is google.rpc.Status.
+type statusError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func (s *statusError) Error() string {
+	return fmt.Sprintf("google reported code %d: %s", s.Code, s.Message)
+}
+
+// opTimeout bounds how long we wait for an operation to finish. Bounded because
+// a reconciliation pass runs on a timer: waiting forever means the next pass
+// never starts, and a subscription that stops being reconciled stops being
+// renewed.
+const opTimeout = 90 * time.Second
+
+// await waits for an operation and returns the subscription it produced.
+//
+// An empty response is not an error: delete's response is Empty, and
+// validateOnly returns a done operation with nothing in it. Callers that need a
+// subscription check for one; callers that do not, do not.
+func (e *Events) await(ctx context.Context, op operation) (GoogleSubscription, error) {
+	deadline := time.Now().Add(opTimeout)
+	wait := 250 * time.Millisecond
+	for !op.Done {
+		if time.Now().After(deadline) {
+			return GoogleSubscription{}, fmt.Errorf(
+				"operation %s did not finish within %s; it may yet succeed, "+
+					"so the next reconciliation must find it rather than create a second one",
+				op.Name, opTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return GoogleSubscription{}, ctx.Err()
+		case <-time.After(wait):
+		}
+		if wait < 4*time.Second {
+			wait *= 2
+		}
+		var next operation
+		if err := e.do(ctx, http.MethodGet, "/"+strings.TrimPrefix(op.Name, "/"), nil, &next); err != nil {
+			return GoogleSubscription{}, fmt.Errorf("polling operation %s: %w", op.Name, err)
+		}
+		next.Name = op.Name // an in-progress poll may omit it
+		op = next
+	}
+	if op.Error != nil {
+		return GoogleSubscription{}, op.Error
+	}
+	var out GoogleSubscription
+	if len(op.Response) == 0 || string(op.Response) == "{}" {
+		return out, nil
+	}
+	if err := json.Unmarshal(op.Response, &out); err != nil {
+		return out, fmt.Errorf("reading the subscription out of operation %s: %w", op.Name, err)
+	}
+	return out, nil
 }
 
 func asAPIError(err error, target **APIError) bool {

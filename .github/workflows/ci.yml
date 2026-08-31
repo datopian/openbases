@@ -190,6 +190,13 @@ jobs:
       - name: per-bead budgets resolve and sum at the same level
         run: psql -v ON_ERROR_STOP=1 -f test/integration/budgets.sql
 
+      # The allow-list is the boundary for Workspace events, and the reconciler
+      # reads it through SECURITY DEFINER functions because RLS would otherwise
+      # show it an empty allow-list — which it would act on by deleting every
+      # subscription that exists.
+      - name: workspace event sources are allow-listed and read through the system path
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/workspace_events.sql
+
       # Personal API tokens: who can see whose, revocation taking effect on the
       # next lookup, and the CHECK constraints biting. The constraints are the
       # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes

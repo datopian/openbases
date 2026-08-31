@@ -8,10 +8,17 @@ import (
 
 var now = time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 
-var want = []string{
+var driveTypes = []string{
 	"google.workspace.drive.file.v3.created",
 	"google.workspace.drive.file.v3.trashed",
 }
+
+var meetTypes = []string{
+	"google.workspace.meet.conference.v2.ended",
+	"google.workspace.meet.transcript.v2.ended",
+}
+
+var want = Wants{KindDrive: driveTypes, KindMeet: meetTypes}
 
 func src(id string, enabled bool) Source {
 	return Source{ID: id, Kind: KindDrive, ExternalID: "0AC" + id, Name: id,
@@ -25,7 +32,7 @@ func sub(id string, state State, expiresIn time.Duration, types ...string) Subsc
 		s.ExpiresAt = now.Add(expiresIn)
 	}
 	if len(types) == 0 {
-		s.EventTypes = want
+		s.EventTypes = driveTypes
 	}
 	return s
 }
@@ -110,7 +117,7 @@ func TestDriftedEventTypesForceAReplacement(t *testing.T) {
 // Order and duplicates are not drift. Treating them as drift would replace a
 // working subscription on every run.
 func TestOrderAndDuplicatesAreNotDrift(t *testing.T) {
-	reordered := []string{want[1], want[0], want[0]}
+	reordered := []string{driveTypes[1], driveTypes[0], driveTypes[0]}
 	ds, _ := Reconcile([]Source{src("a", true)},
 		[]Subscription{sub("a", StateActive, 5*24*time.Hour, reordered...)}, want, now, DefaultPolicy)
 	if got := only(t, ds, "a").Action; got != ActionNone {

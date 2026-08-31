@@ -1,0 +1,26 @@
+[Unit]
+Description=Renew Workgraph Google Workspace subscriptions
+Documentation=https://github.com/datopian/company-workgraph#wp-h1
+
+[Timer]
+# Hourly, and the interval is load-bearing rather than a preference.
+#
+# Google expires a Workspace Events subscription within days, and the
+# reconciler refuses a policy whose renewal window does not exceed its own
+# interval — because a subscription that expires between two runs that each saw
+# it as healthy stops delivering with nothing to notice. DefaultPolicy renews
+# inside 24 hours, so this must stay well under that. Raising it above 24h makes
+# the reconciler refuse to run at all, which is the intended failure: loudly
+# broken beats quietly deaf.
+OnBootSec=3min
+OnUnitActiveSec=1h
+
+RandomizedDelaySec=300
+
+# A missed run — host powered off, unit masked during maintenance — runs once on
+# the next boot. Subscriptions expire on wall-clock time, so a skipped run is
+# lost renewal time rather than a delayed batch.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
