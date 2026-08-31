@@ -84,10 +84,23 @@ monitor_agent_health_silence: 30m
 # is listed anyway because a pass that ran late still reports it, and because the
 # absence of any monitor output is then a documented signal rather than a
 # puzzle.
+# workgraph-workspace.timer is declared conditionally, on the same terms the
+# role enables it: a permanently red alert for a thing deliberately switched off
+# is how a whole channel gets muted.
+#
+# Declaring it matters even though the workspace_sources check exists. That check
+# notices a timer that has stopped only once a subscription drifts within twelve
+# hours of expiry — up to six days later. This notices within one monitor pass,
+# which is the difference between "the renewer is down" and "the renewer has been
+# down long enough to nearly lose a source".
 monitor_services: >-
   control-api.service,workgraph-worker.service,workgraph-reconcile.timer,
   postgresql.service,wg-monitor.timer,wg-backup-postgres.timer,wg-backup-beads.timer
   {{ ',wg-costimport.timer' if (costimport_cf_token | default('') | length > 0) else '' }}
+  {{ ',workgraph-workspace.timer'
+     if (control_api_google_subject | default('') | length > 0
+         and control_api_google_topic | default('') | length > 0)
+     else '' }}
 
 # The AI Gateways whose import must stay fresh (wg-7jz).
 #
