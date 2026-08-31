@@ -159,6 +159,19 @@ func LoadControlAPI() (ControlAPI, error) {
 		GitHubAppID:          os.Getenv("WG_GITHUB_APP_ID"),
 		GitHubInstallationID: os.Getenv("WG_GITHUB_INSTALLATION_ID"),
 		GitHubPrivateKeyPath: os.Getenv("WG_GITHUB_PRIVATE_KEY_PATH"),
+
+		// Both were declared, used by cmd/control-api to decide whether to
+		// register the Pub/Sub push endpoint, and never read from anywhere. So
+		// the audience was always empty, the endpoint was never registered, and
+		// every push would have fallen through to the authenticated mux and
+		// been refused — while the deployed environment file set the variables
+		// and the code that consumes them looked correct.
+		//
+		// A field declared but never populated fails in the worst direction:
+		// the guard "register only when an audience is configured" reads as
+		// careful and behaves as "never register".
+		PubSubPushAudience:       os.Getenv("WG_PUBSUB_PUSH_AUDIENCE"),
+		PubSubPushServiceAccount: os.Getenv("WG_PUBSUB_PUSH_SERVICE_ACCOUNT"),
 	}
 
 	var errs []error

@@ -114,6 +114,14 @@ jobs:
       - name: integration tests exercise RLS rather than bypassing it
         run: python3 scripts/check_rls_tests.py
 
+      # A variable written into a deployed environment file that no Go file
+      # mentions is a setting that does nothing. WG_PUBSUB_PUSH_AUDIENCE was in
+      # that state for a week: the file set it, the struct declared it, the
+      # consumer checked it, and nothing read it — so the Pub/Sub push endpoint
+      # was never registered and every delivery was refused.
+      - name: every deployed environment variable is read by the code
+        run: python3 scripts/check_env_wired.py
+
       # Applying against a real PostgreSQL is what catches a migration that
       # parses but cannot run.
       - name: apply migrations to an empty database
