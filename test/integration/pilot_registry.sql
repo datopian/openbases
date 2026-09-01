@@ -132,25 +132,45 @@ SET LOCAL ROLE workgraph_app;
 \ir assert_app_role.sql
 
 DO $$
-DECLARE n integer; anu text; osahon text; outsider text;
+DECLARE n integer; anu text; lead_nged text; outsider text;
 BEGIN
-  SELECT id::text INTO anu      FROM users WHERE primary_email = 'anuar.ustayev@datopian.com';
-  SELECT id::text INTO osahon   FROM users WHERE primary_email = 'osahon.okungbowa@datopian.com';
-  SELECT id::text INTO outsider FROM users WHERE primary_email = 'outsider@datopian.com';
+  SELECT id::text INTO anu       FROM users WHERE primary_email = 'anuar.ustayev@datopian.com';
+  SELECT id::text INTO outsider  FROM users WHERE primary_email = 'outsider@datopian.com';
+  -- The nged lead is resolved from the project rather than named. It used to be
+  -- Osahon and is now Demenech (wg-8yv.37), and a test that hard-codes the
+  -- person asserts last quarter's org chart.
+  SELECT p.primary_owner_id::text INTO lead_nged
+    FROM projects p WHERE p.slug = 'nged';
 
   -- Anu holds organisation_admin, so the RLS policy lets him see everything.
   -- Note the mechanism: his grant satisfies the policy. The application does
   -- not skip the filter for administrators.
+  -- Named, not counted. The literal was 3 and it failed the moment a fourth
+  -- project was added -- a test breaking on an unrelated change rather than on
+  -- the property it checks. The property is "an admin sees every declared
+  -- project", and naming them says that without needing a total to compare to.
   PERFORM set_config('workgraph.user_id', anu, true);
-  SELECT count(*) INTO n FROM projects;
-  IF n <> 3 THEN RAISE EXCEPTION 'organisation admin should see 3 projects, saw %', n; END IF;
+  SELECT count(*) INTO n FROM projects
+   WHERE slug IN ('portaljs-oss', 'datopian-products', 'nged', 'cdt');
+  IF n <> 4 THEN
+    RAISE EXCEPTION 'organisation admin saw % of the 4 declared projects', n;
+  END IF;
 
-  -- Osahon leads nged and is a member of nothing else.
-  PERFORM set_config('workgraph.user_id', osahon, true);
+  -- The nged lead sees nged and not a project they are not a member of.
+  PERFORM set_config('workgraph.user_id', lead_nged, true);
   SELECT count(*) INTO n FROM projects WHERE slug = 'nged';
   IF n <> 1 THEN RAISE EXCEPTION 'the nged lead cannot see nged'; END IF;
   SELECT count(*) INTO n FROM projects WHERE slug = 'datopian-products';
   IF n <> 0 THEN RAISE EXCEPTION 'the nged lead can see a project they are not a member of'; END IF;
+
+  -- And not the OTHER client engagement. Two restricted client projects now
+  -- exist, so "a client project is invisible to non-members" has to hold
+  -- between them, not just against an outsider -- that is the case a single
+  -- client project could never test.
+  SELECT count(*) INTO n FROM projects WHERE slug = 'cdt';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'the nged lead can see the cdt client engagement';
+  END IF;
 
   -- The acceptance criterion. An authenticated non-member must not see the
   -- client engagement at all — not its name, not that it exists.
@@ -158,8 +178,8 @@ BEGIN
   SELECT count(*) INTO n FROM projects;
   IF n <> 0 THEN RAISE EXCEPTION 'a non-member saw % project(s)', n; END IF;
 
-  SELECT count(*) INTO n FROM projects WHERE slug = 'nged';
-  IF n <> 0 THEN RAISE EXCEPTION 'the restricted client project is visible to a non-member'; END IF;
+  SELECT count(*) INTO n FROM projects WHERE slug IN ('nged', 'cdt');
+  IF n <> 0 THEN RAISE EXCEPTION 'a restricted client project is visible to a non-member'; END IF;
 
   -- Its repositories name the client too, so they must be unreachable as well.
   SELECT count(*) INTO n FROM project_repositories;
