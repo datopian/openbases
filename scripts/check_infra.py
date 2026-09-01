@@ -138,6 +138,115 @@ def check_dns_records_are_declared() -> None:
         problems.append("this configuration must not manage the zone itself, only records in it")
 
 
+# The Access bypass policies that are allowed to exist, and why each one is not
+# a hole. A bypass removes the outer gate entirely for whatever application
+# carries it, so ADDING A NAME HERE IS A SECURITY DECISION, not configuration:
+# it is a claim that something else authenticates the traffic, and the
+# reviewer's job is to ask what.
+#
+#   webhook_bypass      GitHub cannot complete an Access challenge. The origin
+#                       verifies X-Hub-Signature-256 with a constant-time
+#                       compare before parsing anything (plan section 9.3).
+#                       Here the bypass IS the boundary.
+#   pubsub_push_bypass  Google Pub/Sub cannot either. It attaches an OIDC token
+#                       that the receiver verifies against Google's public keys,
+#                       the issuer, and an audience bound to this exact endpoint
+#                       (ADR-0026). The node holds no secret that could forge a
+#                       delivery.
+#   api_token_bypass    A tool holding a personal API token, on its own hostname
+#                       so the exception never reaches the human interface
+#                       (wg-p4h.1).
+ALLOWED_BYPASS_POLICIES = {"webhook_bypass", "pubsub_push_bypass", "api_token_bypass"}
+
+# Applications where a bypass legitimately covers a whole host rather than one
+# path, because the host exists for exactly that purpose.
+BYPASS_WHOLE_HOST_OK = {"api"}
+
+
+def _resource_bodies(text: str, kind: str):
+    r"""Yield (name, body) for each resource of `kind`, brace-matched.
+
+    Brace-matched rather than a lazy `.*?\n\}`: a policy body contains nested
+    blocks (include, require), so the non-greedy form stops at the first nested
+    close and misses anything declared after it -- including a `decision` line.
+    That is not a theoretical difference; it is the whole reason a bypass could
+    hide from a simpler check.
+    """
+    for m in re.finditer(r'resource\s+"%s"\s+"(\w+)"\s*\{' % re.escape(kind), text):
+        depth, start = 0, m.end() - 1
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    yield m.group(1), text[start + 1 : i]
+                    break
+
+
+def check_access_bypasses_are_declared() -> None:
+    """Only bypass Access where something else authenticates, and never broadly.
+
+    The DNS guard above exists because the deploy token can write any record in
+    the zone. This is the same argument applied to the larger of the two powers:
+    a `cloudflare_zero_trust_access_policy` with decision = "bypass" removes the
+    outer gate for its application, it is a few lines of HCL, and it reads like
+    configuration rather than like a decision.
+
+    Not hypothetical. When this check was proposed there were two bypasses and
+    the bead predicted "a third would pass CI silently today". A third --
+    pubsub_push_bypass, for the Google Workspace event receiver -- was added on
+    2026-08-31 and CI said nothing. That is exactly the gap.
+    """
+    main = (MODULE / "main.tf").read_text()
+
+    bypass_policies = {
+        name for name, body in _resource_bodies(main, "cloudflare_zero_trust_access_policy")
+        if re.search(r'decision\s*=\s*"bypass"', body)
+    }
+
+    unexpected = bypass_policies - ALLOWED_BYPASS_POLICIES
+    if unexpected:
+        problems.append(
+            f"undeclared Access bypass policies: {sorted(unexpected)}. A bypass removes "
+            "the outer gate for its application; add the name to ALLOWED_BYPASS_POLICIES "
+            "only after deciding what else authenticates that traffic."
+        )
+
+    # A name listed but absent means the list has drifted from the module, and a
+    # stale entry silently pre-authorises whatever takes that name next.
+    missing = ALLOWED_BYPASS_POLICIES - bypass_policies
+    if missing:
+        problems.append(
+            f"ALLOWED_BYPASS_POLICIES names policies that do not exist: {sorted(missing)}. "
+            "Remove them, or the list pre-authorises whatever takes the name next."
+        )
+
+    # An application carrying a bypass must be narrow. On a wildcard domain the
+    # exception extends to every name the wildcard matches, which is how one
+    # unauthenticated endpoint becomes an unauthenticated site.
+    for app, body in _resource_bodies(main, "cloudflare_zero_trust_access_application"):
+        carries = [p for p in bypass_policies
+                   if re.search(r"cloudflare_zero_trust_access_policy\.%s\b" % re.escape(p), body)]
+        if not carries:
+            continue
+        dom = re.search(r'domain\s*=\s*"([^"]*)"', body)
+        if not dom:
+            continue
+        domain = dom.group(1)
+        if "*" in domain:
+            problems.append(
+                f"Access application {app!r} carries a bypass on wildcard domain "
+                f"{domain!r}; the exception would extend to every name it matches"
+            )
+        elif "/" not in domain and app not in BYPASS_WHOLE_HOST_OK:
+            problems.append(
+                f"Access application {app!r} carries a bypass over a whole host "
+                f"({domain!r}) rather than one path. Scope it to a path, or record "
+                "the host in BYPASS_WHOLE_HOST_OK with the reason it exists."
+            )
+
+
 def check_tfvars_hold_no_secrets() -> None:
     """Committed tfvars carry environment config, never credentials.
 
@@ -276,6 +385,7 @@ def main() -> int:
         check_nodes_bootstrap_without_inbound,
         check_cloudinit_template_escaping,
         check_dns_records_are_declared,
+        check_access_bypasses_are_declared,
         check_tfvars_hold_no_secrets,
         check_account_level_settings,
         check_spend_limit_not_in_terraform,

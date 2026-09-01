@@ -300,6 +300,12 @@ jobs:
       - name: infrastructure invariants
         run: python3 scripts/check_infra.py
 
+      # A guard that cannot fail is read as evidence while defending nothing.
+      # This asserts the bypass guard refuses each way a bypass could reach
+      # production, and still passes on the real tree.
+      - name: the Access bypass guard fails when it should
+        run: bash test/acceptance/access_bypass_guard.sh
+
       # SOPS encrypts by key NAME, which makes the naming a security boundary.
       # Needs no key material: it reads ciphertext markers, never decrypts.
       - name: encrypted secrets

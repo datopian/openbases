@@ -119,6 +119,7 @@ secrets-check: ## Fail if a credential in infra/secrets is not encrypted
 infra-check: ## Structural guards on the infrastructure security posture
 	@python3 scripts/check_infra.py
 	@python3 scripts/check_env_wired.py
+	@bash test/acceptance/access_bypass_guard.sh
 	@command -v tofu >/dev/null 2>&1 && tofu fmt -recursive -check infra/tofu || echo "  (tofu not installed; formatting not checked)"
 
 e2e: ## Playwright end-to-end tests (WP-F1)
