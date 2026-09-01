@@ -38,6 +38,11 @@ const (
 	// derivative at a broader visibility than its sources. It is a protected,
 	// audited action (plan section 14.3).
 	KnowledgeClassificationDowngrade Action = "knowledge.classification.downgrade"
+	// KnowledgeReview decides on an extracted candidate: accept, edit, reject
+	// or defer. Its own action rather than WorkUpdate, because an accepted
+	// candidate does not become work until WP-H4 -- and rather than
+	// ProjectManage, which is administration.
+	KnowledgeReview Action = "knowledge.review"
 )
 
 // allActions is the closed set of recognised actions.
@@ -47,6 +52,7 @@ var allActions = map[Action]struct{}{
 	AgentStop: {}, RepositoryRead: {}, PullRequestCreate: {}, PullRequestMerge: {},
 	ApprovalDecide: {}, DeploymentExecute: {}, SecretManage: {}, PolicyManage: {},
 	AuditRead: {}, MarketingPublish: {}, KnowledgeClassificationDowngrade: {},
+	KnowledgeReview: {},
 }
 
 // Known reports whether a is a recognised action.

@@ -60,9 +60,15 @@ var routeActions = map[string]routeAction{
 	// through to a query that returns nothing, which reads as a bug rather
 	// than as a refusal.
 	"GET /v1/projects/{slug}/events": {Action: authz.ProjectRead},
-	"GET /v1/ask":                    {Action: authz.OrganisationRead},
-	"GET /v1/inbox":                  {Action: authz.OrganisationRead},
-	"GET /v1/inbox/branches":         {Action: authz.OrganisationRead},
+	// Reading the queue is reading project material; RLS then scopes the rows.
+	"GET /v1/candidates": {Action: authz.ProjectRead},
+	// Deciding writes to company memory, so it is a write action rather than a
+	// read one -- and the policy additionally refuses a review recorded under
+	// anybody but the caller.
+	"POST /v1/candidates/{id}/review": {Action: authz.KnowledgeReview},
+	"GET /v1/ask":                     {Action: authz.OrganisationRead},
+	"GET /v1/inbox":                   {Action: authz.OrganisationRead},
+	"GET /v1/inbox/branches":          {Action: authz.OrganisationRead},
 
 	// Attention items: a person's own inbox, scoped by row-level security to
 	// rows they already hold. Updating your own inbox is not an organisational

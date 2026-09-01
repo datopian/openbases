@@ -211,6 +211,11 @@ jobs:
       - name: a project's Workspace events are visible to its members and nobody else
         run: psql -v ON_ERROR_STOP=1 -f test/integration/workspace_event_visibility.sql
 
+      # A review decides what enters company memory, so who may record one --
+      # and under whose name -- is a security property, not a workflow detail.
+      - name: only a project's members may review its candidates, as themselves
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/knowledge_review.sql
+
       # Personal API tokens: who can see whose, revocation taking effect on the
       # next lookup, and the CHECK constraints biting. The constraints are the
       # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes

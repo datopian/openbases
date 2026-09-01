@@ -285,6 +285,11 @@ var Ungrantable = map[authz.Action]struct{}{
 	authz.PolicyManage:                     {},
 	authz.MarketingPublish:                 {},
 	authz.KnowledgeClassificationDowngrade: {},
+	// A reviewer is always a named human (plan section 14.4, and the reason
+	// knowledge_reviews.reviewer_user_id references users). A token is held by
+	// a program, and a program accepting its own extractor's output into
+	// company memory is the loop this workflow exists to break.
+	authz.KnowledgeReview: {},
 }
 
 // ValidateScopes refuses any action a token may never carry.

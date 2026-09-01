@@ -1143,6 +1143,71 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, events)
 	})
 
+	// The knowledge review queue (WP-H3, plan section 4.6).
+	//
+	// Review is a first-class workflow, not a background job, so the card
+	// carries what a decision needs: the statement, its type and confidence,
+	// the cited excerpts, who was in the meeting, and whether the source
+	// contained instruction-shaped text.
+	authed.HandleFunc("GET /v1/candidates", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if store == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		limit := 50
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+		cards, err := store.PendingCandidates(r.Context(), id.UserID, limit)
+		if err != nil {
+			log.Error("reading the review queue", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, cards)
+	})
+
+	// Deciding on one candidate.
+	authed.HandleFunc("POST /v1/candidates/{id}/review", func(w http.ResponseWriter, r *http.Request) {
+		ident, _ := authn.FromContext(r.Context())
+		if store == nil || ident.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		var body struct {
+			Decision string `json:"decision"`
+			Reason   string `json:"reason"`
+			Edited   string `json:"edited_statement"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed body"})
+			return
+		}
+		status, err := store.Review(r.Context(), ident.UserID, r.PathValue("id"),
+			body.Decision, body.Reason, body.Edited)
+		switch {
+		case errors.Is(err, domain.ErrNotPending):
+			// 409, not 400. Two reviewers reaching the queue together is
+			// expected; the second one being told is the difference between a
+			// race and a silently lost decision.
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "this candidate has already been decided"})
+			return
+		case errors.Is(err, domain.ErrNotFound):
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+			return
+		case err != nil:
+			// The domain errors here name what is missing rather than a
+			// constraint, so they are safe and useful to return.
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": status})
+	})
+
 	authed.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{
 			"error": "not implemented",
