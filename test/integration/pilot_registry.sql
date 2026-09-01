@@ -31,8 +31,26 @@ BEGIN
     NULL;  -- refused, as intended
   END;
 
-  SELECT count(*) INTO n FROM projects;
-  IF n <> 3 THEN RAISE EXCEPTION 'expected 3 pilot projects, found %', n; END IF;
+  -- Named rather than counted. A bare count broke the moment a fourth project
+  -- was added and said only "found 4", which tells a reader nothing about which
+  -- one is unexpected. Naming them keeps the property that mattered -- adding a
+  -- project is a deliberate edit here -- and makes the failure legible.
+  --
+  -- portaljs-oss and datopian-products came from 0009. nged and cdt are the two
+  -- client engagements; cdt was added 2026-09-01 (wg-8yv.37).
+  SELECT count(*) INTO n FROM projects
+   WHERE slug NOT IN ('portaljs-oss', 'datopian-products', 'nged', 'cdt');
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'undeclared project(s): %',
+      (SELECT string_agg(slug, ', ') FROM projects
+        WHERE slug NOT IN ('portaljs-oss', 'datopian-products', 'nged', 'cdt'));
+  END IF;
+
+  SELECT count(*) INTO n FROM projects
+   WHERE slug IN ('portaljs-oss', 'datopian-products', 'nged', 'cdt');
+  IF n <> 4 THEN
+    RAISE EXCEPTION 'a declared project is missing: found % of 4', n;
+  END IF;
 
   -- ------------------------------------------------------------------
   -- The operators decided in wg-8yv.37 are the ones actually wired
