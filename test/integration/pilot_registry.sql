@@ -123,6 +123,14 @@ BEGIN
   VALUES (org, 'Outsider', 'outsider@datopian.com')
   RETURNING id INTO outsider;
 
+  -- Stashed now, because it cannot be looked up later. The block below runs as
+  -- workgraph_app, where `projects` is behind row-level security and no identity
+  -- is set yet -- so resolving the lead there returns NULL and every assertion
+  -- about them then fails for the wrong reason. (It did.)
+  PERFORM set_config('test.lead_nged',
+                     (SELECT primary_owner_id::text FROM projects WHERE slug = 'nged'),
+                     false);
+
   RAISE NOTICE 'seed assertions passed';
 END
 $$;
@@ -136,11 +144,13 @@ DECLARE n integer; anu text; lead_nged text; outsider text;
 BEGIN
   SELECT id::text INTO anu       FROM users WHERE primary_email = 'anuar.ustayev@datopian.com';
   SELECT id::text INTO outsider  FROM users WHERE primary_email = 'outsider@datopian.com';
-  -- The nged lead is resolved from the project rather than named. It used to be
-  -- Osahon and is now Demenech (wg-8yv.37), and a test that hard-codes the
-  -- person asserts last quarter's org chart.
-  SELECT p.primary_owner_id::text INTO lead_nged
-    FROM projects p WHERE p.slug = 'nged';
+  -- Read from the setting stashed above rather than named. The lead used to be
+  -- Osahon and is now Demenech (wg-8yv.37); a test that hard-codes the person
+  -- asserts an org chart rather than a policy.
+  lead_nged := current_setting('test.lead_nged', true);
+  IF lead_nged IS NULL OR lead_nged = '' THEN
+    RAISE EXCEPTION 'the nged lead was not stashed before the role drop';
+  END IF;
 
   -- Anu holds organisation_admin, so the RLS policy lets him see everything.
   -- Note the mechanism: his grant satisfies the policy. The application does
