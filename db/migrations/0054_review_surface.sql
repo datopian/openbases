@@ -55,12 +55,6 @@ CREATE POLICY source_snapshots_read ON source_snapshots FOR SELECT
          WHERE s.id = source_snapshots.source_id
            AND can_read_source(s.project_id, s.visibility)));
 
--- Sources themselves. The candidate policies already join through this table,
--- but the table itself had no policy, so the source row was readable when the
--- candidate was not.
-CREATE POLICY knowledge_sources_read ON knowledge_sources FOR SELECT
-    USING (can_read_source(project_id, visibility));
-
 -- Applying a decision to the candidate.
 --
 -- A function rather than an UPDATE in the handler, because the decision and the
