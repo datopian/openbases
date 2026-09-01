@@ -54,6 +54,12 @@ var routeActions = map[string]routeAction{
 	"GET /v1/projects":               {Action: authz.ProjectRead},
 	"GET /v1/projects/{slug}":        {Action: authz.ProjectRead},
 	"GET /v1/projects/{slug}/detail": {Action: authz.ProjectRead},
+	// Reading a project's Workspace events is reading the project. The rows
+	// themselves are then filtered by can_read_source, so this action and the
+	// policy have to agree -- naming a weaker action here would let a token
+	// through to a query that returns nothing, which reads as a bug rather
+	// than as a refusal.
+	"GET /v1/projects/{slug}/events": {Action: authz.ProjectRead},
 	"GET /v1/ask":                    {Action: authz.OrganisationRead},
 	"GET /v1/inbox":                  {Action: authz.OrganisationRead},
 	"GET /v1/inbox/branches":         {Action: authz.OrganisationRead},

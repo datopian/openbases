@@ -552,6 +552,55 @@
         ]
       }
     },
+    "/v1/projects/{slug}/events": {
+      "get": {
+        "summary": "Google Workspace events belonging to a project",
+        "operationId": "get_v1_projects_slug_events",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Meetings and file changes the platform noticed, most recent first. Sources are linked to a project one at a time: a Meet space belongs to exactly one, while a shared drive serves many and its events are not claimed here. Metadata only \u2014 the raw Pub/Sub payload is not returned.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/v1/tokens": {
       "get": {
         "summary": "List the caller's tokens",

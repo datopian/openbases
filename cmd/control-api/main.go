@@ -1109,6 +1109,40 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, d)
 	})
 
+	// What the platform noticed about a project, from Google Workspace (WP-H3).
+	//
+	// Exists because "the kick-off was captured" and "you can see that it was"
+	// were different things: the event tables had row-level security forced
+	// with no policies at all, so the only read path was the SECURITY DEFINER
+	// functions the reconciler uses, and no person could reach them.
+	authed.HandleFunc("GET /v1/projects/{slug}/events", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if store == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		limit := 100
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+		events, err := store.ProjectEventsBySlug(r.Context(), id.UserID, r.PathValue("slug"), limit)
+		if errors.Is(err, domain.ErrNotFound) {
+			// Not found, not forbidden, and the same answer either way -- a
+			// caller who may not see a restricted project must not learn it
+			// exists by being told they are not allowed to look at it.
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+			return
+		}
+		if err != nil {
+			log.Error("reading project events", "slug", r.PathValue("slug"), "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, events)
+	})
+
 	authed.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]any{
 			"error": "not implemented",
