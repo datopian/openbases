@@ -102,7 +102,31 @@ Workgraph does not own the Cloudflare account. It carries roughly fifty Datopian
 
 **Stops it:** the town is torn down after each dispatch in a trap rather than on the happy path; an age-based reaper kills agents past 45 minutes; the polling health agent was replaced by a program that makes no model calls; per-role metadata makes spend attributable. Budget exhaustion produces no retry storm — measured: 37 requests over 4.6 minutes, all 429, **$0.0000 spent**.
 
-**Gaps:** AI Gateway tokens are account-scoped, so a per-gateway token reaches all three (`wg-4r2`). Writing a spend rule resets its counter, so the 30-day window never accumulated until fixed (`wg-18a`) — and reusing a rule id serves a stale ceiling that took staging down (`wg-1v8`). There is still no cross-gateway ceiling we own (`wg-o7t`).
+**Gaps:** AI Gateway tokens are account-scoped, so a per-gateway token reaches all three (`wg-4r2`) — and because the same provider key is stored on all three, there is no distinct client credential that the split was protecting in the first place. Writing a spend rule resets its counter, so the 30-day window never accumulated until fixed (`wg-18a`) — and reusing a rule id serves a stale ceiling that took staging down (`wg-1v8`). There is still no cross-gateway ceiling we own (`wg-o7t`).
+
+### 9b. Client prompt content in a shared log store
+
+**Stops it:** `internal/inference` sends `cf-aig-collect-log-payload: false` by
+default, so request and response bodies are not stored. Metadata — token counts,
+model, provider, status, cost, duration — still is, which is what
+`scripts/cost_by_role.py` and this pack read. The zero value of
+`Client.CollectPayloads` is the safe one, so a caller that forgets gets privacy
+rather than exposure.
+
+**The problem it addresses:** per-domain gateways do not separate logs. Every AI
+Gateway in the account writes to ONE store, and on 2026-09-01 that store held
+nine gateways, six of them unrelated Datopian projects (`openclaw-gateway-prod`,
+`datahub-sales`, `open-design`, `flowershow`). Client-domain prompts sat in the
+same store as those. There is no per-gateway store to move to — the store is an
+account-level object (`wg-90f`).
+
+**Gaps:** this covers Workgraph-authored inference through `internal/inference`.
+Agent runs go through the same gateways via the runtime's own HTTP client
+(Claude Code, OpenCode), where the header has to be set in the cell's
+configuration rather than in our code — not yet done, and it is the larger share
+of traffic. `zdr` is not the mitigation and never was: Cloudflare documents that
+it "does not control AI Gateway logging" and it applies only to Unified Billing
+with Cloudflare-managed credentials.
 
 ### 10. Insider or privilege escalation
 

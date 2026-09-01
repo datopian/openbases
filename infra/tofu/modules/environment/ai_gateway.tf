@@ -23,7 +23,12 @@
 #
 # So a token stolen from an open-source execution node can spend the client
 # domain's budget and forge which domain spent it. What the split does provide
-# is a separate spend ceiling, separate analytics and separate logs per domain.
+# is a separate spend ceiling and separate analytics per domain. NOT separate
+# logs — every gateway in the account writes to one shared store (wg-90f, and
+# the store_id note below) — and NOT separate credentials, because an AI Gateway
+# token cannot be scoped to one gateway and the same provider key is stored on
+# all three (wg-4r2). The split bounds blast radius and attributes spend. It is
+# not a security boundary, and the words here used to imply that it was.
 #
 # It remains better than putting provider keys on the nodes: the Anthropic key
 # never leaves Cloudflare, the token is revocable centrally without rotating it,
@@ -55,13 +60,28 @@ resource "cloudflare_ai_gateway" "cell" {
   # crash dumps.
   authentication = true
 
-  # Zero data retention is deliberately OFF, not merely left at its default.
+  # Zero data retention is deliberately OFF, and the reason recorded here before
+  # was WRONG in both halves. Corrected against Cloudflare's documentation
+  # (wg-90f) rather than left as a plausible-sounding comment:
   #
-  # It would stop Cloudflare storing request and response bodies, which sounds
-  # right for the client domain — but it also removes the log record that the
-  # evidence pack and every spend investigation depend on. Prompt and response
-  # capture is disclosed to the pilot participants; silently losing the audit
-  # trail is not the trade to make here (plan section 20.2).
+  #   "ZDR does not control AI Gateway logging. To disable request/response
+  #    logging in AI Gateway, update the logging settings separately."
+  #
+  # So zdr does NOT stop Cloudflare storing bodies, and turning it on would NOT
+  # have removed the audit trail. It is an upstream-provider property: it routes
+  # traffic through provider endpoints that do not retain, and it applies only
+  # to Unified Billing requests using Cloudflare-managed credentials — not BYOK,
+  # not other AI Gateway requests. It was never the lever for the shared-log
+  # problem it was being weighed against.
+  #
+  # Left false because the property it does buy — upstream non-retention at
+  # OpenAI and Anthropic — is not what the pilot needs, and it silently falls
+  # back to the non-ZDR configuration for any provider that lacks support,
+  # which is a guarantee that cannot be relied on.
+  #
+  # The lever that DOES work is per-request: cf-aig-collect-log-payload: false
+  # keeps the metadata and drops the bodies. internal/inference sets it by
+  # default; see the note on Client.CollectPayloads.
   zdr = false
 
   # Workers AI billing, declared for the same reason the log settings below are.
@@ -88,6 +108,23 @@ resource "cloudflare_ai_gateway" "cell" {
   log_management_strategy = "DELETE_OLDEST"
   logpush                 = false
 
+  # ONE STORE FOR NINE GATEWAYS, six of them other projects.
+  #
+  # This attribute is why the split below is not a logging boundary. Cloudflare
+  # assigns a store per account, not per gateway, and there is no per-gateway
+  # store to move to. Observed 2026-09-01, all writing to
+  # 10ba352dd98c4f2db387148e7313e451:
+  #
+  #   workgraph-staging-oss, -internal, -client   ours
+  #   openclaw-gateway-prod, datahub-sales,
+  #   open-design, flowershow                     unrelated Datopian projects
+  #
+  # So request and response bodies from the client domain sit in the same store
+  # as four other projects' bodies, and anyone who can read the store reads all
+  # of them. The mitigation is to stop putting bodies there at all
+  # (cf-aig-collect-log-payload: false, set by internal/inference), not to try to
+  # separate the store.
+  #
   # The log store, declared for exactly the reason the block above is declared.
   #
   # Cloudflare assigns a store on create and this attribute was never declared,
