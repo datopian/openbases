@@ -14,6 +14,8 @@ DESC = {
  "GET /v1/projects": ("Projects the caller can see", ""),
  "GET /v1/projects/{slug}": ("One project", ""),
  "GET /v1/projects/{slug}/detail": ("A project with repositories and derived signals", "Each signal carries its evidence."),
+ "GET /v1/candidates": ("The knowledge review queue", "Extracted candidates awaiting a decision, oldest first. Each carries the cited source excerpts, the meeting participants, whether the statement was said outright or inferred, and whether the source contained instruction-shaped text \u2014 everything a reviewer needs without a second request."),
+ "POST /v1/candidates/{id}/review": ("Decide on one candidate", "accept, edit_and_accept, reject or defer. A rejection requires a reason and an edit requires the corrected statement, because both are the evaluation data the improvement loop reads. Answers 409 if somebody has already decided. Personal API tokens may not carry knowledge.review: a reviewer is always a named human."),
  "GET /v1/projects/{slug}/events": ("Google Workspace events belonging to a project", "Meetings and file changes the platform noticed, most recent first. Sources are linked to a project one at a time: a Meet space belongs to exactly one, while a shared drive serves many and its events are not claimed here. Metadata only \u2014 the raw Pub/Sub payload is not returned."),
  "GET /v1/ask": ("Ask the chief of staff", "Answers exactly four questions. Called with no q, it returns the supported set rather than guessing — which is the discoverability this endpoint would otherwise lack."),
  "GET /v1/inbox": ("What needs the caller", ""),

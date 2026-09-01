@@ -5,6 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -171,14 +174,45 @@ func TestRefusalTracksAuthzRatherThanACopiedList(t *testing.T) {
 // The Go set and the SQL CHECK must agree, or a scope refused in one place is
 // accepted in the other.
 func TestUngrantableMatchesTheMigration(t *testing.T) {
-	sql, err := os.ReadFile("../../db/migrations/0038_api_tokens.sql")
-	if err != nil {
-		t.Skipf("migration not readable from here: %v", err)
+	// Whichever migration defines the constraint LAST is the authority, not
+	// 0038. Migrations are immutable, so adding a scope means redefining the
+	// CHECK in a new file -- and a test pinned to 0038 reports that correct
+	// change as a mismatch, which is what it did when knowledge.review was
+	// added in 0054.
+	files, err := filepath.Glob("../../db/migrations/*.sql")
+	if err != nil || len(files) == 0 {
+		t.Skipf("migrations not readable from here: %v", err)
 	}
-	body := string(sql)
+	sort.Strings(files)
+
+	var authority, body string
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(b), "api_tokens_scopes_check") &&
+			strings.Contains(string(b), "CHECK (NOT (scopes") {
+			authority, body = filepath.Base(f), string(b)
+		}
+	}
+	if authority == "" {
+		t.Fatal("no migration defines api_tokens_scopes_check; the Go set has no counterpart")
+	}
+
 	for a := range Ungrantable {
 		if !strings.Contains(body, "'"+string(a)+"'") {
-			t.Errorf("%s is ungrantable in Go but absent from the CHECK in 0038_api_tokens.sql", a)
+			t.Errorf("%s is ungrantable in Go but absent from the CHECK in %s", a, authority)
+		}
+	}
+
+	// And the other direction, which the old version never checked: a scope
+	// refused by the database but not by Go surfaces as a constraint violation
+	// instead of a named refusal.
+	for _, m := range regexp.MustCompile(`'([a-z_]+\.[a-z_.]+)'`).FindAllStringSubmatch(
+		body[strings.Index(body, "CHECK (NOT (scopes"):], -1) {
+		if _, ok := Ungrantable[authz.Action(m[1])]; !ok {
+			t.Errorf("%s is refused by %s but grantable in Go", m[1], authority)
 		}
 	}
 }
