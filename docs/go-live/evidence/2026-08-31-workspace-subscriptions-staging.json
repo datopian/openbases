@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-08-31T13:12:00Z",
+  "captured_at": "2026-09-01T16:05:00Z",
   "environment": "staging",
   "bead": "wg-8yv.20",
   "work_package": "WP-H1",
@@ -92,13 +92,13 @@
       },
       {
         "criterion": "the recurring Meet generates a transcript or smart-note event and is discovered automatically",
-        "result": "outstanding",
-        "detail": "The subscription is active for conference.v2.ended and transcript.v2.ended on spaces/FS4Sj-9MIY0B. Cannot be forced: Innovation Team Sync is Mon-Thu and is sometimes skipped or held with transcription off. Awaiting the next held meeting."
+        "result": "pass",
+        "detail": "Proven on a real meeting, 2026-09-01. The CDT internal kick-off (spaces/44KbrlezvqkB, code rtd-siqf-aup) was registered at 08:29 UTC and held that morning; transcript.v2.ended arrived 12:40:59 and conference.v2.ended 12:48:37, both attributed to the source through the subscription that produced them. Nobody told the platform the meeting had happened -- it was discovered."
       }
     ]
   },
   "deliveries": {
-    "note": "The full chain, proven end to end: Drive change -> Workspace Events -> Pub/Sub -> OIDC-signed push -> Cloudflare Access bypass -> receiver -> attributed receipt. The created event was published at 12:08 while push authentication was still misconfigured; Pub/Sub retried it and it arrived at 12:59 once the OIDC token and both IAM bindings were in place, which also demonstrates that a delivery is not lost while the path is being repaired.",
+    "note": "The full chain, proven end to end: Drive change -> Workspace Events -> Pub/Sub -> OIDC-signed push -> Cloudflare Access bypass -> receiver -> attributed receipt. The created event was published at 12:08 while push authentication was still misconfigured; Pub/Sub retried it and it arrived at 12:59 once the OIDC token and both IAM bindings were in place, which also demonstrates that a delivery is not lost while the path is being repaired. Meet added 2026-09-01: the kick-off was registered before it was held, which is the only order that works -- a subscription delivers nothing about a conference that ended before it existed. Drive totals by then were 43 receipts across All, BizDev and Delivery, most of them organic activity by colleagues rather than probes.",
     "receipts": [
       {
         "target": "googleapis.com/drive/v3/files/1c70_FeU54lxUtUWeTDU6BDiARl8AoESU",
@@ -113,6 +113,18 @@
         "message_id": "21592484310422284",
         "received_at": "2026-08-31T12:59:34.899351+00:00",
         "attributed_to": "All"
+      }
+    ],
+    "meet": [
+      {
+        "event_type": "google.workspace.meet.transcript.v2.ended",
+        "attributed_to": "CDT internal kick-off",
+        "received_at": "2026-09-01T12:40:59Z"
+      },
+      {
+        "event_type": "google.workspace.meet.conference.v2.ended",
+        "attributed_to": "CDT internal kick-off",
+        "received_at": "2026-09-01T12:48:37Z"
       }
     ]
   },
