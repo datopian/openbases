@@ -117,49 +117,65 @@ func (s *Store) PendingCandidates(ctx context.Context, userID string, limit int)
 // ErrNotPending is returned when a candidate has already been decided.
 var ErrNotPending = errors.New("candidate is not pending")
 
-// Review records a decision and moves the candidate.
+// ReviewResult is what a decision did.
+//
+// Published names the destination rather than a boolean, because "accepted"
+// and "became durable memory" are different facts and conflating them is how a
+// reviewer comes to believe a task is tracked when it is not.
+type ReviewResult struct {
+	Status    string `json:"status"`
+	Published string `json:"published"`
+	RecordID  string `json:"record_id,omitempty"`
+}
+
+// Review records a decision, moves the candidate, and publishes it.
 //
 // The two happen in one statement inside the database, because a review
 // recorded without the status moving leaves the candidate in the queue to be
 // reviewed twice, and a status moved without a review recorded loses the reason.
-func (s *Store) Review(ctx context.Context, userID, candidateID, decision, reason, edited string) (string, error) {
+func (s *Store) Review(ctx context.Context, userID, candidateID, decision, reason, edited string) (ReviewResult, error) {
+	var zero ReviewResult
 	decision = strings.TrimSpace(decision)
 	// Checked here as well as by the schema so the caller gets a 400 that says
 	// what is missing, rather than a constraint name.
 	switch decision {
 	case "reject":
 		if strings.TrimSpace(reason) == "" {
-			return "", fmt.Errorf("a rejection needs a reason: it is the evaluation data the improvement loop reads")
+			return zero, fmt.Errorf("a rejection needs a reason: it is the evaluation data the improvement loop reads")
 		}
 	case "edit_and_accept":
 		if strings.TrimSpace(edited) == "" {
-			return "", fmt.Errorf("an edit needs the corrected statement, or the correction is not recoverable")
+			return zero, fmt.Errorf("an edit needs the corrected statement, or the correction is not recoverable")
 		}
 	case "accept", "defer":
 	case "merge":
-		return "", fmt.Errorf("merge needs a target record, and durable records land with WP-H4")
+		return zero, fmt.Errorf("merge needs a target record; merging into an existing one lands with the rest of WP-H4")
 	default:
-		return "", fmt.Errorf("unknown decision %q", decision)
+		return zero, fmt.Errorf("unknown decision %q", decision)
 	}
 
-	var status string
+	var raw []byte
 	err := authz.WithUser(ctx, s.db, userID, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
 			`SELECT review_candidate($1::uuid, $2, $3, $4)`,
-			candidateID, decision, nullIfEmpty(reason), nullIfEmpty(edited)).Scan(&status)
+			candidateID, decision, nullIfEmpty(reason), nullIfEmpty(edited)).Scan(&raw)
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "is not pending") {
-			return "", ErrNotPending
+			return zero, ErrNotPending
 		}
 		// A candidate the caller cannot see is indistinguishable from one that
 		// does not exist, which is the answer a restricted project needs.
 		if strings.Contains(err.Error(), "no rows") {
-			return "", ErrNotFound
+			return zero, ErrNotFound
 		}
-		return "", err
+		return zero, err
 	}
-	return status, nil
+	var out ReviewResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return zero, fmt.Errorf("reading the review result: %w", err)
+	}
+	return out, nil
 }
 
 func nullIfEmpty(s string) any {
