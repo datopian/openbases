@@ -14,8 +14,57 @@ DECLARE n integer; anu uuid; osahon uuid; outsider uuid; org uuid;
 BEGIN
   SELECT id INTO org FROM organisations WHERE slug = 'datopian';
 
+  -- ------------------------------------------------------------------
+  -- One user per email address, compared the way the login compares it
+  -- ------------------------------------------------------------------
+  -- internal/domain/store.go binds a Cloudflare Access identity to a user with
+  -- `lower(primary_email) = lower($1)`, read with QueryRow -- which takes the
+  -- first row and ignores any others. Before 0049 there was no uniqueness at
+  -- all, so two rows differing only in case were legal and a first login would
+  -- bind the identity to whichever Postgres returned. That is an authorisation
+  -- outcome, not a data-tidiness one, which is why it is asserted here.
+  BEGIN
+    INSERT INTO users (organisation_id, display_name, primary_email, status)
+    VALUES (org, 'Case Twin', 'ANUAR.USTAYEV@datopian.com', 'active');
+    RAISE EXCEPTION 'a second user was accepted for an address that differs only in case';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;  -- refused, as intended
+  END;
+
   SELECT count(*) INTO n FROM projects;
   IF n <> 3 THEN RAISE EXCEPTION 'expected 3 pilot projects, found %', n; END IF;
+
+  -- ------------------------------------------------------------------
+  -- The operators decided in wg-8yv.37 are the ones actually wired
+  -- ------------------------------------------------------------------
+  -- Asserted by email, because the address is the Cloudflare Access identity
+  -- and a display name is not a key.
+  SELECT count(*) INTO n
+    FROM projects p
+    JOIN users po ON po.id = p.primary_owner_id
+    JOIN users bo ON bo.id = p.backup_owner_id
+   WHERE (p.slug, po.primary_email, bo.primary_email) IN (
+           ('nged',              'joao.demenech@datopian.com',     'osahon.okungbowa@datopian.com'),
+           ('datopian-products', 'aleksandra.rubaj@datopian.com',  'anuar.ustayev@datopian.com'));
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'the decided pilot operators are not wired: matched % of 2', n;
+  END IF;
+
+  -- projects.*_owner_id records accountability; project_memberships is what
+  -- authorisation reads. A project whose accountable operator cannot see it is
+  -- the failure that keeping both in step exists to prevent.
+  SELECT count(*) INTO n
+    FROM projects p
+   WHERE p.slug IN ('nged', 'datopian-products')
+     AND (NOT EXISTS (SELECT 1 FROM project_memberships m
+                       WHERE m.project_id = p.id AND m.user_id = p.primary_owner_id
+                         AND m.role_name = 'project_lead')
+       OR NOT EXISTS (SELECT 1 FROM project_memberships m
+                       WHERE m.project_id = p.id AND m.user_id = p.backup_owner_id
+                         AND m.role_name = 'backup_operator'));
+  IF n <> 0 THEN
+    RAISE EXCEPTION '% project(s) where the owner columns and the memberships disagree', n;
+  END IF;
 
   -- Every project has two DIFFERENT accountable people. The schema enforces
   -- it; this proves the seed actually exercised that rather than sidestepping.
