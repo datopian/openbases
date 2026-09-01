@@ -191,8 +191,10 @@ func TestUngrantableMatchesTheMigration(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if strings.Contains(string(b), "api_tokens_scopes_check") &&
-			strings.Contains(string(b), "CHECK (NOT (scopes") {
+		// Matched on the CHECK's shape rather than its name: the constraint
+		// was renamed once already, and a guard pinned to a name reports the
+		// rename as a missing constraint.
+		if strings.Contains(string(b), "CHECK (NOT (scopes") {
 			authority, body = filepath.Base(f), string(b)
 		}
 	}
