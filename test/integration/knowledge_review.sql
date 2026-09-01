@@ -40,7 +40,9 @@ SET LOCAL ROLE workgraph_app;
 \ir assert_app_role.sql
 
 DO $$
-DECLARE n integer; status text; cand uuid := current_setting('test.candidate')::uuid;
+-- v_status, not `status`: knowledge_candidates has a column of that name and
+-- plpgsql resolves the variable first, making every later reference ambiguous.
+DECLARE n integer; v_status text; cand uuid := current_setting('test.candidate')::uuid;
 BEGIN
   -- The other client's lead sees nothing of it. Two restricted client projects
   -- exist, so this is the leak that matters more than an outsider's.
@@ -84,9 +86,9 @@ BEGIN
 
   -- A real decision moves the candidate and records the reviewer in one step.
   SELECT review_candidate(cand, 'edit_and_accept', 'tightened the wording',
-                          'A corrected statement') INTO status;
-  IF status <> 'edited_accepted' THEN
-    RAISE EXCEPTION 'status after an edit was %', status;
+                          'A corrected statement') INTO v_status;
+  IF v_status <> 'edited_accepted' THEN
+    RAISE EXCEPTION 'status after an edit was %', v_status;
   END IF;
 
   SELECT count(*) INTO n FROM knowledge_candidates
