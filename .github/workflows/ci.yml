@@ -223,6 +223,12 @@ jobs:
       - name: every table holding source-derived content has a read policy
         run: psql -v ON_ERROR_STOP=1 -f test/integration/derived_content_rls.sql
 
+      # Acceptance has to DO something, and has to do the right thing per type:
+      # durable statements become records with provenance, operational ones are
+      # bound for Beads and say so rather than vanishing.
+      - name: accepting a candidate publishes it with its provenance
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/durable_publication.sql
+
       # Personal API tokens: who can see whose, revocation taking effect on the
       # next lookup, and the CHECK constraints biting. The constraints are the
       # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes

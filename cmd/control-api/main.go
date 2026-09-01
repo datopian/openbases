@@ -1186,7 +1186,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed body"})
 			return
 		}
-		status, err := store.Review(r.Context(), ident.UserID, r.PathValue("id"),
+		result, err := store.Review(r.Context(), ident.UserID, r.PathValue("id"),
 			body.Decision, body.Reason, body.Edited)
 		switch {
 		case errors.Is(err, domain.ErrNotPending):
@@ -1205,7 +1205,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": status})
+		writeJSON(w, http.StatusOK, result)
 	})
 
 	authed.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

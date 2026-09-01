@@ -86,7 +86,7 @@ BEGIN
 
   -- A real decision moves the candidate and records the reviewer in one step.
   SELECT review_candidate(cand, 'edit_and_accept', 'tightened the wording',
-                          'A corrected statement') INTO v_status;
+                          'A corrected statement') ->> 'status' INTO v_status;
   IF v_status <> 'edited_accepted' THEN
     RAISE EXCEPTION 'status after an edit was %', v_status;
   END IF;
