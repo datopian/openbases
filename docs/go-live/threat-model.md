@@ -102,7 +102,9 @@ Workgraph does not own the Cloudflare account. It carries roughly fifty Datopian
 
 **Stops it:** the town is torn down after each dispatch in a trap rather than on the happy path; an age-based reaper kills agents past 45 minutes; the polling health agent was replaced by a program that makes no model calls; per-role metadata makes spend attributable. Budget exhaustion produces no retry storm — measured: 37 requests over 4.6 minutes, all 429, **$0.0000 spent**.
 
-**Gaps:** AI Gateway tokens are account-scoped, so a per-gateway token reaches all three (`wg-4r2`) — and because the same provider key is stored on all three, there is no distinct client credential that the split was protecting in the first place. Writing a spend rule resets its counter, so the 30-day window never accumulated until fixed (`wg-18a`) — and reusing a rule id serves a stale ceiling that took staging down (`wg-1v8`). There is still no cross-gateway ceiling we own (`wg-o7t`).
+**Accepted risk (`wg-4r2`, decided 2026-09-01):** AI Gateway tokens are account-scoped, so a token stolen from the OSS cell reaches all three gateways — it can spend the client domain's budget and use its stored key. The per-domain split is blast-radius bounding and spend attribution, **not isolation**, and the module now says so where someone configuring it will read it.
+
+Accepted rather than fixed because the same provider key is stored on all three gateways, so there is no distinct client credential the split was protecting; and because the alternative — a Worker per domain holding an AI Gateway binding, which is Cloudflare's own guidance — adds a hop to every inference call's latency and failure surface for a property that is already weak for that reason. Separate accounts was rejected earlier as too costly. What the token still buys: the provider key never reaches an execution node, the token is revocable without rotating the Anthropic key, and every request is logged and metered. Writing a spend rule resets its counter, so the 30-day window never accumulated until fixed (`wg-18a`) — and reusing a rule id serves a stale ceiling that took staging down (`wg-1v8`). There is still no cross-gateway ceiling we own (`wg-o7t`).
 
 ### 9b. Client prompt content in a shared log store
 
@@ -120,13 +122,27 @@ nine gateways, six of them unrelated Datopian projects (`openclaw-gateway-prod`,
 same store as those. There is no per-gateway store to move to — the store is an
 account-level object (`wg-90f`).
 
-**Gaps:** this covers Workgraph-authored inference through `internal/inference`.
-Agent runs go through the same gateways via the runtime's own HTTP client
-(Claude Code, OpenCode), where the header has to be set in the cell's
-configuration rather than in our code — not yet done, and it is the larger share
-of traffic. `zdr` is not the mitigation and never was: Cloudflare documents that
-it "does not control AI Gateway logging" and it applies only to Unified Billing
-with Cloudflare-managed credentials.
+**Scope, and what is deliberately outside it:** this covers Workgraph-authored
+inference through `internal/inference` — classification and similar control-plane
+calls, where the bodies carry no evidential value.
+
+Agent runs are **deliberately excluded**, decided 2026-09-01. They reach the same
+gateways through the runtime's own HTTP client, and the mechanism exists to
+suppress them there (`ANTHROPIC_CUSTOM_HEADERS` for Claude Code, `options.headers`
+for OpenCode, both already carrying gateway attribution). It is not used, because
+for an agent run the prompt and response ARE the record of what the agent did,
+which is the thing plan section 20.2 depends on. Losing that for client work
+specifically would remove the audit trail exactly where it is most wanted.
+
+So client-domain agent bodies do land in the shared store, knowingly. The
+condition attached to that decision: **it holds only while the client engagement
+permits shared retention.** The NGED pilot has disclosed capture. Before
+onboarding any engagement whose contract forbids it, this has to be revisited —
+see `wg-3nv`.
+
+`zdr` is not the mitigation and never was: Cloudflare documents that it "does not
+control AI Gateway logging" and it applies only to Unified Billing with
+Cloudflare-managed credentials.
 
 ### 10. Insider or privilege escalation
 
