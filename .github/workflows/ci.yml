@@ -205,6 +205,12 @@ jobs:
       - name: workspace event sources are allow-listed and read through the system path
         run: psql -v ON_ERROR_STOP=1 -f test/integration/workspace_events.sql
 
+      # Two restricted client projects now exist, so "one client's material is
+      # not visible to another" is finally a testable claim rather than an
+      # aspiration. It is the case that matters more than an outsider leak.
+      - name: a project's Workspace events are visible to its members and nobody else
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/workspace_event_visibility.sql
+
       # Personal API tokens: who can see whose, revocation taking effect on the
       # next lookup, and the CHECK constraints biting. The constraints are the
       # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes
