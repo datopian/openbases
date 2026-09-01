@@ -24,6 +24,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/workgraph/internal/ingest"
 	"github.com/datopian/workgraph/internal/workspace"
 )
 
@@ -41,8 +42,11 @@ func main() {
 			"print what has been delivered per source and exit")
 		since = flag.Duration("since", 7*24*time.Hour,
 			"how far back -summary looks")
-		timeout = flag.Duration("timeout", 5*time.Minute, "overall deadline")
-		verbose = flag.Bool("v", false, "log the sources left alone too")
+		phase = flag.String("phase", "all",
+			"all, reconcile (subscriptions only) or ingest (registered sources only)")
+		ingestLimit = flag.Int("ingest-limit", 50, "most deliveries to ingest in one pass")
+		timeout     = flag.Duration("timeout", 15*time.Minute, "overall deadline")
+		verbose     = flag.Bool("v", false, "log the sources left alone too")
 	)
 	flag.Parse()
 
@@ -87,6 +91,8 @@ func main() {
 		return
 	}
 
+	var meetClient *workspace.Meet
+
 	r := &workspace.Reconciler{
 		Store:  store,
 		Topic:  *topic,
@@ -118,20 +124,53 @@ func main() {
 			Scopes:  []string{workspace.ScopeDriveReadonly, workspace.ScopeMeetReadonly},
 		}
 		r.Events = &workspace.Events{Token: tokens.Token}
+		meetClient = &workspace.Meet{Token: tokens.Token}
 		log.Info("reconciling", "project", sa.ProjectID, "subject", *subject, "topic", *topic)
 	}
 
-	rep, err := r.Run(ctx)
-	if err != nil {
-		fail(log, "reconciliation could not run", err)
+	failedSomething := false
+
+	if *phase == "all" || *phase == "reconcile" {
+		rep, err := r.Run(ctx)
+		if err != nil {
+			fail(log, "reconciliation could not run", err)
+		}
+		log.Info("reconciliation finished",
+			"decisions", len(rep.Outcomes), "changed", rep.Changed, "failed", rep.Failed)
+		if rep.Failed > 0 {
+			log.Error("some sources could not be reconciled", "error", rep.Err())
+			failedSomething = true
+		}
 	}
-	log.Info("pass finished",
-		"decisions", len(rep.Outcomes), "changed", rep.Changed, "failed", rep.Failed)
-	if rep.Failed > 0 {
+
+	// Ingestion runs AFTER reconciliation and only with a credential, in the
+	// same pass rather than on a timer of its own. One unit, because the two
+	// need exactly the same things -- the delegation, the database and the
+	// allow-list -- and a second timer would be a second thing to notice had
+	// stopped.
+	//
+	// The cost is latency: a transcript is ready within minutes of a meeting
+	// and waits up to an hour to be registered. Acceptable while nothing acts
+	// on it automatically; worth revisiting when extraction lands (WP-H3),
+	// because "the platform knew an hour ago" is a different product.
+	if (*phase == "all" || *phase == "ingest") && !*dryRun && r.Events != nil {
+		in := &ingest.Ingestor{DB: db, Meet: meetClient, Log: log}
+		res, err := in.Run(ctx, *ingestLimit)
+		if err != nil {
+			fail(log, "ingestion could not run", err)
+		}
+		log.Info("ingestion finished",
+			"considered", res.Considered, "registered", res.Registered,
+			"skipped", res.Skipped, "failed", res.Failed)
+		if res.Failed > 0 {
+			failedSomething = true
+		}
+	}
+
+	if failedSomething {
 		// Non-zero so the systemd unit records a failure and the monitor sees
-		// it. A pass that could not renew a subscription has not succeeded,
-		// even though it did not crash.
-		log.Error("some sources could not be reconciled", "error", rep.Err())
+		// it. A pass that could not renew a subscription, or could not register
+		// a transcript, has not succeeded even though it did not crash.
 		os.Exit(1)
 	}
 }
