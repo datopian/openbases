@@ -25,3 +25,10 @@ project_cell_assignments:
   - project: nged
     cell: client-nged
     visibility: restricted
+
+  # CDT, and the same two-step for the same reason: 0050 creates it as
+  # confidential because restricted_requires_cell refuses a restricted project
+  # with no cell, and this is the line that gives it one and tightens it.
+  - project: cdt
+    cell: client-cdt
+    visibility: restricted

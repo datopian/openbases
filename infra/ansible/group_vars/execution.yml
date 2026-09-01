@@ -19,3 +19,16 @@ execution_cells:
     cpu_quota_percent: 200
     memory_limit_mb: 8192
     max_processes: 512
+  # CDT, the second client engagement (wg-8yv.37). Its own cell because the
+  # project is restricted, and the schema refuses a restricted project without
+  # one -- so this cell is what lets the classification be applied at all.
+  #
+  # Same limits as the others: they were measured against the node's capacity
+  # with the system deliberately outranking every cell, and a third cell at
+  # these numbers still leaves headroom. Raising them per cell is the change
+  # that quietly makes the node unreachable under load.
+  - name: client-cdt
+    trust_domain: client-cdt
+    cpu_quota_percent: 200
+    memory_limit_mb: 8192
+    max_processes: 512
