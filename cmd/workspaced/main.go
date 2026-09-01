@@ -24,6 +24,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/workgraph/internal/inference"
 	"github.com/datopian/workgraph/internal/ingest"
 	"github.com/datopian/workgraph/internal/workspace"
 )
@@ -154,7 +155,8 @@ func main() {
 	// on it automatically; worth revisiting when extraction lands (WP-H3),
 	// because "the platform knew an hour ago" is a different product.
 	if (*phase == "all" || *phase == "ingest") && !*dryRun && r.Events != nil {
-		in := &ingest.Ingestor{DB: db, Meet: meetClient, Log: log}
+		in := &ingest.Ingestor{DB: db, Meet: meetClient, Log: log,
+			Inference: inferenceClient(log)}
 		res, err := in.Run(ctx, *ingestLimit)
 		if err != nil {
 			fail(log, "ingestion could not run", err)
@@ -187,6 +189,24 @@ func printSummary(ctx context.Context, store *workspace.DB, since time.Duration)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(rows)
+}
+
+// inferenceClient builds the extraction client, or nil.
+//
+// Nil is a supported mode: registering what a source WAS must not depend on a
+// model being reachable, so a missing gateway token degrades to ingestion
+// without extraction rather than failing the pass.
+func inferenceClient(log *slog.Logger) *inference.Client {
+	base := os.Getenv("WG_AI_GATEWAY_BASE_URL")
+	// The same accessor every other caller uses, so the token arrives the same
+	// way here as it does for an agent run: a systemd credential first, the
+	// environment second.
+	token := config.AIGatewayToken()
+	if base == "" || token == "" {
+		log.Warn("no gateway credentials; registering sources without extracting candidates")
+		return nil
+	}
+	return inference.New(base, token)
 }
 
 func fail(log *slog.Logger, msg string, err error) {
