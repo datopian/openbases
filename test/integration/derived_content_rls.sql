@@ -16,7 +16,11 @@
 
 BEGIN;
 
-DO $$
+-- The check as a function, so it can be run against the real schema AND against
+-- a deliberately broken one. A guard nobody has watched fail is a guard nobody
+-- knows works; this file proves both directions before it claims either.
+CREATE FUNCTION pg_temp.check_derived_rls() RETURNS text
+LANGUAGE plpgsql AS $fn$
 DECLARE
   r record;
   problems text := '';
@@ -78,12 +82,52 @@ BEGIN
   IF n = 0 THEN
     RAISE EXCEPTION 'no source-derived tables were found at all; this check is not looking at anything';
   END IF;
-
   IF problems <> '' THEN
-    RAISE EXCEPTION 'tables holding source-derived content without a usable policy:%', problems;
+    RETURN problems;
+  END IF;
+  RETURN format('ok: %s table(s) checked', n);
+END
+$fn$;
+
+DO $$
+DECLARE result text;
+BEGIN
+  -- 1. The real schema passes.
+  result := pg_temp.check_derived_rls();
+  IF result NOT LIKE 'ok:%' THEN
+    RAISE EXCEPTION 'the live schema fails the check:%', result;
+  END IF;
+  RAISE NOTICE 'derived-content RLS, real schema: %', result;
+
+  -- 2. Turning RLS off on a protected table must be caught. Without this the
+  --    check could be looking at nothing and would still report success --
+  --    which is how a guard becomes a decoration.
+  ALTER TABLE human_corrections DISABLE ROW LEVEL SECURITY;
+  result := pg_temp.check_derived_rls();
+  IF result NOT LIKE '%human_corrections: row-level security is not enabled%' THEN
+    RAISE EXCEPTION 'disabling RLS on human_corrections was not caught; got: %', result;
+  END IF;
+  ALTER TABLE human_corrections ENABLE ROW LEVEL SECURITY;
+
+  -- 3. Enabled but NOT forced is the one that looks protected in any listing
+  --    showing only relrowsecurity, so it gets its own case.
+  ALTER TABLE human_corrections NO FORCE ROW LEVEL SECURITY;
+  result := pg_temp.check_derived_rls();
+  IF result NOT LIKE '%not FORCED%' THEN
+    RAISE EXCEPTION 'an enabled-but-unforced table was not caught; got: %', result;
+  END IF;
+  ALTER TABLE human_corrections FORCE ROW LEVEL SECURITY;
+
+  -- 4. Forced with no read policy: writable through a definer path, readable by
+  --    nobody. Legitimate for some tables, which is why it must be DECLARED
+  --    rather than discovered.
+  DROP POLICY human_corrections_read ON human_corrections;
+  result := pg_temp.check_derived_rls();
+  IF result NOT LIKE '%no SELECT policy%' THEN
+    RAISE EXCEPTION 'a table with no read policy was not caught; got: %', result;
   END IF;
 
-  RAISE NOTICE 'derived-content RLS: % table(s) checked, all forced with a read policy', n;
+  RAISE NOTICE 'derived-content RLS: all three failure shapes are caught';
 END $$;
 
 ROLLBACK;
