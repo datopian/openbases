@@ -14,6 +14,7 @@ DESC = {
  "GET /v1/projects": ("Projects the caller can see", ""),
  "GET /v1/projects/{slug}": ("One project", ""),
  "GET /v1/projects/{slug}/detail": ("A project with repositories and derived signals", "Each signal carries its evidence."),
+ "GET /v1/projects/{slug}/events": ("Google Workspace events belonging to a project", "Meetings and file changes the platform noticed, most recent first. Sources are linked to a project one at a time: a Meet space belongs to exactly one, while a shared drive serves many and its events are not claimed here. Metadata only \u2014 the raw Pub/Sub payload is not returned."),
  "GET /v1/ask": ("Ask the chief of staff", "Answers exactly four questions. Called with no q, it returns the supported set rather than guessing — which is the discoverability this endpoint would otherwise lack."),
  "GET /v1/inbox": ("What needs the caller", ""),
  "GET /v1/inbox/branches": ("The inbox, grouped, with a reason when a branch is empty", ""),
