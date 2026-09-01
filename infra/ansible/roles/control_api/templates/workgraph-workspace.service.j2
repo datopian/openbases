@@ -11,6 +11,14 @@ Group={{ control_api_user }}
 EnvironmentFile=/etc/workgraph/control-api.env
 
 LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+# The gateway token, for extracting candidates from a registered source. As a
+# credential rather than in the environment, for the reason every other secret
+# here is: a token in an environment file is a token in every process listing
+# and crash dump on the node.
+{% if control_api_ai_gateway_token | default('') | length > 0 %}
+LoadCredential=ai_gateway_token:/etc/workgraph/credentials/ai_gateway_token
+{% endif %}
+Environment=WG_AI_GATEWAY_BASE_URL={{ control_api_ai_gateway_base_url | default('') }}
 
 # The delegated identity. A service account cannot hold Drive or Meet resources
 # of its own, so every call is made as a real user in the domain.

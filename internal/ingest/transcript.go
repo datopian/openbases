@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/datopian/workgraph/internal/inference"
 	"github.com/datopian/workgraph/internal/workspace"
 )
 
@@ -38,7 +39,11 @@ type Pending struct {
 type Ingestor struct {
 	DB   *sql.DB
 	Meet *workspace.Meet
-	Log  *slog.Logger
+	// Inference extracts candidates. Nil means register sources and stop, which
+	// is a supported mode rather than a degraded one: the record of what a
+	// source WAS must not depend on a model being reachable.
+	Inference *inference.Client
+	Log       *slog.Logger
 	// Now is overridable for tests.
 	Now func() time.Time
 }
@@ -217,6 +222,65 @@ func (i *Ingestor) registerTranscript(ctx context.Context, p Pending,
 		"source", sourceID, "transcript", t.Name, "revision", revision,
 		"visibility", p.Visibility, "entries", len(entries),
 		"characters", len(text), "participants", n)
+
+	if i.Inference != nil {
+		if err := i.extract(ctx, sourceID, p, entries, participants); err != nil {
+			// Not fatal to the registration. The source is recorded either way,
+			// and a source without candidates is a reviewable gap; a candidate
+			// without a source is not recoverable at all.
+			i.logf(slog.LevelError, "extraction failed",
+				"source", sourceID, "error", err)
+		}
+	}
+	return nil
+}
+
+// extract asks for candidates and stores the ones that survive validation.
+func (i *Ingestor) extract(ctx context.Context, sourceID string, p Pending,
+	entries []workspace.TranscriptEntry, participants []workspace.Participant) error {
+
+	speakers := map[string]string{}
+	for _, pa := range participants {
+		if name, kind := pa.Identity(); name != "" && kind == "user" {
+			speakers[pa.Name] = name
+		}
+	}
+
+	kept, proposed, err := Extract(ctx, i.Inference,
+		inference.Metadata{Cell: "control-plane", Bead: "wg-8yv.22", Rig: "ingest"},
+		entries, speakers)
+	if err != nil {
+		return err
+	}
+
+	payload := make([]map[string]any, 0, len(kept))
+	for _, c := range kept {
+		spans, err := spansJSON(c, entries)
+		if err != nil {
+			continue
+		}
+		payload = append(payload, map[string]any{
+			"type": c.Type, "statement": c.Statement, "confidence": c.Confidence,
+			"due_date": c.DueDate, "inferred": c.Inferred, "source_spans": spans,
+		})
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	var stored int
+	if err := i.DB.QueryRowContext(ctx,
+		`SELECT system_record_candidates($1::uuid, $2, $3::jsonb)`,
+		sourceID, PromptVersion, string(encoded)).Scan(&stored); err != nil {
+		return fmt.Errorf("storing candidates: %w", err)
+	}
+
+	// The drop rate is the number that says whether the prompt is working. A
+	// silent discard looks identical to a quiet meeting.
+	i.logf(slog.LevelInfo, "extracted candidates",
+		"source", sourceID, "proposed", proposed, "kept", len(kept), "stored", stored,
+		"discarded", proposed-len(kept), "prompt", PromptVersion)
 	return nil
 }
 

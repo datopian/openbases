@@ -90,6 +90,11 @@
     # with the new secret; the API warns on every start while it is present.
     - name: github_webhook_secret_previous
       value: "{{ control_api_github_webhook_secret_previous | default('') }}"
+    # Read by workspaced to extract candidates from a registered source. The
+    # same token the execution cells use, so extraction lands in the same spend
+    # table as agent work and can be compared against it.
+    - name: ai_gateway_token
+      value: "{{ ai_gateway_token | default('') }}"
   loop_control:
     label: "{{ item.name }}"
   no_log: true
