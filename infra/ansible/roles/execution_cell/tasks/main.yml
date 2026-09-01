@@ -24,6 +24,29 @@
     # one cell cannot enumerate the others. Enumeration alone leaks client names.
     mode: "0711"
 
+# The group has to exist before the user that names it.
+#
+# ansible.builtin.user creates a matching group automatically ONLY when `group`
+# is not given. It IS given below -- deliberately, because the cell user must be
+# in exactly one group and that has to be reasserted on every run -- so nothing
+# was creating it.
+#
+# That made the role unable to provision a NEW cell. It worked on every existing
+# one because their groups predate the `group:` line, from when the user module
+# still auto-created them. Adding client-cdt was the first new cell since, and it
+# failed with "Group wgcell_client_cdt does not exist" -- a role that only works
+# on the machines it has already run on.
+#
+# Worth more than the one cell: the plan requires a dedicated cell per restricted
+# project, so this blocked every future client engagement.
+- name: Create a group per cell
+  ansible.builtin.group:
+    name: "wgcell_{{ item.name | replace('-', '_') }}"
+    system: true
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Create a system user per cell
   ansible.builtin.user:
     name: "wgcell_{{ item.name | replace('-', '_') }}"
