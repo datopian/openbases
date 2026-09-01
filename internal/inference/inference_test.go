@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -132,5 +133,45 @@ func TestMaxTokensIsRequired(t *testing.T) {
 	r.MaxTokens = 0
 	if _, err := c.Complete(context.Background(), r); err == nil {
 		t.Error("an unbounded request was allowed")
+	}
+}
+
+// Every AI Gateway log in this account lands in one store shared by nine
+// gateways, six of them other projects. So the zero value must not put prompt
+// bodies there: a caller who forgets gets privacy, not exposure.
+func TestPayloadLoggingIsOffUnlessAskedFor(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
+	req := Request{Route: RouteClassify, Prompt: "p", MaxTokens: 16,
+		Metadata: Metadata{Cell: "oss", Bead: "wg-1a2", Rig: "r"}}
+
+	c := New(srv.URL, "tok")
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("cf-aig-collect-log-payload") != "false" {
+		t.Errorf("default did not suppress payload storage: %q",
+			got.Get("cf-aig-collect-log-payload"))
+	}
+	// Dropping the whole entry would take the cost record and the evidence
+	// trail with it, so this header must never be sent.
+	if got.Get("cf-aig-collect-log") != "" {
+		t.Errorf("cf-aig-collect-log was sent (%q); that drops the metadata too",
+			got.Get("cf-aig-collect-log"))
+	}
+
+	c2 := New(srv.URL, "tok")
+	c2.CollectPayloads = true
+	if _, err := c2.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("cf-aig-collect-log-payload") != "" {
+		t.Errorf("opting in still suppressed payloads: %q",
+			got.Get("cf-aig-collect-log-payload"))
 	}
 }

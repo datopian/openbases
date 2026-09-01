@@ -105,6 +105,22 @@ type Client struct {
 	// outside every budget.
 	Token string
 	HTTP  *http.Client
+	// CollectPayloads stores the prompt and the response in the gateway's log
+	// alongside the metadata. The ZERO VALUE DOES NOT, and that direction is
+	// deliberate.
+	//
+	// All AI Gateway logs in this account land in ONE store
+	// (10ba352dd98c4f2db387148e7313e451) shared by nine gateways, six of them
+	// nothing to do with Workgraph: openclaw-gateway-prod, datahub-sales,
+	// open-design and flowershow write there too. Per-domain gateways do not
+	// separate logs (wg-90f), and there is no per-gateway store to move to.
+	// Anyone who can read that store can read every prompt in it.
+	//
+	// So a caller that forgets this field gets privacy, and a caller that wants
+	// bodies in a shared store has to say so. Metadata -- token counts, model,
+	// provider, status, cost, duration -- is kept either way, which is what
+	// scripts/cost_by_role.py and the evidence pack actually read.
+	CollectPayloads bool
 }
 
 // New builds a client with a sane timeout.
@@ -167,6 +183,19 @@ func (c *Client) Complete(ctx context.Context, r Request) (Response, error) {
 	}
 	req.Header.Set("cf-aig-authorization", "Bearer "+c.Token)
 	req.Header.Set("cf-aig-metadata", meta)
+	if !c.CollectPayloads {
+		// Suppresses the request and response BODIES only. Note the header that
+		// is deliberately not used: cf-aig-collect-log: false drops the entire
+		// log entry including the metadata, which would take the cost record
+		// and the evidence trail with it.
+		//
+		// Not zdr either. zdr is an upstream-provider property -- it routes
+		// Unified Billing traffic through endpoints that do not retain -- and
+		// Cloudflare's documentation is explicit that it "does not control AI
+		// Gateway logging". It also applies only to Unified Billing requests
+		// using Cloudflare-managed credentials. It was never the lever for this.
+		req.Header.Set("cf-aig-collect-log-payload", "false")
+	}
 	req.Header.Set("Content-Type", "application/json")
 	// Named. Cloudflare answers an unnamed client with a 403 and error code
 	// 1010, which is a bot challenge and reads exactly like an auth failure.
