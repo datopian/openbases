@@ -216,6 +216,13 @@ jobs:
       - name: only a project's members may review its candidates, as themselves
         run: psql -v ON_ERROR_STOP=1 -f test/integration/knowledge_review.sql
 
+      # The same gap was found three times in one day, each by somebody
+      # happening to look. This asks the database which tables hold
+      # source-derived content and asserts each one is actually protected, so a
+      # table added tomorrow is caught without anybody remembering to check.
+      - name: every table holding source-derived content has a read policy
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/derived_content_rls.sql
+
       # Personal API tokens: who can see whose, revocation taking effect on the
       # next lookup, and the CHECK constraints biting. The constraints are the
       # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes
