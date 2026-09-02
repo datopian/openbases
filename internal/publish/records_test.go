@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -20,6 +21,10 @@ type fakeGitHub struct {
 	files    map[string][]byte
 	prs      []githubapp.OpenPullRequestRequest
 	putErr   error
+	// alreadyOpen makes OpenPullRequest answer the way GitHub does when the
+	// branch already has one, and existing is what the lookup then returns.
+	alreadyOpen bool
+	existing    *githubapp.PullRequest
 }
 
 func newFakeGitHub() *fakeGitHub {
@@ -59,8 +64,18 @@ func (f *fakeGitHub) FileContent(ctx context.Context, tok *githubapp.Installatio
 }
 
 func (f *fakeGitHub) OpenPullRequest(ctx context.Context, tok *githubapp.InstallationToken, req githubapp.OpenPullRequestRequest) (*githubapp.PullRequest, error) {
+	if f.alreadyOpen {
+		return nil, fmt.Errorf("%w: A pull request already exists for o:%s", githubapp.ErrAlreadyOpen, req.Head)
+	}
 	f.prs = append(f.prs, req)
 	return &githubapp.PullRequest{Number: len(f.prs), HTMLURL: "https://github.test/pr/1"}, nil
+}
+
+func (f *fakeGitHub) FindPullRequest(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, head string) (*githubapp.PullRequest, error) {
+	if f.existing == nil {
+		return nil, nil
+	}
+	return f.existing, nil
 }
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -264,5 +279,40 @@ func TestAMissingSupersededFileFailsLoudly(t *testing.T) {
 	}
 	if len(gh.prs) != 0 {
 		t.Fatal("a pull request was opened with half the change in it")
+	}
+}
+
+// A pass that opened the pull request and then failed must adopt it, not open
+// a second one and not give up: the first is the duplicate this path exists to
+// avoid, the second leaves a proposal the control plane does not know about.
+func TestAnExistingPullRequestIsAdopted(t *testing.T) {
+	gh := newFakeGitHub()
+	gh.alreadyOpen = true
+	gh.existing = &githubapp.PullRequest{Number: 3, HTMLURL: "https://github.test/pr/3"}
+
+	p := &RecordPublisher{GitHub: gh, Owner: "o", Repo: "r", Log: quietLog()}
+	// Fails at the database write, which is after the adoption.
+	err := p.propose(t.Context(), &githubapp.InstallationToken{Token: "t"}, "sha", "main", aPending(), quietLog())
+	if err == nil {
+		t.Fatal("expected the database write to fail")
+	}
+	if !strings.Contains(err.Error(), "no database to record") {
+		t.Fatalf("failed before the recording step: %v", err)
+	}
+	if len(gh.prs) != 0 {
+		t.Fatal("a second pull request was opened")
+	}
+}
+
+// GitHub saying one exists and then returning none is a contradiction, not
+// something to carry on from.
+func TestAnAlreadyOpenPullRequestThatCannotBeFoundFails(t *testing.T) {
+	gh := newFakeGitHub()
+	gh.alreadyOpen = true
+
+	p := &RecordPublisher{GitHub: gh, Owner: "o", Repo: "r", Log: quietLog()}
+	err := p.propose(t.Context(), &githubapp.InstallationToken{Token: "t"}, "sha", "main", aPending(), quietLog())
+	if err == nil || !strings.Contains(err.Error(), "returns none") {
+		t.Fatalf("error = %v", err)
 	}
 }

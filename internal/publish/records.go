@@ -23,6 +23,7 @@ type GitHub interface {
 	PutFile(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, branch, path, message string, content []byte) error
 	FileContent(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, ref, path string) ([]byte, string, error)
 	OpenPullRequest(ctx context.Context, tok *githubapp.InstallationToken, req githubapp.OpenPullRequestRequest) (*githubapp.PullRequest, error)
+	FindPullRequest(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, head string) (*githubapp.PullRequest, error)
 }
 
 // PendingRecord is an accepted durable record not yet proposed in Git.
@@ -199,6 +200,21 @@ func (p *RecordPublisher) propose(ctx context.Context, tok *githubapp.Installati
 		Title: message,
 		Body:  prBody(r),
 	})
+	if errors.Is(err, githubapp.ErrAlreadyOpen) {
+		// This pass's own earlier work: the pull request was opened and
+		// something after it failed. Adopting it is the only correct move --
+		// opening a second one for the same record is the duplicate this
+		// whole path is built to avoid, and giving up leaves a proposal the
+		// control plane does not know about.
+		pr, err = p.GitHub.FindPullRequest(ctx, tok, p.Owner, p.Repo, branch)
+		if err == nil && pr == nil {
+			err = fmt.Errorf("GitHub reports a pull request open for %s and returns none", branch)
+		}
+		if err == nil {
+			log.Info("adopting the pull request an earlier pass opened",
+				"record", r.Record.ID, "pull_request", pr.HTMLURL)
+		}
+	}
 	if err != nil {
 		// The branch and the file survive. A retry finds the branch present,
 		// rewrites the same file and opens the pull request -- which is why
