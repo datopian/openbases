@@ -125,9 +125,25 @@ BEGIN
     RAISE EXCEPTION 'the first recording reported nothing to do';
   END IF;
 
+  -- Still offered, because the decision's bead is outstanding -- and it says
+  -- which half is done. Keying the queue on git_path alone dropped a decision
+  -- whose pull request opened and whose bead then failed.
+  SELECT * INTO row_out FROM system_pending_record_publications(20) WHERE record_id = rec;
+  IF row_out.record_id IS NULL THEN
+    RAISE EXCEPTION 'a decision with no bead left the queue once its Markdown was recorded';
+  END IF;
+  IF NOT row_out.markdown_published OR row_out.bead_published THEN
+    RAISE EXCEPTION 'the halves are reported as markdown=% bead=%',
+      row_out.markdown_published, row_out.bead_published;
+  END IF;
+
+  -- Recording the bead finishes it.
+  PERFORM system_record_work_publication(current_setting('test.candidate')::uuid,
+      row_out.graph_id, 'rec-abc', 'Use batch ingestion for phase one', 'decision');
+
   SELECT count(*) INTO n FROM system_pending_record_publications(20) WHERE record_id = rec;
   IF n <> 0 THEN
-    RAISE EXCEPTION 'a published record is still queued for Git';
+    RAISE EXCEPTION 'a record with both halves published is still queued';
   END IF;
 
   -- Idempotent: a pass that opened the pull request and then failed must not
