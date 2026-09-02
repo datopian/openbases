@@ -43,6 +43,14 @@ access_allowed_emails = [
   "daniela.popova@datopian.com",
   "osahon.okungbowa@datopian.com",
   "rufus.pollock@datopian.com",
+  # Added 2026-09-02 for the 3 September session (wg-0hq). These four hold no
+  # company-wide role grant, so what they can see is decided entirely by the
+  # project memberships in 0074 -- unlike the four above, who reach everything.
+  # An entry here without a users row logs in and resolves to nobody.
+  "joao.demenech@datopian.com",
+  "monika.popova@datopian.com",
+  "aleksandra.rubaj@datopian.com",
+  "luccas.mateus@datopian.com",
 ]
 
 # The break-glass SSH key stays registered on the node, but no rule admits it.
