@@ -21,6 +21,7 @@ type GitHub interface {
 	BranchHead(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, branch string) (string, error)
 	CreateBranch(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, branch, sha string) error
 	PutFile(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, branch, path, message string, content []byte) error
+	FileContent(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, ref, path string) ([]byte, string, error)
 	OpenPullRequest(ctx context.Context, tok *githubapp.InstallationToken, req githubapp.OpenPullRequestRequest) (*githubapp.PullRequest, error)
 }
 
@@ -40,6 +41,10 @@ type PendingRecord struct {
 	// the finished one.
 	MarkdownPublished bool
 	BeadPublished     bool
+	// SupersedesGitPath is the file of the record this one retires, when that
+	// record has one. Marked superseded in the same pull request, so the
+	// correction and the retirement are one reviewable change.
+	SupersedesGitPath string
 }
 
 // RecordResult counts one pass.
@@ -171,6 +176,16 @@ func (p *RecordPublisher) propose(ctx context.Context, tok *githubapp.Installati
 		return err
 	}
 
+	// The retired record, in the same pull request. Its front matter is
+	// patched and its body left alone: a published record's body is written by
+	// a person, and regenerating the file to change two fields would delete
+	// their reasoning.
+	if r.SupersedesGitPath != "" {
+		if err := p.retire(ctx, tok, base, branch, r, log); err != nil {
+			return fmt.Errorf("marking %s superseded: %w", r.SupersedesGitPath, err)
+		}
+	}
+
 	pr, err := p.GitHub.OpenPullRequest(ctx, tok, githubapp.OpenPullRequestRequest{
 		Owner: p.Owner,
 		Repo:  p.Repo,
@@ -196,6 +211,35 @@ func (p *RecordPublisher) propose(ctx context.Context, tok *githubapp.Installati
 	return nil
 }
 
+// retire marks the superseded record's file, on the branch the successor is on.
+func (p *RecordPublisher) retire(ctx context.Context, tok *githubapp.InstallationToken,
+	base, branch string, r PendingRecord, log *slog.Logger) error {
+
+	// Read from the branch first: a retry finds the patch already applied
+	// there, and reading the base would undo nothing but would rewrite the
+	// file with an identical patch every pass.
+	content, _, err := p.GitHub.FileContent(ctx, tok, p.Owner, p.Repo, branch, r.SupersedesGitPath)
+	if err != nil {
+		content, _, err = p.GitHub.FileContent(ctx, tok, p.Owner, p.Repo, base, r.SupersedesGitPath)
+	}
+	if err != nil {
+		return err
+	}
+
+	patched, err := knowledge.MarkSuperseded(content, r.Record.ID)
+	if err != nil {
+		return err
+	}
+	if string(patched) == string(content) {
+		log.Info("the superseded record is already marked",
+			"path", r.SupersedesGitPath, "successor", r.Record.ID)
+		return nil
+	}
+
+	return p.GitHub.PutFile(ctx, tok, p.Owner, p.Repo, branch, r.SupersedesGitPath,
+		fmt.Sprintf("Mark mem-%s superseded", shortID(r.Record.Supersedes)), patched)
+}
+
 // prBody says what a reviewer is being asked to do, and admits what the file
 // does not contain.
 func prBody(r PendingRecord) string {
@@ -209,7 +253,15 @@ func prBody(r PendingRecord) string {
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "- classification: `%s`\n", r.Record.Visibility)
 	fmt.Fprintf(&b, "- reviewer: %s\n", r.Record.Reviewer)
-	fmt.Fprintf(&b, "- record: `mem-%s`\n\n", r.Record.ID)
+	fmt.Fprintf(&b, "- record: `mem-%s`\n", r.Record.ID)
+	if r.Record.Supersedes != "" {
+		fmt.Fprintf(&b, "- supersedes: `mem-%s`", r.Record.Supersedes)
+		if r.SupersedesGitPath != "" {
+			fmt.Fprintf(&b, ", marked superseded in this pull request at `%s`", r.SupersedesGitPath)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("The Context and Consequences sections are deliberately unfinished: the statement " +
 		"and its provenance are facts the control plane has, the reasoning is not, and a generated " +
 		"paragraph in its place would read as somebody's thinking without being it.\n\n")
@@ -348,7 +400,7 @@ func (p *RecordPublisher) pending(ctx context.Context, limit int) ([]PendingReco
 		       visibility, coalesce(confidence,0), valid_from, review_after,
 		       reviewed_at, coalesce(reviewer_email,''), coalesce(owner_email,''),
 		       coalesce(author_email,''), human_authored,
-		       coalesce(supersedes::text,''), sources,
+		       coalesce(supersedes::text,''), coalesce(supersedes_git_path,''), sources,
 		       coalesce(candidate_id::text,''), markdown_published, bead_published,
 		       coalesce(graph_id::text,''), coalesce(graph_name,''),
 		       coalesce(graph_path,''), coalesce(graph_host,''),
@@ -368,7 +420,8 @@ func (p *RecordPublisher) pending(ctx context.Context, limit int) ([]PendingReco
 		if err := rows.Scan(&p.Record.ID, &p.Record.Type, &p.Record.Statement, &p.Record.Scope,
 			&p.Record.Project, &p.Record.Function, &p.Record.Visibility, &p.Record.Confidence,
 			&validFrom, &reviewAfter, &reviewedAt, &p.Record.Reviewer, &p.Record.Owner,
-			&p.Record.Author, &p.Record.HumanAuthored, &p.Record.Supersedes, &sources,
+			&p.Record.Author, &p.Record.HumanAuthored, &p.Record.Supersedes,
+			&p.SupersedesGitPath, &sources,
 			&p.CandidateID, &p.MarkdownPublished, &p.BeadPublished,
 			&p.GraphID, &p.GraphName, &p.GraphPath, &p.GraphHost,
 			&p.Blocked); err != nil {

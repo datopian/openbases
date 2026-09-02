@@ -224,3 +224,63 @@ func TestTheReviewDateIsOmittedWhenThereIsNone(t *testing.T) {
 		t.Fatalf("a fact lost its review date:\n%s", out)
 	}
 }
+
+// The body of a published record is somebody's writing. Superseding it patches
+// two front-matter fields and must not touch a word of the rest -- a re-render
+// from the database would delete the reasoning in the name of updating a status.
+func TestMarkSupersededKeepsTheBody(t *testing.T) {
+	original, err := aRecord().Render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	// A human has edited the body since.
+	edited := strings.Replace(string(original),
+		"What changes because this is true.",
+		"We tried streaming in the pilot and it cost two weeks.", 1)
+
+	patched, err := MarkSuperseded([]byte(edited), "11111111-2222-3333-4444-555555555555")
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+
+	if !strings.Contains(string(patched), "We tried streaming in the pilot and it cost two weeks.") {
+		t.Fatalf("the human's body text was lost:\n%s", patched)
+	}
+	flat, _ := frontMatter(t, string(patched))
+	if flat["status"] != "superseded" {
+		t.Fatalf("status = %q", flat["status"])
+	}
+	if flat["superseded_by"] != "mem-11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("superseded_by = %q", flat["superseded_by"])
+	}
+	// Everything else survives.
+	if flat["id"] != "mem-8c1e40c9-d5ab-4ecc-b8ba-3f51f9a0ac7f" || flat["visibility"] != "restricted" {
+		t.Fatalf("the patch changed more than the status: %v", flat)
+	}
+}
+
+// Patching twice is the retry path, and must not accumulate keys.
+func TestMarkSupersededIsIdempotent(t *testing.T) {
+	original, _ := aRecord().Render()
+	once, err := MarkSuperseded(original, "aaaa1111-2222-3333-4444-555555555555")
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	twice, err := MarkSuperseded(once, "aaaa1111-2222-3333-4444-555555555555")
+	if err != nil {
+		t.Fatalf("second patch: %v", err)
+	}
+	if strings.Count(string(twice), "superseded_by:") != 1 {
+		t.Fatalf("superseded_by appears %d times:\n%s",
+			strings.Count(string(twice), "superseded_by:"), twice)
+	}
+	if strings.Count(string(twice), "status:") != 1 {
+		t.Fatalf("status appears twice:\n%s", twice)
+	}
+}
+
+func TestMarkSupersededRefusesAFileWithNoFrontMatter(t *testing.T) {
+	if _, err := MarkSuperseded([]byte("# just a heading\n"), "x"); err == nil {
+		t.Fatal("a file with no front matter was patched anyway")
+	}
+}

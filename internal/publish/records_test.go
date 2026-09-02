@@ -48,6 +48,16 @@ func (f *fakeGitHub) PutFile(ctx context.Context, tok *githubapp.InstallationTok
 	return nil
 }
 
+func (f *fakeGitHub) FileContent(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, ref, path string) ([]byte, string, error) {
+	if c, ok := f.files[ref+":"+path]; ok {
+		return c, "sha", nil
+	}
+	if c, ok := f.files[path]; ok {
+		return c, "sha", nil
+	}
+	return nil, "", errors.New("404 not found")
+}
+
 func (f *fakeGitHub) OpenPullRequest(ctx context.Context, tok *githubapp.InstallationToken, req githubapp.OpenPullRequestRequest) (*githubapp.PullRequest, error) {
 	f.prs = append(f.prs, req)
 	return &githubapp.PullRequest{Number: len(f.prs), HTMLURL: "https://github.test/pr/1"}, nil
@@ -196,4 +206,63 @@ func keys(m map[string][]byte) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// A supersession is one reviewable change: the correction and the retirement of
+// what it corrects, in the same pull request.
+func TestSupersessionRetiresTheOldFileInTheSamePullRequest(t *testing.T) {
+	old := aPending()
+	oldFile, err := old.Record.Render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	oldPath := old.Record.Path()
+
+	gh := newFakeGitHub()
+	gh.files[oldPath] = oldFile
+
+	r := aPending()
+	r.Record.ID = "22222222-3333-4444-5555-666666666666"
+	r.Record.Statement = "Use streaming ingestion after all."
+	r.Record.Supersedes = old.Record.ID
+	r.SupersedesGitPath = oldPath
+
+	p := &RecordPublisher{GitHub: gh, Owner: "o", Repo: "r", Log: quietLog()}
+	// Fails at the database write, after both files and the pull request.
+	if err := p.propose(t.Context(), &githubapp.InstallationToken{Token: "t"}, "sha", "main", r, quietLog()); err == nil {
+		t.Fatal("expected the database write to fail")
+	}
+
+	patched, ok := gh.files[oldPath]
+	if !ok {
+		t.Fatal("the superseded file was not written")
+	}
+	if !strings.Contains(string(patched), "status: superseded") ||
+		!strings.Contains(string(patched), "superseded_by: mem-22222222-3333-4444-5555-666666666666") {
+		t.Fatalf("the old file was not marked:\n%s", patched)
+	}
+	if len(gh.prs) != 1 {
+		t.Fatalf("pull requests = %d", len(gh.prs))
+	}
+	if !strings.Contains(gh.prs[0].Body, "supersedes: `mem-"+old.Record.ID+"`") {
+		t.Fatalf("the pull request does not say what it supersedes:\n%s", gh.prs[0].Body)
+	}
+}
+
+// A retired file that no longer exists must not stop the correction from being
+// proposed... but it must not be silent either.
+func TestAMissingSupersededFileFailsLoudly(t *testing.T) {
+	gh := newFakeGitHub()
+	r := aPending()
+	r.Record.Supersedes = "33333333-4444-5555-6666-777777777777"
+	r.SupersedesGitPath = "knowledge/company/decisions/gone.md"
+
+	p := &RecordPublisher{GitHub: gh, Owner: "o", Repo: "r", Log: quietLog()}
+	err := p.propose(t.Context(), &githubapp.InstallationToken{Token: "t"}, "sha", "main", r, quietLog())
+	if err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("error = %v, want it to name the file it could not retire", err)
+	}
+	if len(gh.prs) != 0 {
+		t.Fatal("a pull request was opened with half the change in it")
+	}
 }
