@@ -157,6 +157,16 @@ jobs:
       - name: pilot registry and restricted-project isolation
         run: psql -v ON_ERROR_STOP=1 -f test/integration/pilot_registry.sql
 
+      # Company management reads every project, client-restricted ones
+      # included. Asserted deliberately because it is invisible from any single
+      # policy -- can_read_project mentions the roles once and every table that
+      # delegates to it inherits the reach -- and because it is the kind of
+      # access somebody tightens as an obvious improvement. Two earlier tests
+      # tried to use a real person as an outsider and passed for the wrong
+      # reason: everybody available was management.
+      - name: company management reads every project, and nobody else does
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/management_access.sql
+
       - name: first-login identity linking
         run: psql -v ON_ERROR_STOP=1 -f test/integration/identity_linking.sql
 
