@@ -110,7 +110,12 @@ func (p *RecordPublisher) Run(ctx context.Context, limit int) (RecordResult, err
 		// One token for the pass, scoped to the one repository it writes to.
 		// An installation token is broad by default: scoping it means a bug
 		// here cannot touch a client repository.
-		tok, err = p.GitHub.InstallationToken(ctx, p.Owner+"/"+p.Repo)
+		//
+		// The BARE name, not owner/name. GitHub's scoped mint takes repository
+		// names and answers an owner-qualified one with the same 422 it uses
+		// for a repository the installation does not cover -- which read as a
+		// missing grant for a repository the installation already had.
+		tok, err = p.GitHub.InstallationToken(ctx, p.Repo)
 		if err != nil {
 			return RecordResult{}, fmt.Errorf("minting a token for %s/%s: %w", p.Owner, p.Repo, err)
 		}
