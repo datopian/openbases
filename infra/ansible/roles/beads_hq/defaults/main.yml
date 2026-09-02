@@ -9,5 +9,19 @@ dolt_sha256_linux_amd64: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc3145
 
 beads_hq_root: /srv/graphs
 beads_hq_name: company-hq
+
+# The graphs to provision. company-hq carries company-wide decisions; a project
+# graph carries the work accepted from that project's meetings.
+#
+# Prefixes differ so an id says which graph it came from. Beads graphs cannot
+# reference each other (plan section 2.3), so a bare id with no prefix is
+# ambiguous the moment there is more than one graph -- which is now.
+beads_graphs:
+  - name: company-hq
+    prefix: wg
+  - name: project-cdt
+    prefix: cdt
+  - name: project-nged
+    prefix: ngd
 beads_hq_prefix: wg
 beads_hq_user: workgraph

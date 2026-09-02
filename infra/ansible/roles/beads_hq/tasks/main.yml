@@ -32,100 +32,21 @@
     # and commitments, and no other account on this node needs to read them.
     mode: "0750"
 
-- name: Create the HQ graph directory
-  ansible.builtin.file:
-    path: "{{ beads_hq_root }}/{{ beads_hq_name }}"
-    state: directory
-    owner: "{{ beads_hq_user }}"
-    group: "{{ beads_hq_user }}"
-    mode: "0750"
 
-# bd init wants a git repository. This one is local only and never gains a
-# remote: the durable copy is the Dolt database and its native backup, not a
-# git push (plan section 15.3).
-- name: Initialise git in the graph directory
-  ansible.builtin.command:
-    cmd: git init -q -b main .
-    chdir: "{{ beads_hq_root }}/{{ beads_hq_name }}"
-    creates: "{{ beads_hq_root }}/{{ beads_hq_name }}/.git"
-  become: true
-  become_user: "{{ beads_hq_user }}"
-
-# Dolt writes its configuration under $HOME and segfaults if it cannot — the
-# service account is created without a home, which is right for a service but
-# fatal here. HOME points at the graph directory so the Dolt config lives beside
-# the data it belongs to rather than requiring a general home directory.
-- name: Configure Dolt identity for the graph
-  ansible.builtin.command:
-    cmd: "dolt config --global --add {{ item.key }} {{ item.value }}"
-    creates: "{{ beads_hq_root }}/{{ beads_hq_name }}/.dolt/config_global.json"
-  become: true
-  become_user: "{{ beads_hq_user }}"
-  environment:
-    HOME: "{{ beads_hq_root }}/{{ beads_hq_name }}"
-    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
-  loop:
-    - { key: "user.name",  value: "workgraph" }
-    - { key: "user.email", value: "workgraph@datopian.com" }
+# One graph per declared entry (WP-H4).
+#
+# Was one hard-coded HQ graph. Accepted operational items from a project's
+# meetings become Beads, and a restricted client's task text must not land in
+# the graph everyone reads -- so each client project gets its own graph, which
+# is also what plan section 2.3 assumes when it says Beads databases are
+# isolated and cannot reference each other.
+#
+# Declared rather than derived from the database: this role runs against a host
+# and cannot query the control plane, and a graph appearing because a row
+# appeared is not a change anybody reviewed.
+- name: Provision each declared Beads graph
+  ansible.builtin.include_tasks: graph.yml
+  loop: "{{ beads_graphs }}"
   loop_control:
-    label: "{{ item.key }}"
-
-# Guard on the config file, not the .beads DIRECTORY.
-#
-# A failed init leaves the directory behind, and a directory-based guard then
-# reports the graph as already present — which is how a segfaulting init came to
-# look like a successful one. config.yaml only exists once init completed.
-- name: Detect a partially initialised graph
-  ansible.builtin.stat:
-    path: "{{ beads_hq_root }}/{{ beads_hq_name }}/.beads/config.yaml"
-  register: beads_config
-
-- name: Remove a partial .beads directory before re-initialising
-  ansible.builtin.file:
-    path: "{{ beads_hq_root }}/{{ beads_hq_name }}/.beads"
-    state: absent
-  when: not beads_config.stat.exists
-
-- name: Initialise the HQ Beads graph
-  ansible.builtin.command:
-    cmd: "bd init --prefix {{ beads_hq_prefix }}"
-    chdir: "{{ beads_hq_root }}/{{ beads_hq_name }}"
-    creates: "{{ beads_hq_root }}/{{ beads_hq_name }}/.beads/config.yaml"
-  become: true
-  become_user: "{{ beads_hq_user }}"
-  environment:
-    HOME: "{{ beads_hq_root }}/{{ beads_hq_name }}"
-    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
-
-# Reassert ownership of the whole graph on every run.
-#
-# `bd` writes the Dolt manifest as whoever runs it. One `bd stats` as root
-# rewrote /srv/graphs/company-hq/.beads/embeddeddolt/wg/.dolt/noms/manifest as
-# root:root 0600, and the service user could no longer open the database at all:
-#
-#   failed to load database "wg": open .../noms/manifest: permission denied
-#
-# Everything that touches the graph runs as {{ beads_hq_user }} — the snapshot
-# timer, the export, the tasks above — so a single root-run command locks all of
-# them out. It IS caught: the snapshot unit fails, the receipt goes stale and the
-# monitor alerts on it. But being caught an hour later by an alert is worse than
-# being repaired here, and the repair costs a walk over a hundred small files.
-- name: Own the graph, whatever last wrote it
-  ansible.builtin.file:
-    path: "{{ beads_hq_root }}/{{ beads_hq_name }}"
-    state: directory
-    owner: "{{ beads_hq_user }}"
-    group: "{{ beads_hq_user }}"
-    recurse: true
-
-- name: Confirm the graph answers
-  ansible.builtin.command:
-    cmd: bd ready --json
-    chdir: "{{ beads_hq_root }}/{{ beads_hq_name }}"
-  become: true
-  become_user: "{{ beads_hq_user }}"
-  environment:
-    HOME: "{{ beads_hq_root }}/{{ beads_hq_name }}"
-    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
-  register: hq_ready
-  changed_when: false
+    loop_var: graph
+    label: "{{ graph.name }}"
