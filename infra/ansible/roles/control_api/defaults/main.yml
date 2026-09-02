@@ -106,9 +106,10 @@ control_api_ai_gateway_token: "{{ ai_gateway_token | default('') }}"
 
 # Where accepted knowledge records are proposed as Markdown (WP-H4).
 #
-# Empty on purpose. The GitHub App installation does not include
-# company-workgraph yet, and a configured repository the App cannot reach makes
-# the hourly pass fail rather than skip. Set it to "datopian/company-workgraph"
-# once the installation covers it.
-control_api_knowledge_repo: ""
+# The datopian-workgraph App installation now includes this repository, which is
+# what this was waiting on: a configured repository the App cannot reach makes
+# the hourly pass fail rather than skip. internal/githubapp's live check asserts
+# the installation still covers it, so removing it from the installation is
+# caught by anybody holding the credentials rather than by a 404 an hour later.
+control_api_knowledge_repo: "datopian/company-workgraph"
 control_api_knowledge_base: main
