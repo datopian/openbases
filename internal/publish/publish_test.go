@@ -1,8 +1,15 @@
 package publish
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/datopian/workgraph/internal/beads"
+	"github.com/datopian/workgraph/internal/domain"
 )
 
 func TestTitleKeepsTheFirstSentence(t *testing.T) {
@@ -126,5 +133,76 @@ func TestAPublisherWithoutItsDependenciesRefuses(t *testing.T) {
 	p := &Publisher{}
 	if _, err := p.Run(t.Context(), 10); err == nil {
 		t.Fatal("a publisher with no database and no client ran anyway")
+	}
+}
+
+// Work nobody has is work that does not happen. bd also takes the owner from
+// the actor when no assignee is given, so leaving this empty made the reviewer
+// the owner as a side effect of the audit trail rather than as a decision.
+func TestUnownedWorkFallsToTheReviewer(t *testing.T) {
+	c := Pending{CandidateID: "c1", Type: "task", Statement: "x",
+		ReviewerEmail: "reviewer@example.com"}
+	if got := c.issue(LabelPrefix + "c1").Assignee; got != "reviewer@example.com" {
+		t.Fatalf("assignee = %q, want the reviewer", got)
+	}
+
+	c.OwnerEmail = "named@example.com"
+	if got := c.issue(LabelPrefix + "c1").Assignee; got != "named@example.com" {
+		t.Fatalf("assignee = %q, want the proposed owner", got)
+	}
+}
+
+// An extracted statement is a model's reading of what was said; a written one
+// is somebody's own words. The bead should not claim the first about the second.
+func TestTheDescriptionSaysWhereTheStatementCameFrom(t *testing.T) {
+	written := Pending{CandidateID: "c1", Type: "task", Statement: "x", Inferred: false}
+	if got := written.issue("l").Description; !strings.Contains(got, "recorded in Workgraph") {
+		t.Fatalf("a hand-written statement is described as %q", got)
+	}
+	extracted := Pending{CandidateID: "c2", Type: "task", Statement: "x", Inferred: true}
+	if got := extracted.issue("l").Description; !strings.Contains(got, "extracted by Workgraph") {
+		t.Fatalf("an extracted statement is described as %q", got)
+	}
+}
+
+// A recording client, to assert the publisher attributes to the reviewer.
+type recorder struct {
+	actors []string
+	issues []beads.Issue
+}
+
+func (r *recorder) WithActor(actor string) Beads {
+	r.actors = append(r.actors, actor)
+	return r
+}
+
+func (r *recorder) ByLabel(ctx context.Context, db beads.DatabaseRef, label string) ([]beads.Issue, error) {
+	return nil, nil
+}
+
+// Records and then stops, so the test never reaches the database write --
+// which is what publish() does next, and what this test is not about.
+func (r *recorder) Create(ctx context.Context, db beads.DatabaseRef, issue beads.Issue) (domain.WorkRef, error) {
+	r.issues = append(r.issues, issue)
+	return domain.WorkRef{}, errStopAfterCreate
+}
+
+var errStopAfterCreate = errors.New("recorded; stopping before the database")
+
+func TestTheReviewerIsTheActor(t *testing.T) {
+	rec := &recorder{}
+	p := &Publisher{Beads: rec, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	c := Pending{CandidateID: "c1", Type: "task", Statement: "x",
+		ReviewerEmail: "reviewer@example.com", GraphID: "g1", GraphPath: "/srv/graphs/g"}
+
+	if _, err := p.publish(t.Context(), c, p.Log); !errors.Is(err, errStopAfterCreate) {
+		t.Fatalf("publish returned %v", err)
+	}
+
+	if len(rec.actors) != 1 || rec.actors[0] != "reviewer@example.com" {
+		t.Fatalf("actors = %v, want the reviewer once", rec.actors)
+	}
+	if len(rec.issues) != 1 {
+		t.Fatalf("created %d issues", len(rec.issues))
 	}
 }

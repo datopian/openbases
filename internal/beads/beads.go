@@ -132,6 +132,17 @@ type CLIClient struct {
 
 var _ Client = (*CLIClient)(nil)
 
+// WithActor returns a client that attributes its writes to somebody else.
+//
+// A copy rather than a setter: the actor belongs to one operation, and a
+// long-lived client whose actor is mutated between calls attributes whatever
+// is in flight to whoever set it last.
+func (c *CLIClient) WithActor(actor string) *CLIClient {
+	copied := *c
+	copied.Actor = actor
+	return &copied
+}
+
 // Ready returns unblocked work.
 //
 // `bd ready` is authoritative for readiness inside a graph and the control
