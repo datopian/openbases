@@ -26,6 +26,14 @@ Environment=WG_GOOGLE_SUBJECT={{ control_api_google_subject }}
 Environment=WG_GOOGLE_PUBSUB_TOPIC={{ control_api_google_topic }}
 Environment=GOOGLE_APPLICATION_CREDENTIALS={{ control_api_google_key_path }}
 
+# Publishing accepted candidates as beads (WP-H4). The node name is how the
+# publisher tells a graph on this host from one recorded elsewhere: it must
+# match what the registry stored, which is inventory_hostname.
+Environment=WG_NODE_NAME={{ inventory_hostname }}
+# /usr/local/bin/bd is where beads_hq installs the pinned binary, hardcoded
+# there too rather than behind a variable that could name a different one.
+Environment=WG_BEADS_BINARY=/usr/local/bin/bd
+
 ExecStart={{ control_api_workspace_binary }}
 
 # This key can read every file in three shared drives as any user in the
@@ -35,6 +43,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
+# The graphs, which publication writes to. ProtectSystem=strict makes the whole
+# filesystem read-only, so without this `bd create` fails on a directory the
+# service user owns -- which reads as a permissions problem and is not one.
+ReadWritePaths={{ beads_hq_root | default('/srv/graphs') }}
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true

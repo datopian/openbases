@@ -29,6 +29,7 @@ type rawIssue struct {
 	Priority    int      `json:"priority"`
 	Labels      []string `json:"labels"`
 	Owner       string   `json:"owner"`
+	ExternalRef string   `json:"external_ref"`
 	Parent      string   `json:"parent"`
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
@@ -51,6 +52,7 @@ func (r rawIssue) toIssue(db DatabaseRef, org string) Issue {
 		Priority:    r.Priority,
 		Labels:      r.Labels,
 		Assignee:    r.Owner,
+		ExternalRef: r.ExternalRef,
 		CreatedAt:   created,
 		UpdatedAt:   updated,
 	}
@@ -78,9 +80,16 @@ func (c *CLIClient) run(ctx context.Context, db DatabaseRef, args ...string) ([]
 	// Beads writes into a Dolt database owned by the cell user. The actor is
 	// passed through so the Dolt commit trail attributes the change to whoever
 	// asked for it rather than to the service account.
+	env := cmd.Environ()
 	if c.Actor != "" {
-		cmd.Env = append(cmd.Environ(), "BEADS_ACTOR="+c.Actor)
+		env = append(env, "BEADS_ACTOR="+c.Actor)
 	}
+	if c.HomeAtDatabasePath && db.Path != "" {
+		// Last wins in exec's environment, so this overrides an inherited
+		// HOME rather than conflicting with it.
+		env = append(env, "HOME="+db.Path)
+	}
+	cmd.Env = env
 
 	start := time.Now()
 	err := cmd.Run()

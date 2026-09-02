@@ -45,6 +45,14 @@ type Issue struct {
 	Priority    int
 	Labels      []string
 	Assignee    string
+	// Due is the date the work is expected by, if the source named one. Zero
+	// means no due date rather than "today".
+	Due time.Time
+	// ExternalRef points back at whatever outside Beads caused this item, in
+	// bd's own external reference field. A bead that came from an accepted
+	// meeting statement should say so from inside the graph, without a lookup
+	// in the control plane.
+	ExternalRef string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -104,6 +112,20 @@ type CLIClient struct {
 	// from the registry.
 	DatabasePaths map[string]string
 
+	// HomeAtDatabasePath runs `bd` with HOME set to the database's own
+	// directory.
+	//
+	// Dolt writes its configuration under $HOME and segfaults if it cannot.
+	// The control node's service account is created without a home directory
+	// -- correct for a service, fatal here -- so beads_hq initialises each
+	// graph with HOME pointing at the graph directory, and its dolt config
+	// lives at <path>/.dolt/config_global.json. Anything running `bd` there
+	// has to use the same HOME or Dolt looks for a config it cannot write.
+	//
+	// Off by default: on a cell the user has a real home and a fresh config
+	// under the graph directory would be a second identity to keep in step.
+	HomeAtDatabasePath bool
+
 	// Record receives one entry per invocation for the audit log.
 	Record func(CommandRecord)
 }
@@ -131,6 +153,27 @@ func (c *CLIClient) List(ctx context.Context, db DatabaseRef, status string) ([]
 		args = append(args, "--status", status)
 	}
 	out, err := c.run(ctx, db, args...)
+	if err != nil {
+		return nil, err
+	}
+	return c.decodeIssues(out, db)
+}
+
+// ByLabel returns the issues carrying a label, exactly.
+//
+// Used to answer "did I already create this?" before creating it. The label
+// carries the id of the thing outside Beads that caused the bead, so the graph
+// itself is the record of what has been published -- rather than a control-plane
+// row that may not have been written if the process died between the two.
+//
+// Not on the Client interface: it exists for that one question, and an
+// interface method every implementation must carry for one caller is a cost
+// paid everywhere.
+func (c *CLIClient) ByLabel(ctx context.Context, db DatabaseRef, label string) ([]Issue, error) {
+	if strings.TrimSpace(label) == "" {
+		return nil, errors.New("a label lookup needs a label")
+	}
+	out, err := c.run(ctx, db, "list", "--label", label, "--json")
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +226,12 @@ func (c *CLIClient) Create(ctx context.Context, db DatabaseRef, issue Issue) (do
 	}
 	if issue.Assignee != "" {
 		args = append(args, "--assignee", issue.Assignee)
+	}
+	if !issue.Due.IsZero() {
+		args = append(args, "--due", issue.Due.Format("2006-01-02"))
+	}
+	if issue.ExternalRef != "" {
+		args = append(args, "--external-ref", issue.ExternalRef)
 	}
 
 	out, err := c.run(ctx, db, args...)

@@ -74,11 +74,12 @@ BEGIN
     RAISE EXCEPTION 'acceptance widened the classification';
   END IF;
 
-  -- An operational type says what happened rather than silently doing nothing.
+  -- An operational type says it is queued for Beads, and the publisher (which
+  -- runs bd on a host, not in here) is what turns that into a bead.
   SELECT id INTO cand FROM knowledge_candidates
    WHERE source_id = current_setting('test.source')::uuid AND candidate_type = 'task';
   res := review_candidate(cand, 'accept');
-  IF res ->> 'published' <> 'pending_beads' THEN
+  IF res ->> 'published' <> 'queued_beads' THEN
     RAISE EXCEPTION 'an accepted task reported publication as %', res ->> 'published';
   END IF;
   IF (res -> 'record_id') <> 'null'::jsonb THEN

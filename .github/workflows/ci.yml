@@ -229,6 +229,15 @@ jobs:
       - name: accepting a candidate publishes it with its provenance
         run: psql -v ON_ERROR_STOP=1 -f test/integration/durable_publication.sql
 
+      # Publication of the operational half happens outside the database, so
+      # what is testable here is the whole interface to the publisher: which
+      # candidates are offered, which graph each routes to, which are refused,
+      # and that recording the result twice does not create a second bead.
+      # Routing is a confidentiality boundary -- a client's accepted commitment
+      # must never fall back to the company graph.
+      - name: an accepted operational candidate becomes work, exactly once
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/work_publication.sql
+
       # Personal API tokens: who can see whose, revocation taking effect on the
       # next lookup, and the CHECK constraints biting. The constraints are the
       # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes
