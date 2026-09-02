@@ -42,7 +42,8 @@ BEGIN
        AND EXISTS (
          SELECT 1 FROM pg_constraint fk
           WHERE fk.conrelid = c.oid AND fk.contype = 'f'
-            AND fk.confrelid IN ('knowledge_sources'::regclass,
+            AND fk.confrelid IN ('work_refs'::regclass,
+                                 'knowledge_sources'::regclass,
                                  'knowledge_candidates'::regclass,
                                  'event_sources'::regclass))
        -- Declared exceptions. Each needs a reason, because adding a name here

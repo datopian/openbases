@@ -259,6 +259,14 @@ jobs:
       - name: an accepted operational candidate becomes work, exactly once
         run: psql -v ON_ERROR_STOP=1 -f test/integration/work_publication.sql
 
+      # The cross-graph link layer. Beads graphs cannot reference each other,
+      # so a company decision, a project epic and a personal follow-up can only
+      # be related in the control plane -- and work_links had no row-level
+      # security at all, because 0010 sweeps tables carrying a project_id and an
+      # edge carries none.
+      - name: work crossing graphs is linked in the control plane, under RLS
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/cross_graph_links.sql
+
       # The durable half. The pull request is a GitHub call, so what is
       # asserted here is the interface: the provenance that travels with a
       # record, that the excerpt TEXT does not, and that recording the
