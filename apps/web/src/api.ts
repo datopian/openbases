@@ -178,6 +178,7 @@ export interface QueueJob {
   created_at: string;
   finished_at?: string;
   result?: string;
+  project?: string;
 }
 
 /** POST that turns a refusal body into a readable error. */
@@ -215,7 +216,12 @@ export const api = {
   workQueue: async () =>
     asList((await get<{ queue: QueueJob[] | null }>("/v1/work/queue"))?.queue),
 
-  plan: async (brief: string) => post<{ job: string }>("/v1/work/plan", { brief }),
+  // The project is optional and, when given, is verified against the caller's
+  // membership by system_enqueue_work. Sending "" rather than omitting it
+  // would be a request to file into a project called empty string, so it is
+  // left out instead.
+  plan: async (brief: string, project?: string) =>
+    post<{ job: string }>("/v1/work/plan", project ? { brief, project } : { brief }),
 
   // A budget refusal arrives as 402 with the reason in the body. Surfaced as
   // the error message rather than swallowed into "request failed", because the

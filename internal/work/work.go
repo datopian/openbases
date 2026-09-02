@@ -30,6 +30,11 @@ type Job struct {
 	Rig   string `json:"rig"`
 	Bead  string `json:"bead,omitempty"`
 	Brief string `json:"brief,omitempty"`
+	// Project is the slug the work is filed into, verified against the
+	// requester's membership when the job was enqueued. Empty is company-wide
+	// work; it is not a default the runner may choose, which is why it travels
+	// with the job rather than being read from anywhere on the node.
+	Project string `json:"project,omitempty"`
 }
 
 // Result is what the node reports back.
@@ -81,17 +86,30 @@ func (j Job) Instructions() string {
 		// Acceptance criteria on each, because a bead without them cannot be
 		// judged done, and the agent that later picks it up has nothing to aim
 		// at.
+		// The project instruction is separate from the brief and comes
+		// AFTER it, so a brief that says "file these under x" cannot read as
+		// the label to use: the project was decided by whoever enqueued the
+		// job, against their own membership, and the brief is untrusted text
+		// pasted in from a document.
+		project := ""
+		if p := strings.TrimSpace(j.Project); p != "" {
+			project = fmt.Sprintf(
+				"Label every bead you create with `wg-project-%s`, and no other project "+
+					"label. This work belongs to that project and its label is what "+
+					"decides who can read it.\n\n", p)
+		}
 		return fmt.Sprintf(
 			"Read this brief and turn it into beads. Do NOT do any of the work itself, "+
 				"do not modify files, and do not open pull requests.\n\n"+
 				"BRIEF:\n%s\n\n"+
+				"%s"+
 				"Create between 2 and 8 beads with `bd create`. Each one must be a single "+
 				"piece of work somebody could pick up on its own, with a title that says what "+
 				"it delivers, a description explaining why it is needed, and acceptance "+
 				"criteria that make it possible to tell when it is done. Where one bead must "+
 				"happen before another, record that with `bd dep add`.\n\n"+
 				"When you are finished, list the bead ids you created.",
-			strings.TrimSpace(j.Brief))
+			strings.TrimSpace(j.Brief), project)
 
 	case KindWork:
 		return fmt.Sprintf(

@@ -56,3 +56,28 @@ func TestTheWorkPromptDoesNotInviteAFalseClose(t *testing.T) {
 		t.Error("the instructions should say when NOT to close")
 	}
 }
+
+// The project label reaches the planning agent, and the brief cannot supply it.
+//
+// The project was decided by whoever enqueued the job, checked against their
+// own membership. The brief is untrusted text pasted in from a document, so an
+// instruction inside it must not read as the label to use -- which is why the
+// project instruction comes after the brief rather than being interpolated
+// into it.
+func TestPlanPromptCarriesTheProject(t *testing.T) {
+	j := Job{Kind: KindPlan, Brief: "Stand up a portal", Project: "roseville-poc"}
+	p := j.Instructions()
+
+	if !strings.Contains(p, "wg-project-roseville-poc") {
+		t.Fatalf("the project label is missing:\n%s", p)
+	}
+	if strings.Index(p, "Stand up a portal") > strings.Index(p, "wg-project-roseville-poc") {
+		t.Fatal("the project instruction precedes the brief, so the brief could redefine it")
+	}
+
+	// No project: no instruction at all, rather than an empty label.
+	j.Project = ""
+	if got := j.Instructions(); strings.Contains(got, "wg-project-") {
+		t.Fatalf("a projectless plan mentions a project label:\n%s", got)
+	}
+}
