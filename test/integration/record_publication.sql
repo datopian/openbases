@@ -62,6 +62,17 @@ BEGIN
           'confidential', alpha, '[{"line":20,"text":"noted"}]'::jsonb, 'extract-test')
   RETURNING id INTO cand;
   PERFORM set_config('test.candidate2', cand::text, false);
+
+  -- A third, for the related_work block: the first record is fully published
+  -- by then and out of the queue, so it cannot answer whether a record names
+  -- its bead.
+  INSERT INTO knowledge_candidates (source_id, candidate_type, statement, confidence,
+                                    visibility, proposed_project_id, source_spans,
+                                    extractor_prompt_version)
+  VALUES (src, 'decision', 'A second decision', 0.9, 'confidential', alpha,
+          '[{"line":30,"text":"agreed"}]'::jsonb, 'extract-test')
+  RETURNING id INTO cand;
+  PERFORM set_config('test.candidate3', cand::text, false);
 END $$;
 
 SET LOCAL ROLE workgraph_app;
@@ -99,6 +110,14 @@ BEGIN
   END IF;
   IF row_out.candidate_id <> current_setting('test.candidate')::uuid THEN
     RAISE EXCEPTION 'the record does not point back at its candidate';
+  END IF;
+  IF row_out.organisation_id IS NULL THEN
+    RAISE EXCEPTION 'the record has no organisation, so a bead tuple cannot be built';
+  END IF;
+  -- No bead yet, so nothing to link. Asserted because an empty list and a
+  -- missing key are different things to a reader of the front matter.
+  IF row_out.related_work <> '[]'::jsonb THEN
+    RAISE EXCEPTION 'related_work is % before any bead exists', row_out.related_work;
   END IF;
 
   -- Provenance by reference. A provider, a revision, and line numbers.
@@ -148,7 +167,9 @@ BEGIN
       row_out.markdown_published, row_out.bead_published;
   END IF;
 
-  -- Recording the bead finishes it.
+  -- Recording the bead finishes it, and the record then names the bead it
+  -- produced. The bead's description already carried "Record: mem-<id>"; the
+  -- link ran one way, and the two artefacts exist so Git and PostgreSQL agree.
   PERFORM system_record_work_publication(current_setting('test.candidate')::uuid,
       row_out.graph_id, 'rec-abc', 'Use batch ingestion for phase one', 'decision');
 
@@ -171,6 +192,45 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'record publication assertions passed';
+END $$;
+
+-- Once the bead exists the record names it, as the identity TUPLE the schema
+-- asks for: a bead id alone is ambiguous between graphs (plan section 7.3).
+-- Read through a second record so the first, now fully published, stays out of
+-- the queue.
+DO $$
+DECLARE rec uuid; row_out record; graph uuid;
+BEGIN
+  PERFORM set_config('workgraph.user_id', current_setting('test.reviewer'), true);
+
+  SELECT beads_database_id INTO graph FROM work_refs WHERE bead_id = 'rec-abc';
+  IF graph IS NULL THEN
+    RAISE EXCEPTION 'the earlier block did not record a bead';
+  END IF;
+
+  rec := (review_candidate(current_setting('test.candidate3')::uuid, 'accept') ->> 'record_id')::uuid;
+  PERFORM system_record_work_publication(current_setting('test.candidate3')::uuid,
+      graph, 'rec-def', 'A second decision', 'decision');
+
+  SELECT * INTO row_out FROM system_pending_record_publications(20) WHERE record_id = rec;
+  IF row_out.record_id IS NULL THEN
+    RAISE EXCEPTION 'a record with a bead and no Markdown left the queue';
+  END IF;
+  IF jsonb_array_length(row_out.related_work) <> 1 THEN
+    RAISE EXCEPTION 'related_work = %', row_out.related_work;
+  END IF;
+  IF row_out.related_work -> 0 ->> 'bead_id' <> 'rec-def' THEN
+    RAISE EXCEPTION 'the wrong bead: %', row_out.related_work -> 0;
+  END IF;
+  IF row_out.related_work -> 0 ->> 'beads_database_id' <> graph::text THEN
+    RAISE EXCEPTION 'the tuple has no graph, so the bead id is ambiguous: %',
+      row_out.related_work -> 0;
+  END IF;
+  IF row_out.related_work -> 0 ->> 'organisation_id' IS NULL THEN
+    RAISE EXCEPTION 'the tuple has no organisation: %', row_out.related_work -> 0;
+  END IF;
+
+  RAISE NOTICE 'a record names the bead it produced';
 END $$;
 
 -- The publisher records a publication with NO app user, because it runs on a
