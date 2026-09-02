@@ -27,6 +27,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/datopian/workgraph/internal/authz"
 	"github.com/datopian/workgraph/internal/config"
 )
 
@@ -144,25 +145,39 @@ func syncHQ(ctx context.Context, db *sql.DB) {
 }
 
 func listWork(ctx context.Context, db *sql.DB) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT bead, coalesce(title,''), coalesce(status,''), coalesce(queue_state,''),
-		        spent_cents::text, requests
-		   FROM system_work_overview(NULL) LIMIT 60`)
+	userID, err := operator(ctx, db)
 	if err != nil {
 		fail(err)
 	}
-	defer rows.Close()
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "BEAD\tSTATUS\tQUEUE\tCENTS\tREQS\tTITLE")
 	n := 0
-	for rows.Next() {
-		var bead, title, status, queue, cents string
-		var reqs int64
-		if err := rows.Scan(&bead, &title, &status, &queue, &cents, &reqs); err != nil {
-			fail(err)
+	// In a transaction with the identity set, because system_work_overview
+	// filters on current_app_user() (0071) and set_config is transaction-local:
+	// issuing it on a pooled *sql.DB would not reach a query on another
+	// connection. authz.WithUser is the same helper the API uses.
+	if err := authz.WithUser(ctx, db, userID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT bead, coalesce(title,''), coalesce(status,''), coalesce(queue_state,''),
+			        spent_cents::text, requests
+			   FROM system_work_overview(NULL) LIMIT 60`)
+		if err != nil {
+			return err
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n", bead, status, dash(queue), trimCents(cents), reqs, truncate(title, 52))
-		n++
+		defer rows.Close()
+		for rows.Next() {
+			var bead, title, status, queue, cents string
+			var reqs int64
+			if err := rows.Scan(&bead, &title, &status, &queue, &cents, &reqs); err != nil {
+				return err
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n", bead, status, dash(queue), trimCents(cents), reqs, truncate(title, 52))
+			n++
+		}
+		return rows.Err()
+	}); err != nil {
+		fail(err)
 	}
 	w.Flush()
 	if n == 0 {
@@ -171,32 +186,74 @@ func listWork(ctx context.Context, db *sql.DB) {
 }
 
 func listQueue(ctx context.Context, db *sql.DB) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT id, kind, cell, coalesce(bead,''), status, created_at,
-		        coalesce(left(coalesce(result, brief, ''), 60), '')
-		   FROM system_queue_overview(NULL) LIMIT 40`)
+	userID, err := operator(ctx, db)
 	if err != nil {
 		fail(err)
 	}
-	defer rows.Close()
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "JOB\tKIND\tCELL\tBEAD\tSTATUS\tAGE\tDETAIL")
 	n := 0
-	for rows.Next() {
-		var id, kind, cell, bead, status, detail string
-		var created time.Time
-		if err := rows.Scan(&id, &kind, &cell, &bead, &status, &created, &detail); err != nil {
-			fail(err)
+	if err := authz.WithUser(ctx, db, userID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id, kind, cell, coalesce(bead,''), status, created_at,
+			        coalesce(left(coalesce(result, brief, ''), 60), '')
+			   FROM system_queue_overview(NULL) LIMIT 40`)
+		if err != nil {
+			return err
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id[:8], kind, cell, dash(bead), status,
-			time.Since(created).Round(time.Second), strings.ReplaceAll(truncate(detail, 56), "\n", " "))
-		n++
+		defer rows.Close()
+		for rows.Next() {
+			var id, kind, cell, bead, status, detail string
+			var created time.Time
+			if err := rows.Scan(&id, &kind, &cell, &bead, &status, &created, &detail); err != nil {
+				return err
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				id[:8], kind, cell, dash(bead), status,
+				time.Since(created).Round(time.Second), strings.ReplaceAll(truncate(detail, 56), "\n", " "))
+			n++
+		}
+		return rows.Err()
+	}); err != nil {
+		fail(err)
 	}
 	w.Flush()
 	if n == 0 {
 		fmt.Println("\nthe queue is empty")
 	}
+}
+
+// operator resolves the person running this command.
+//
+// The listings go through SECURITY DEFINER functions that filter on
+// current_app_user() (0071), so this tool needs a named identity like any other
+// caller. Before that filter existed it had none and saw every project's work,
+// which on a box holding CDT and NGED material is not a tool anybody should
+// have to remember to be careful with.
+//
+// WG_OPERATOR_EMAIL rather than a flag, so a systemd unit can set it once and
+// an operator's shell profile can too. Refused loudly when unset: printing an
+// empty table would look like "there is no work" rather than "you did not say
+// who you are", and that mistake costs somebody an hour.
+func operator(ctx context.Context, db *sql.DB) (string, error) {
+	email := strings.TrimSpace(os.Getenv("WG_OPERATOR_EMAIL"))
+	if email == "" {
+		return "", errors.New("set WG_OPERATOR_EMAIL to your Workgraph email address: " +
+			"the listings are filtered by what you may see, so they need to know who you are")
+	}
+
+	var id string
+	err := db.QueryRowContext(ctx,
+		`SELECT id::text FROM users WHERE lower(primary_email) = lower($1) AND status = 'active'`,
+		email).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("no active Workgraph user has the email %s", email)
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func open(ctx context.Context) (*sql.DB, error) {
