@@ -622,36 +622,45 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			SpentCents string `json:"spent_cents"`
 			Requests   int64  `json:"requests"`
 		}
-		rows, err := db.QueryContext(r.Context(),
-			`SELECT bead, coalesce(title,''), coalesce(kind,''), coalesce(status,''),
-			        coalesce(cell,''), coalesce(project,''), last_seen,
-			        coalesce(queue_state,''), queued_at, spent_cents::text, requests
-			   FROM system_work_overview($1)`, cell)
+		// Inside authz.WithUser, because system_work_overview is SECURITY
+		// DEFINER and filters on current_app_user(). Querying db directly --
+		// which this did -- sets no identity, so the function saw no user and
+		// its filter would return nothing. The endpoint checked that a user
+		// was authenticated and then asked the database as nobody.
+		out := []item{}
+		err := authz.WithUser(r.Context(), db, id.UserID, func(tx *sql.Tx) error {
+			rows, err := tx.QueryContext(r.Context(),
+				`SELECT bead, coalesce(title,''), coalesce(kind,''), coalesce(status,''),
+				        coalesce(cell,''), coalesce(project,''), last_seen,
+				        coalesce(queue_state,''), queued_at, spent_cents::text, requests
+				   FROM system_work_overview($1)`, cell)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				var it item
+				var lastSeen sql.NullTime
+				var queuedAt sql.NullTime
+				if err := rows.Scan(&it.Bead, &it.Title, &it.Kind, &it.Status, &it.Cell,
+					&it.Project, &lastSeen, &it.QueueState, &queuedAt, &it.SpentCents, &it.Requests); err != nil {
+					return err
+				}
+				if lastSeen.Valid {
+					it.LastSeen = lastSeen.Time.UTC().Format(time.RFC3339)
+				}
+				if queuedAt.Valid {
+					it.QueuedAt = queuedAt.Time.UTC().Format(time.RFC3339)
+				}
+				out = append(out, it)
+			}
+			return rows.Err()
+		})
 		if err != nil {
 			log.Error("listing work", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 			return
-		}
-		defer rows.Close()
-
-		out := []item{}
-		for rows.Next() {
-			var it item
-			var lastSeen sql.NullTime
-			var queuedAt sql.NullTime
-			if err := rows.Scan(&it.Bead, &it.Title, &it.Kind, &it.Status, &it.Cell,
-				&it.Project, &lastSeen, &it.QueueState, &queuedAt, &it.SpentCents, &it.Requests); err != nil {
-				log.Error("scanning work", "error", err)
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
-				return
-			}
-			if lastSeen.Valid {
-				it.LastSeen = lastSeen.Time.UTC().Format(time.RFC3339)
-			}
-			if queuedAt.Valid {
-				it.QueuedAt = queuedAt.Time.UTC().Format(time.RFC3339)
-			}
-			out = append(out, it)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"work": out})
 	})
@@ -668,17 +677,6 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
 			return
 		}
-		rows, err := db.QueryContext(r.Context(),
-			`SELECT id, kind, cell, rig, coalesce(bead,''), coalesce(brief,''),
-			        status, created_at, finished_at, coalesce(result,'')
-			   FROM system_queue_overview($1)`, nullableParam(r.URL.Query().Get("cell")))
-		if err != nil {
-			log.Error("listing the queue", "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
-			return
-		}
-		defer rows.Close()
-
 		type job struct {
 			ID         string `json:"id"`
 			Kind       string `json:"kind"`
@@ -691,22 +689,39 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			FinishedAt string `json:"finished_at,omitempty"`
 			Result     string `json:"result,omitempty"`
 		}
+		// Same reason as GET /v1/work: system_queue_overview filters on
+		// current_app_user(), so the query has to carry an identity.
 		out := []job{}
-		for rows.Next() {
-			var j job
-			var created time.Time
-			var finished sql.NullTime
-			if err := rows.Scan(&j.ID, &j.Kind, &j.Cell, &j.Rig, &j.Bead, &j.Brief,
-				&j.Status, &created, &finished, &j.Result); err != nil {
-				log.Error("scanning the queue", "error", err)
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
-				return
+		err := authz.WithUser(r.Context(), db, id.UserID, func(tx *sql.Tx) error {
+			rows, err := tx.QueryContext(r.Context(),
+				`SELECT id, kind, cell, rig, coalesce(bead,''), coalesce(brief,''),
+				        status, created_at, finished_at, coalesce(result,'')
+				   FROM system_queue_overview($1)`, nullableParam(r.URL.Query().Get("cell")))
+			if err != nil {
+				return err
 			}
-			j.CreatedAt = created.UTC().Format(time.RFC3339)
-			if finished.Valid {
-				j.FinishedAt = finished.Time.UTC().Format(time.RFC3339)
+			defer rows.Close()
+
+			for rows.Next() {
+				var j job
+				var created time.Time
+				var finished sql.NullTime
+				if err := rows.Scan(&j.ID, &j.Kind, &j.Cell, &j.Rig, &j.Bead, &j.Brief,
+					&j.Status, &created, &finished, &j.Result); err != nil {
+					return err
+				}
+				j.CreatedAt = created.UTC().Format(time.RFC3339)
+				if finished.Valid {
+					j.FinishedAt = finished.Time.UTC().Format(time.RFC3339)
+				}
+				out = append(out, j)
 			}
-			out = append(out, j)
+			return rows.Err()
+		})
+		if err != nil {
+			log.Error("listing the queue", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"queue": out})
 	})

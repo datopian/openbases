@@ -267,6 +267,14 @@ jobs:
       - name: work crossing graphs is linked in the control plane, under RLS
         run: psql -v ON_ERROR_STOP=1 -f test/integration/cross_graph_links.sql
 
+      # The work overview is what a colleague sees when they log in, and both
+      # of its functions are SECURITY DEFINER with no filter -- 0036's comment
+      # said the visibility rule was written there and it was not. Asserted in
+      # both directions: a filter that returns nothing to everybody would pass
+      # a leak test and break the product.
+      - name: the work overview shows only what the caller may see
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/work_overview_visibility.sql
+
       # The durable half. The pull request is a GitHub call, so what is
       # asserted here is the interface: the provenance that travels with a
       # record, that the excerpt TEXT does not, and that recording the
