@@ -229,6 +229,28 @@ func TestContractBackup(t *testing.T) {
 	if err := c.Backup(context.Background(), db); err != nil {
 		t.Fatalf("bd backup: %v", err)
 	}
+
+	// bd backup writes _to_delete_<prefix>.tgz into the PROCESS working
+	// directory rather than into the graph it was given with -C. Running bd by
+	// hand at the repository root is how a megabyte of Dolt data reached main
+	// through `git add -A`; .gitignore is the fix for that, and this sweeps the
+	// package directory so the same file cannot accumulate here either.
+	//
+	// This test alone leaves nothing behind today, which is why the empty case
+	// logs rather than fails: the file name and location are bd's, and pinning
+	// a test to them would break on a version that changes either.
+	matches, err := filepath.Glob("_to_delete_*.tgz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) == 0 {
+		t.Log("bd backup left no _to_delete_*.tgz in the working directory")
+	}
+	for _, m := range matches {
+		if err := os.Remove(m); err != nil {
+			t.Errorf("removing the backup artefact %s: %v", m, err)
+		}
+	}
 }
 
 // The pinned version must be what versions.lock declares. Gas Town v1.2.0

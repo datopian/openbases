@@ -4,6 +4,10 @@
 apps/web/dist/
 *.test
 coverage.out
+# bd backup writes this into the process working directory rather than into
+# the graph. TestContractBackup removes it; this is the belt, because a
+# megabyte of Dolt data reached main once through git add -A.
+_to_delete_*.tgz
 
 # Dependencies
 node_modules/
