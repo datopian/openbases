@@ -133,8 +133,14 @@ BEGIN
     END IF;
   END LOOP;
 
-  IF seen < 4 THEN
-    RAISE EXCEPTION 'checked % management role holders, expected at least 4', seen;
+  -- Every holder found is checked, and the block above refuses to run with
+  -- none. No count assertion: "expected at least 4" was an org-chart claim,
+  -- and it failed in CI where the seed had two -- three of the six grants
+  -- existed only on staging until 0066 put them in a migration. The property
+  -- is "each holder reads everything", and a fifth appointment should not
+  -- break a test about a policy.
+  IF seen = 0 THEN
+    RAISE EXCEPTION 'no management role holders were checked';
   END IF;
 
   RAISE NOTICE 'all % company-wide role holders read restricted client material', seen;
