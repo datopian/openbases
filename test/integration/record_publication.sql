@@ -51,6 +51,17 @@ BEGIN
           'extract-test')
   RETURNING id INTO cand;
   PERFORM set_config('test.candidate', cand::text, false);
+
+  -- A second candidate, left for the system-path block below: by then the
+  -- first record has been published, and system_record_markdown_publication is
+  -- idempotent, so reusing it would prove nothing.
+  INSERT INTO knowledge_candidates (source_id, candidate_type, statement, confidence,
+                                    visibility, proposed_project_id, source_spans,
+                                    extractor_prompt_version)
+  VALUES (src, 'lesson', 'Check the deferred triggers when a system write fails', 0.9,
+          'confidential', alpha, '[{"line":20,"text":"noted"}]'::jsonb, 'extract-test')
+  RETURNING id INTO cand;
+  PERFORM set_config('test.candidate2', cand::text, false);
 END $$;
 
 SET LOCAL ROLE workgraph_app;
@@ -160,6 +171,46 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'record publication assertions passed';
+END $$;
+
+-- The publisher records a publication with NO app user, because it runs on a
+-- timer as the system. That has to work, and it did not: the provenance
+-- trigger is DEFERRABLE INITIALLY DEFERRED, so it fires at COMMIT -- back as
+-- the session role, outside the SECURITY DEFINER function -- and its EXISTS
+-- against knowledge_record_sources was filtered by row-level security. Whether
+-- a correct record passed the check depended on who was writing. Two pull
+-- requests were open in company-workgraph for records it said had no source.
+DO $$
+DECLARE rec uuid; recorded boolean;
+BEGIN
+  PERFORM set_config('workgraph.user_id', current_setting('test.reviewer'), true);
+  rec := (review_candidate(current_setting('test.candidate2')::uuid, 'accept') ->> 'record_id')::uuid;
+  IF rec IS NULL THEN
+    RAISE EXCEPTION 'accepting the second candidate produced no record';
+  END IF;
+  PERFORM set_config('test.record', rec::text, false);
+
+  -- As the system: an empty identity, which is what a timer has.
+  PERFORM set_config('workgraph.user_id', '', true);
+  IF current_app_user() IS NOT NULL THEN
+    RAISE EXCEPTION 'this block must run with no app user';
+  END IF;
+
+  recorded := system_record_markdown_publication(current_setting('test.record')::uuid,
+      'knowledge/projects/test-rec-alpha/decisions/system-path.md',
+      'https://github.test/pr/system');
+  IF NOT recorded THEN
+    RAISE EXCEPTION 'the system path recorded nothing';
+  END IF;
+END $$;
+
+-- Forced here rather than at COMMIT, so the deferred provenance check runs
+-- inside the test transaction. Without the fix this is where it raises.
+SET CONSTRAINTS ALL IMMEDIATE;
+
+DO $$
+BEGIN
+  RAISE NOTICE 'the system path can record a publication with no identity';
 END $$;
 
 -- A path with no pull request, or a pull request with no path, is refused by

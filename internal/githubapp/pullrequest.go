@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -117,6 +118,12 @@ func (c *Client) OpenPullRequest(ctx context.Context, tok *InstallationToken, re
 				reasons += "; " + e.Message
 			}
 		}
+		// GitHub says "A pull request already exists for owner:branch". That
+		// is the retry path rather than a failure, and the caller has to be
+		// able to tell them apart to go and find the one it opened before.
+		if strings.Contains(reasons, "already exists") {
+			return nil, fmt.Errorf("%w: %s", ErrAlreadyOpen, reasons)
+		}
 		return nil, fmt.Errorf("opening pull request: %s: %s", resp.Status, reasons)
 	}
 
@@ -125,4 +132,33 @@ func (c *Client) OpenPullRequest(ctx context.Context, tok *InstallationToken, re
 		return nil, err
 	}
 	return &pr, nil
+}
+
+// ErrAlreadyOpen reports a pull request that exists for this head branch.
+//
+// Its own error because it is the retry path, not a failure: a pass that opened
+// the pull request and then died before recording it comes back to find its own
+// work.
+var ErrAlreadyOpen = errors.New("a pull request is already open for this branch")
+
+// FindPullRequest returns the open pull request for a head branch, if there is
+// one.
+func (c *Client) FindPullRequest(ctx context.Context, tok *InstallationToken, owner, repo, head string) (*PullRequest, error) {
+	if tok == nil || tok.Token == "" {
+		return nil, errors.New("no installation token")
+	}
+	if owner == "" || repo == "" || head == "" {
+		return nil, errors.New("finding a pull request needs an owner, a repository and a head branch")
+	}
+
+	u := fmt.Sprintf("%s/repos/%s/%s/pulls?state=open&head=%s",
+		c.baseURL(), owner, repo, url.QueryEscape(owner+":"+head))
+	var out []PullRequest
+	if err := c.callJSON(ctx, tok, http.MethodGet, u, nil, &out, http.StatusOK); err != nil {
+		return nil, fmt.Errorf("looking for a pull request from %s: %w", head, err)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return &out[0], nil
 }
