@@ -35,7 +35,21 @@ import (
 type Beads interface {
 	Create(ctx context.Context, db beads.DatabaseRef, issue beads.Issue) (domain.WorkRef, error)
 	ByLabel(ctx context.Context, db beads.DatabaseRef, label string) ([]beads.Issue, error)
+	// WithActor attributes the writes to the person who caused them. The Dolt
+	// commit trail is the record of who did what, and a service account in
+	// every row makes it useless for that.
+	WithActor(actor string) Beads
 }
+
+// CLI adapts the Beads command-line client to this package's interface.
+//
+// The adapter exists for one reason: WithActor on the concrete client returns
+// a *beads.CLIClient, and Go will not accept that as an implementation of a
+// method returning the interface. Two lines here beat a factory function
+// threaded through the Publisher.
+type CLI struct{ *beads.CLIClient }
+
+func (c CLI) WithActor(actor string) Beads { return CLI{c.CLIClient.WithActor(actor)} }
 
 // Pending is one accepted candidate awaiting publication, with the graph the
 // routing chose for it.
@@ -46,6 +60,7 @@ type Pending struct {
 	Due           time.Time
 	Visibility    string
 	Confidence    float64
+	Inferred      bool
 	ProjectSlug   string
 	OwnerEmail    string
 	ReviewerEmail string
@@ -147,7 +162,15 @@ func (p *Publisher) publish(ctx context.Context, c Pending, log *slog.Logger) (a
 	// Ask the graph first. This is the idempotency: a bead already carrying
 	// this candidate's label was created by an earlier pass that did not get
 	// as far as recording it.
-	existing, err := p.Beads.ByLabel(ctx, ref, label)
+	// Attributed to the reviewer who accepted the statement, not to the
+	// process that typed it in. bd also takes the OWNER from the actor when no
+	// assignee is given, which is why the assignee below is set explicitly.
+	client := p.Beads
+	if c.ReviewerEmail != "" {
+		client = client.WithActor(c.ReviewerEmail)
+	}
+
+	existing, err := client.ByLabel(ctx, ref, label)
 	if err != nil {
 		return false, fmt.Errorf("checking for an existing bead: %w", err)
 	}
@@ -160,7 +183,7 @@ func (p *Publisher) publish(ctx context.Context, c Pending, log *slog.Logger) (a
 			"candidate", c.CandidateID, "bead", bead.Ref.BeadID, "graph", c.GraphName)
 	} else {
 		issue := c.issue(label)
-		created, err := p.Beads.Create(ctx, ref, issue)
+		created, err := client.Create(ctx, ref, issue)
 		if err != nil {
 			return false, err
 		}
@@ -201,7 +224,14 @@ func (c Pending) issue(label string) beads.Issue {
 	var desc strings.Builder
 	desc.WriteString(c.Statement)
 	desc.WriteString("\n\n---\n")
-	fmt.Fprintf(&desc, "Accepted from a %s extracted by Workgraph.\n", c.Type)
+	// Said accurately, because the difference matters to whoever reads the
+	// bead: an extracted statement is a model's reading of what was said, a
+	// written one is somebody's own words.
+	if c.Inferred {
+		fmt.Fprintf(&desc, "Accepted from a %s extracted by Workgraph.\n", c.Type)
+	} else {
+		fmt.Fprintf(&desc, "Accepted from a %s recorded in Workgraph.\n", c.Type)
+	}
 	if c.ReviewerEmail != "" {
 		fmt.Fprintf(&desc, "Reviewed by: %s\n", c.ReviewerEmail)
 	}
@@ -219,10 +249,25 @@ func (c Pending) issue(label string) beads.Issue {
 		Type:        beadType(c.Type),
 		Priority:    priority(c.Type),
 		Labels:      labels,
-		Assignee:    c.OwnerEmail,
+		// Explicit, because bd falls back to the actor: without this the
+		// reviewer would silently own every task they accepted, as a side
+		// effect of the audit trail rather than as a decision.
+		Assignee:    c.assignee(),
 		Due:         c.Due,
 		ExternalRef: "wg-candidate-" + c.CandidateID,
 	}
+}
+
+// assignee is who the work belongs to.
+//
+// The proposed owner when the extractor found one -- somebody said a name --
+// and otherwise the reviewer who accepted it. Unowned work in a shared graph
+// is work nobody has, and the reviewer is the last person who looked at it.
+func (c Pending) assignee() string {
+	if c.OwnerEmail != "" {
+		return c.OwnerEmail
+	}
+	return c.ReviewerEmail
 }
 
 // beadType maps a candidate type onto one bd accepts.
@@ -287,7 +332,7 @@ func title(statement string) string {
 func (p *Publisher) pending(ctx context.Context, limit int) ([]Pending, error) {
 	rows, err := p.DB.QueryContext(ctx, `
 		SELECT candidate_id::text, candidate_type, statement, due_date, visibility,
-		       confidence, coalesce(project_slug,''), coalesce(owner_email,''),
+		       confidence, was_inferred, coalesce(project_slug,''), coalesce(owner_email,''),
 		       coalesce(reviewer_email,''), source_id::text,
 		       coalesce(graph_id::text,''), coalesce(graph_name,''),
 		       coalesce(graph_path,''), coalesce(graph_host,''),
@@ -303,7 +348,7 @@ func (p *Publisher) pending(ctx context.Context, limit int) ([]Pending, error) {
 		var c Pending
 		var due sql.NullTime
 		if err := rows.Scan(&c.CandidateID, &c.Type, &c.Statement, &due, &c.Visibility,
-			&c.Confidence, &c.ProjectSlug, &c.OwnerEmail, &c.ReviewerEmail, &c.SourceID,
+			&c.Confidence, &c.Inferred, &c.ProjectSlug, &c.OwnerEmail, &c.ReviewerEmail, &c.SourceID,
 			&c.GraphID, &c.GraphName, &c.GraphPath, &c.GraphHost, &c.Blocked); err != nil {
 			return nil, err
 		}

@@ -190,15 +190,17 @@ func main() {
 				DB:   db,
 				Node: *node,
 				Log:  log,
-				Beads: &beads.CLIClient{
+				Beads: publish.CLI{CLIClient: &beads.CLIClient{
 					Binary: *beadsBinary,
 					// HOME per graph, because Dolt keeps its config under
 					// HOME and this node's service account has no home
 					// directory -- beads_hq initialised each graph with HOME
 					// pointing at the graph itself.
 					HomeAtDatabasePath: true,
-					Actor:              "workgraph-publisher",
-				},
+					// The fallback actor. Every candidate that has a
+					// reviewer is attributed to them instead.
+					Actor: "workgraph-publisher",
+				}},
 			}
 			res, err := pub.Run(ctx, *publishLimit)
 			if err != nil {
