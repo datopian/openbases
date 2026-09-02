@@ -29,14 +29,29 @@ BEGIN
   VALUES (src, 'decision', 'Use batch ingestion for phase one', 0.94, 'restricted',
           proj, '[{"line":1,"text":"said it"}]'::jsonb, 'extract-test'),
          (src, 'task', 'Send the migration plan', 0.9, 'restricted',
-          proj, '[{"line":2,"text":"said it"}]'::jsonb, 'extract-test');
+          proj, '[{"line":2,"text":"said it"}]'::jsonb, 'extract-test'),
+         -- One of every durable type. Only the decision was tested before, and
+         -- it is the one type with no review date -- so the CHECK that a fact,
+         -- a constraint and an assumption must name one went unexercised, and
+         -- accepting any of those three raised a constraint violation instead
+         -- of publishing.
+         (src, 'fact', 'The staging control node has two cores', 0.9, 'restricted',
+          proj, '[{"line":3,"text":"said it"}]'::jsonb, 'extract-test'),
+         (src, 'constraint', 'CDT material stays in the CDT cell', 0.9, 'restricted',
+          proj, '[{"line":4,"text":"said it"}]'::jsonb, 'extract-test'),
+         (src, 'assumption', 'The pilot runs to the end of the quarter', 0.7, 'restricted',
+          proj, '[{"line":5,"text":"said it"}]'::jsonb, 'extract-test'),
+         (src, 'lesson', 'Verify a claim against the API before believing it', 0.9, 'restricted',
+          proj, '[{"line":6,"text":"said it"}]'::jsonb, 'extract-test'),
+         (src, 'preference', 'Write the reason a change exists in the commit', 0.9, 'restricted',
+          proj, '[{"line":7,"text":"said it"}]'::jsonb, 'extract-test');
 END $$;
 
 SET LOCAL ROLE workgraph_app;
 \ir assert_app_role.sql
 
 DO $$
-DECLARE n integer; res jsonb; rec uuid; cand uuid;
+DECLARE n integer; res jsonb; rec uuid; cand uuid; kind text; horizon date;
 BEGIN
   PERFORM set_config('workgraph.user_id', current_setting('test.lead'), true);
 
@@ -85,6 +100,39 @@ BEGIN
   IF (res -> 'record_id') <> 'null'::jsonb THEN
     RAISE EXCEPTION 'a task was written into durable memory, which is for the other types';
   END IF;
+
+  -- Every durable type publishes, and the time-sensitive ones carry the
+  -- horizon policies/knowledge-review.yaml declares.
+  FOR cand IN
+    SELECT id FROM knowledge_candidates
+     WHERE source_id = current_setting('test.source')::uuid
+       AND status = 'pending'
+       AND candidate_type IN ('fact', 'constraint', 'assumption', 'lesson', 'preference')
+     ORDER BY candidate_type
+  LOOP
+    SELECT candidate_type INTO kind FROM knowledge_candidates WHERE id = cand;
+    res := review_candidate(cand, 'accept');
+    IF res ->> 'published' <> 'knowledge_record' THEN
+      RAISE EXCEPTION 'an accepted % published as %', kind, res ->> 'published';
+    END IF;
+    rec := (res ->> 'record_id')::uuid;
+
+    SELECT review_after INTO horizon FROM knowledge_records WHERE id = rec;
+    IF kind = 'fact' AND horizon IS DISTINCT FROM current_date + 180 THEN
+      RAISE EXCEPTION 'a fact expires on % rather than in 180 days', horizon;
+    END IF;
+    IF kind = 'constraint' AND horizon IS DISTINCT FROM current_date + 365 THEN
+      RAISE EXCEPTION 'a constraint expires on % rather than in 365 days', horizon;
+    END IF;
+    IF kind = 'assumption' AND horizon IS DISTINCT FROM current_date + 90 THEN
+      RAISE EXCEPTION 'an assumption expires on % rather than in 90 days', horizon;
+    END IF;
+    -- A lesson and a preference are superseded, not expired. A review date on
+    -- one would put it in the stale-record queue forever.
+    IF kind IN ('lesson', 'preference') AND horizon IS NOT NULL THEN
+      RAISE EXCEPTION 'a % was given a review date of %', kind, horizon;
+    END IF;
+  END LOOP;
 
   RAISE NOTICE 'durable publication assertions passed';
 END $$;
