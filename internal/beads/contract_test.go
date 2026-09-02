@@ -150,6 +150,34 @@ func TestContractDependencyDirection(t *testing.T) {
 	if strings.Contains(joined, blocked.BeadID) {
 		t.Errorf("the blocked item must NOT be ready — the dependency is inverted; ready = %s", joined)
 	}
+
+	// WP-D2's criterion is that CLOSING a blocker updates ready work, and
+	// asserting only the blocked state leaves the half that matters
+	// unchecked: a graph that never releases the dependency looks identical
+	// until somebody closes something and waits.
+	if err := c.Close(ctx, blocker, "closed by the contract test to release the dependency"); err != nil {
+		t.Fatalf("closing the blocker: %v", err)
+	}
+
+	after, err := c.Ready(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var afterIDs []string
+	for _, i := range after {
+		afterIDs = append(afterIDs, i.Ref.BeadID)
+	}
+	joinedAfter := strings.Join(afterIDs, " ")
+
+	if !strings.Contains(joinedAfter, blocked.BeadID) {
+		t.Errorf("closing the blocker did not release the blocked item; ready = %s", joinedAfter)
+	}
+	// And the closed one is gone from ready, which is the other half of the
+	// same transition: a graph that keeps offering closed work is as useless
+	// as one that never releases blocked work.
+	if strings.Contains(joinedAfter, blocker.BeadID) {
+		t.Errorf("the closed blocker is still offered as ready; ready = %s", joinedAfter)
+	}
 }
 
 func TestContractCloseRequiresEvidence(t *testing.T) {
