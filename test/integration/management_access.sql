@@ -32,23 +32,43 @@ BEGIN
   -- A restricted project nobody in management is a member of, to be sure the
   -- reach comes from the role grant rather than from a membership. CDT and
   -- NGED both have management as owner or backup, which would confuse the two.
+  --
+  -- Everything it needs is created here rather than borrowed. A restricted
+  -- project must have its own execution cell (plan section 7.4), and CI's
+  -- database has no cells and no registered graphs -- those arrive at deploy
+  -- from the registry binary, not from a migration. Borrowing them passed on
+  -- staging and failed in CI on a CHECK about a null cell, which reads like a
+  -- schema problem rather than like missing fixture data.
   INSERT INTO users (organisation_id, display_name, primary_email)
   VALUES (org, 'Management access test owner', 'test-mgmt-owner@example.invalid'),
          (org, 'Management access test backup', 'test-mgmt-backup@example.invalid');
+
+  INSERT INTO execution_nodes (hostname, environment)
+  VALUES ('test-mgmt-node', 'staging');
+
+  INSERT INTO execution_cells (execution_node_id, slug, system_username, trust_domain)
+  SELECT id, 'test-mgmt-cell', 'wgcell_test_mgmt', 'client-restricted'
+    FROM execution_nodes WHERE hostname = 'test-mgmt-node';
 
   INSERT INTO projects (organisation_id, slug, name, visibility,
                         primary_owner_id, backup_owner_id, execution_cell_id)
   SELECT org, 'test-mgmt-client', 'Management access test', 'restricted',
          (SELECT id FROM users WHERE primary_email = 'test-mgmt-owner@example.invalid'),
          (SELECT id FROM users WHERE primary_email = 'test-mgmt-backup@example.invalid'),
-         -- A restricted project must have its own cell (plan section 7.4).
-         (SELECT id FROM execution_cells ORDER BY slug LIMIT 1);
+         (SELECT id FROM execution_cells WHERE slug = 'test-mgmt-cell');
 
   INSERT INTO knowledge_sources (organisation_id, provider, provider_source_id,
                                  provider_revision, source_type, project_id,
                                  visibility, captured_at)
   SELECT org, 'google-meet', 'test/management-access', 'sha256:mgmt', 'transcript',
          (SELECT id FROM projects WHERE slug = 'test-mgmt-client'), 'restricted', now();
+
+  -- The project's graph, which carries a name, an absolute path and a host --
+  -- client information in its own right.
+  INSERT INTO beads_databases (organisation_id, name, scope, project_id, path, host)
+  SELECT org, 'test-mgmt-graph', 'project',
+         (SELECT id FROM projects WHERE slug = 'test-mgmt-client'),
+         '/srv/graphs/test-mgmt', 'test-control';
 
   -- Somebody with no grants and no memberships, as the control. Without this
   -- the test would pass on a database where RLS was switched off entirely.
@@ -107,7 +127,7 @@ BEGIN
     END IF;
 
     -- The work graph too: a graph name and path is client information.
-    SELECT count(*) INTO n FROM beads_databases WHERE name = 'project-cdt';
+    SELECT count(*) INTO n FROM beads_databases WHERE name = 'test-mgmt-graph';
     IF n <> 1 THEN
       RAISE EXCEPTION '% cannot see a client project''s graph', label;
     END IF;
@@ -137,7 +157,7 @@ BEGIN
   IF n <> 0 THEN
     RAISE EXCEPTION 'somebody with no grants can see a restricted project''s sources';
   END IF;
-  SELECT count(*) INTO n FROM beads_databases WHERE name = 'project-cdt';
+  SELECT count(*) INTO n FROM beads_databases WHERE name = 'test-mgmt-graph';
   IF n <> 0 THEN
     RAISE EXCEPTION 'somebody with no grants can see a client project''s graph';
   END IF;
