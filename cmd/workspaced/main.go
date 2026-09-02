@@ -241,27 +241,29 @@ func main() {
 				Node:  *node,
 				Log:   log,
 			}
-			switch {
-			case *knowledgeRepo == "":
-				log.Info("no Markdown proposals; set WG_KNOWLEDGE_REPO to the repository records live in")
-			default:
-				gh, err := githubClient()
-				if err != nil {
-					log.Error("no Markdown proposals; the GitHub App is not configured", "error", err)
-					failedSomething = true
-					break
-				}
+			// Without a repository the pass still creates decision beads: a
+			// bead needs nothing from Git. Said out loud, because "no pull
+			// request appeared" is otherwise indistinguishable from "nothing
+			// was accepted".
+			if *knowledgeRepo == "" {
+				log.Info("no Markdown proposals; set WG_KNOWLEDGE_REPO to the repository " +
+					"records live in. Decision beads are still published")
+			} else if gh, err := githubClient(); err != nil {
+				log.Error("no Markdown proposals; the GitHub App is not configured", "error", err)
+				failedSomething = true
+			} else {
 				recPub.GitHub = gh
-				rres, err := recPub.Run(ctx, *recordLimit)
-				if err != nil {
-					fail(log, "record publication could not run", err)
-				}
-				log.Info("record publication finished",
-					"proposed", rres.Proposed, "decision_beads", rres.Beads,
-					"blocked", rres.Blocked, "failed", rres.Failed)
-				if rres.Failed > 0 {
-					failedSomething = true
-				}
+			}
+
+			rres, err := recPub.Run(ctx, *recordLimit)
+			if err != nil {
+				fail(log, "record publication could not run", err)
+			}
+			log.Info("record publication finished",
+				"proposed", rres.Proposed, "decision_beads", rres.Beads,
+				"blocked", rres.Blocked, "failed", rres.Failed)
+			if rres.Failed > 0 {
+				failedSomething = true
 			}
 		}
 	}

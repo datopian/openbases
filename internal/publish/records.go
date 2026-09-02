@@ -35,6 +35,11 @@ type PendingRecord struct {
 	GraphPath string
 	GraphHost string
 	Blocked   string
+	// Which halves are already done. A record is offered while either is
+	// outstanding, so the pass applies the missing one rather than repeating
+	// the finished one.
+	MarkdownPublished bool
+	BeadPublished     bool
 }
 
 // RecordResult counts one pass.
@@ -69,15 +74,12 @@ func (p *RecordPublisher) Run(ctx context.Context, limit int) (RecordResult, err
 	if p.DB == nil {
 		return RecordResult{}, errors.New("a record publisher needs a database")
 	}
-	if p.Owner == "" || p.Repo == "" {
-		// Not an error. A deployment without the knowledge repository
-		// configured publishes beads and no Markdown, which is a state worth
-		// being able to be in.
-		return RecordResult{}, nil
-	}
-	if p.GitHub == nil {
-		return RecordResult{}, errors.New("a record publisher needs the GitHub App")
-	}
+	// A deployment with no knowledge repository still publishes decision
+	// beads. Nothing about a bead needs Git, and the state is real: the
+	// GitHub App installation does not include company-workgraph, so coupling
+	// the two meant an accepted decision appeared nowhere in the work graph
+	// for a reason that has nothing to do with the work graph.
+	markdown := p.Owner != "" && p.Repo != "" && p.GitHub != nil
 	log := p.Log
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(nopWriter{}, nil))
@@ -95,38 +97,48 @@ func (p *RecordPublisher) Run(ctx context.Context, limit int) (RecordResult, err
 		return RecordResult{}, nil
 	}
 
-	// One token for the pass, scoped to the one repository it writes to. An
-	// installation token is broad by default: scoping it means a bug here
-	// cannot touch a client repository.
-	tok, err := p.GitHub.InstallationToken(ctx, p.Owner+"/"+p.Repo)
-	if err != nil {
-		return RecordResult{}, fmt.Errorf("minting a token for %s/%s: %w", p.Owner, p.Repo, err)
-	}
-
-	head, err := p.GitHub.BranchHead(ctx, tok, p.Owner, p.Repo, base)
-	if err != nil {
-		return RecordResult{}, err
+	var (
+		tok  *githubapp.InstallationToken
+		head string
+	)
+	if markdown {
+		// One token for the pass, scoped to the one repository it writes to.
+		// An installation token is broad by default: scoping it means a bug
+		// here cannot touch a client repository.
+		tok, err = p.GitHub.InstallationToken(ctx, p.Owner+"/"+p.Repo)
+		if err != nil {
+			return RecordResult{}, fmt.Errorf("minting a token for %s/%s: %w", p.Owner, p.Repo, err)
+		}
+		head, err = p.GitHub.BranchHead(ctx, tok, p.Owner, p.Repo, base)
+		if err != nil {
+			return RecordResult{}, err
+		}
 	}
 
 	var res RecordResult
 	for _, r := range pending {
 		if r.Blocked != "" {
 			res.Blocked++
-			log.Error("an accepted record cannot be proposed in Git",
+			log.Error("an accepted record cannot be published",
 				"record", r.Record.ID, "type", r.Record.Type, "reason", r.Blocked)
 			continue
 		}
-		if err := p.propose(ctx, tok, head, base, r, log); err != nil {
-			res.Failed++
-			log.Error("proposing a record", "record", r.Record.ID, "error", err)
-			continue
+
+		if markdown && !r.MarkdownPublished {
+			if err := p.propose(ctx, tok, head, base, r, log); err != nil {
+				res.Failed++
+				log.Error("proposing a record", "record", r.Record.ID, "error", err)
+				// The bead is still attempted: it does not depend on Git, and
+				// a GitHub outage should not also stop the work graph.
+			} else {
+				res.Proposed++
+			}
 		}
-		res.Proposed++
 
 		// The decision bead. Only for decisions: a constraint or a lesson is
 		// something to know, not something to do, and a graph full of beads
 		// nobody can act on is how a work graph stops being read.
-		if r.Record.Type == "decision" {
+		if r.Record.Type == "decision" && !r.BeadPublished {
 			published, err := p.decisionBead(ctx, r, log)
 			switch {
 			case err != nil:
@@ -289,8 +301,13 @@ func (p *RecordPublisher) decisionBead(ctx context.Context, r PendingRecord, log
 func decisionBody(r PendingRecord) string {
 	var b strings.Builder
 	b.WriteString(r.Record.Statement)
-	b.WriteString("\n\n---\nAn accepted decision. The reasoning lives in the Markdown record.\n")
+	b.WriteString("\n\n---\nAn accepted decision.\n")
 	fmt.Fprintf(&b, "Record: mem-%s\n", r.Record.ID)
+	// Named only when it exists. A bead pointing at a file nobody has written
+	// yet sends the reader looking for something that is not there.
+	if r.MarkdownPublished {
+		b.WriteString("The reasoning lives in the Markdown record.\n")
+	}
 	if r.Record.Reviewer != "" {
 		fmt.Fprintf(&b, "Reviewed by: %s\n", r.Record.Reviewer)
 	}
@@ -332,7 +349,7 @@ func (p *RecordPublisher) pending(ctx context.Context, limit int) ([]PendingReco
 		       reviewed_at, coalesce(reviewer_email,''), coalesce(owner_email,''),
 		       coalesce(author_email,''), human_authored,
 		       coalesce(supersedes::text,''), sources,
-		       coalesce(candidate_id::text,''),
+		       coalesce(candidate_id::text,''), markdown_published, bead_published,
 		       coalesce(graph_id::text,''), coalesce(graph_name,''),
 		       coalesce(graph_path,''), coalesce(graph_host,''),
 		       coalesce(blocked_reason,'')
@@ -352,7 +369,8 @@ func (p *RecordPublisher) pending(ctx context.Context, limit int) ([]PendingReco
 			&p.Record.Project, &p.Record.Function, &p.Record.Visibility, &p.Record.Confidence,
 			&validFrom, &reviewAfter, &reviewedAt, &p.Record.Reviewer, &p.Record.Owner,
 			&p.Record.Author, &p.Record.HumanAuthored, &p.Record.Supersedes, &sources,
-			&p.CandidateID, &p.GraphID, &p.GraphName, &p.GraphPath, &p.GraphHost,
+			&p.CandidateID, &p.MarkdownPublished, &p.BeadPublished,
+			&p.GraphID, &p.GraphName, &p.GraphPath, &p.GraphHost,
 			&p.Blocked); err != nil {
 			return nil, err
 		}

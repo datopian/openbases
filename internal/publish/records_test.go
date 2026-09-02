@@ -3,6 +3,7 @@ package publish
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"io"
 	"log/slog"
@@ -69,30 +70,41 @@ func aPending() PendingRecord {
 	}
 }
 
-// Without a repository the pass does nothing at all, rather than guessing one.
-// A deployment that publishes beads and no Markdown is a state worth being able
-// to be in -- the GitHub App does not reach every repository.
-func TestNoRepositoryMeansNoWork(t *testing.T) {
-	gh := newFakeGitHub()
-	p := &RecordPublisher{DB: nil, GitHub: gh, Log: quietLog()}
+// A publisher with no database cannot do either half.
+func TestNoDatabaseIsRefused(t *testing.T) {
+	p := &RecordPublisher{DB: nil, GitHub: newFakeGitHub(), Log: quietLog()}
 	if _, err := p.Run(t.Context(), 5); err == nil {
 		t.Fatal("a publisher with no database ran anyway")
 	}
+}
 
-	// A database is present but no repository: no error, no calls. The handle
-	// is never used, which is the point -- Run returns before touching it.
-	p = &RecordPublisher{DB: new(sql.DB), GitHub: gh, Log: quietLog()}
-	res, err := p.Run(t.Context(), 5)
-	if err != nil {
-		t.Fatalf("run: %v", err)
+// Without a repository the pass still runs -- decision beads need nothing from
+// Git -- and must not reach GitHub at all. Not even to mint a token: an
+// installation token for a repository nobody configured is a request made on a
+// guess.
+func TestWithoutARepositoryNothingReachesGitHub(t *testing.T) {
+	gh := newFakeGitHub()
+	p := &RecordPublisher{DB: sql.OpenDB(deadConnector{}), GitHub: gh, Log: quietLog()}
+
+	// The database is unreachable, so the pass fails where it reads the queue.
+	// Which is after the point where a token would have been minted.
+	if _, err := p.Run(t.Context(), 5); err == nil {
+		t.Fatal("a query against a dead connector succeeded")
 	}
-	if res != (RecordResult{}) {
-		t.Fatalf("result = %+v, want nothing done", res)
-	}
-	if len(gh.prs) != 0 || len(gh.scopedTo) != 0 {
-		t.Fatal("GitHub was called without a repository configured")
+	if len(gh.scopedTo) != 0 || len(gh.prs) != 0 || len(gh.branches) != 0 {
+		t.Fatalf("GitHub was called with no repository configured: %v", gh.scopedTo)
 	}
 }
+
+// deadConnector is a database that cannot be reached, which is the cheapest way
+// to assert the ORDER of what a pass does without standing up Postgres.
+type deadConnector struct{}
+
+func (deadConnector) Connect(context.Context) (driver.Conn, error) {
+	return nil, errors.New("no database here")
+}
+
+func (deadConnector) Driver() driver.Driver { return nil }
 
 // The token is scoped to the one repository this writes to. An installation
 // token is broad by default, and the App is installed on client repositories.
