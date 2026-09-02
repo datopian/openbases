@@ -226,6 +226,8 @@ jobs:
       # Acceptance has to DO something, and has to do the right thing per type:
       # durable statements become records with provenance, operational ones are
       # bound for Beads and say so rather than vanishing.
+      # Accepting one of EVERY durable type, because the type decides whether a
+      # review date is required and only the exempt one was covered.
       - name: accepting a candidate publishes it with its provenance
         run: psql -v ON_ERROR_STOP=1 -f test/integration/durable_publication.sql
 
