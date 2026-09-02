@@ -1,0 +1,378 @@
+package publish
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/datopian/workgraph/internal/beads"
+	"github.com/datopian/workgraph/internal/githubapp"
+	"github.com/datopian/workgraph/internal/knowledge"
+)
+
+// GitHub is the part of the App client the record publisher needs.
+type GitHub interface {
+	InstallationToken(ctx context.Context, repositories ...string) (*githubapp.InstallationToken, error)
+	BranchHead(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, branch string) (string, error)
+	CreateBranch(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, branch, sha string) error
+	PutFile(ctx context.Context, tok *githubapp.InstallationToken, owner, repo, branch, path, message string, content []byte) error
+	OpenPullRequest(ctx context.Context, tok *githubapp.InstallationToken, req githubapp.OpenPullRequestRequest) (*githubapp.PullRequest, error)
+}
+
+// PendingRecord is an accepted durable record not yet proposed in Git.
+type PendingRecord struct {
+	Record      knowledge.Record
+	CandidateID string
+	// The graph a decision bead belongs in, chosen by the same routing the
+	// operational publisher uses.
+	GraphID   string
+	GraphName string
+	GraphPath string
+	GraphHost string
+	Blocked   string
+}
+
+// RecordResult counts one pass.
+type RecordResult struct {
+	Proposed int
+	Beads    int
+	Blocked  int
+	Failed   int
+}
+
+// RecordPublisher proposes accepted durable records as Markdown pull requests,
+// and gives an accepted decision its bead.
+//
+// Two effects rather than one, because WP-H4 asks for both: the pull request is
+// where a person argues with the wording, and the bead is how the decision
+// shows up in the work graph instead of only in a document nobody opens.
+type RecordPublisher struct {
+	DB     *sql.DB
+	GitHub GitHub
+	Beads  Beads
+	// Owner and Repo are the repository knowledge records live in. Empty means
+	// not configured, and the pass does nothing rather than guessing.
+	Owner string
+	Repo  string
+	Base  string
+	Node  string
+	Log   *slog.Logger
+}
+
+// Run proposes at most limit records.
+func (p *RecordPublisher) Run(ctx context.Context, limit int) (RecordResult, error) {
+	if p.DB == nil {
+		return RecordResult{}, errors.New("a record publisher needs a database")
+	}
+	if p.Owner == "" || p.Repo == "" {
+		// Not an error. A deployment without the knowledge repository
+		// configured publishes beads and no Markdown, which is a state worth
+		// being able to be in.
+		return RecordResult{}, nil
+	}
+	if p.GitHub == nil {
+		return RecordResult{}, errors.New("a record publisher needs the GitHub App")
+	}
+	log := p.Log
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(nopWriter{}, nil))
+	}
+	base := p.Base
+	if base == "" {
+		base = "main"
+	}
+
+	pending, err := p.pending(ctx, limit)
+	if err != nil {
+		return RecordResult{}, err
+	}
+	if len(pending) == 0 {
+		return RecordResult{}, nil
+	}
+
+	// One token for the pass, scoped to the one repository it writes to. An
+	// installation token is broad by default: scoping it means a bug here
+	// cannot touch a client repository.
+	tok, err := p.GitHub.InstallationToken(ctx, p.Owner+"/"+p.Repo)
+	if err != nil {
+		return RecordResult{}, fmt.Errorf("minting a token for %s/%s: %w", p.Owner, p.Repo, err)
+	}
+
+	head, err := p.GitHub.BranchHead(ctx, tok, p.Owner, p.Repo, base)
+	if err != nil {
+		return RecordResult{}, err
+	}
+
+	var res RecordResult
+	for _, r := range pending {
+		if r.Blocked != "" {
+			res.Blocked++
+			log.Error("an accepted record cannot be proposed in Git",
+				"record", r.Record.ID, "type", r.Record.Type, "reason", r.Blocked)
+			continue
+		}
+		if err := p.propose(ctx, tok, head, base, r, log); err != nil {
+			res.Failed++
+			log.Error("proposing a record", "record", r.Record.ID, "error", err)
+			continue
+		}
+		res.Proposed++
+
+		// The decision bead. Only for decisions: a constraint or a lesson is
+		// something to know, not something to do, and a graph full of beads
+		// nobody can act on is how a work graph stops being read.
+		if r.Record.Type == "decision" {
+			published, err := p.decisionBead(ctx, r, log)
+			switch {
+			case err != nil:
+				res.Failed++
+				log.Error("creating the decision bead", "record", r.Record.ID, "error", err)
+			case published:
+				res.Beads++
+			}
+		}
+	}
+	return res, nil
+}
+
+func (p *RecordPublisher) propose(ctx context.Context, tok *githubapp.InstallationToken,
+	head, base string, r PendingRecord, log *slog.Logger) error {
+
+	content, err := r.Record.Render()
+	if err != nil {
+		return fmt.Errorf("rendering: %w", err)
+	}
+	path := r.Record.Path()
+	branch := "knowledge/" + r.Record.Type + "-" + shortID(r.Record.ID)
+
+	if err := p.GitHub.CreateBranch(ctx, tok, p.Owner, p.Repo, branch, head); err != nil {
+		return err
+	}
+
+	message := fmt.Sprintf("Record an accepted %s: %s", r.Record.Type, title(r.Record.Statement))
+	if err := p.GitHub.PutFile(ctx, tok, p.Owner, p.Repo, branch, path, message, content); err != nil {
+		return err
+	}
+
+	pr, err := p.GitHub.OpenPullRequest(ctx, tok, githubapp.OpenPullRequestRequest{
+		Owner: p.Owner,
+		Repo:  p.Repo,
+		Head:  branch,
+		Base:  base,
+		Title: message,
+		Body:  prBody(r),
+	})
+	if err != nil {
+		// The branch and the file survive. A retry finds the branch present,
+		// rewrites the same file and opens the pull request -- which is why
+		// CreateBranch treats an existing branch as success.
+		return err
+	}
+
+	recorded, err := p.record(ctx, r.Record.ID, path, pr.HTMLURL)
+	if err != nil {
+		return err
+	}
+	log.Info("proposed an accepted record in Git",
+		"record", r.Record.ID, "type", r.Record.Type, "path", path,
+		"pull_request", pr.HTMLURL, "recorded", recorded)
+	return nil
+}
+
+// prBody says what a reviewer is being asked to do, and admits what the file
+// does not contain.
+func prBody(r PendingRecord) string {
+	var b strings.Builder
+	b.WriteString("An accepted knowledge record, proposed as Markdown so it can be read and argued with in a diff.\n\n")
+	fmt.Fprintf(&b, "- type: `%s`\n", r.Record.Type)
+	fmt.Fprintf(&b, "- scope: `%s`", r.Record.Scope)
+	if r.Record.Project != "" {
+		fmt.Fprintf(&b, " (`%s`)", r.Record.Project)
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "- classification: `%s`\n", r.Record.Visibility)
+	fmt.Fprintf(&b, "- reviewer: %s\n", r.Record.Reviewer)
+	fmt.Fprintf(&b, "- record: `mem-%s`\n\n", r.Record.ID)
+	b.WriteString("The Context and Consequences sections are deliberately unfinished: the statement " +
+		"and its provenance are facts the control plane has, the reasoning is not, and a generated " +
+		"paragraph in its place would read as somebody's thinking without being it.\n\n")
+	b.WriteString("Sources are referenced by provider, revision and line, never copied, so no " +
+		"transcript text is committed (ADR-0027).\n")
+	return b.String()
+}
+
+// decisionBead creates the bead for an accepted decision and links it to the
+// candidate the decision came from.
+//
+// Reuses the operational recording function, so a decision's bead is recorded
+// the same way and in the same place as a task's -- one answer to "which bead
+// did this become".
+func (p *RecordPublisher) decisionBead(ctx context.Context, r PendingRecord, log *slog.Logger) (bool, error) {
+	switch {
+	case p.Beads == nil:
+		return false, nil
+	case r.CandidateID == "":
+		// A hand-written decision has no candidate to hang the bead off. The
+		// pull request is still the record of it; saying so beats inventing a
+		// link.
+		log.Info("no decision bead: the record has no candidate to attribute it to",
+			"record", r.Record.ID)
+		return false, nil
+	case r.GraphID == "" || r.GraphPath == "":
+		log.Error("no decision bead: no provisioned graph for this record",
+			"record", r.Record.ID, "project", r.Record.Project)
+		return false, nil
+	case p.Node != "" && r.GraphHost != "" && r.GraphHost != p.Node:
+		log.Info("no decision bead: the graph is on another host",
+			"record", r.Record.ID, "graph", r.GraphName, "host", r.GraphHost)
+		return false, nil
+	}
+
+	if p.DB == nil {
+		return false, errors.New("no database to record the bead in")
+	}
+
+	ref := beads.DatabaseRef{ID: r.GraphID, Name: r.GraphName, Path: r.GraphPath}
+	label := LabelPrefix + r.CandidateID
+	client := p.Beads
+	if r.Record.Reviewer != "" {
+		client = client.WithActor(r.Record.Reviewer)
+	}
+
+	existing, err := client.ByLabel(ctx, ref, label)
+	if err != nil {
+		return false, err
+	}
+
+	bead := ""
+	if len(existing) > 0 {
+		bead = existing[0].Ref.BeadID
+	} else {
+		issue := beads.Issue{
+			Title:       title(r.Record.Statement),
+			Description: decisionBody(r),
+			Type:        "decision",
+			Priority:    2,
+			Labels:      []string{label, "wg-decision"},
+			Assignee:    r.Record.Owner,
+			ExternalRef: "wg-record-" + r.Record.ID,
+		}
+		if issue.Assignee == "" {
+			issue.Assignee = r.Record.Reviewer
+		}
+		if r.Record.Project != "" {
+			issue.Labels = append(issue.Labels, "wg-project-"+r.Record.Project)
+		}
+		created, err := client.Create(ctx, ref, issue)
+		if err != nil {
+			return false, err
+		}
+		bead = created.BeadID
+	}
+
+	var workRef string
+	if err := p.DB.QueryRowContext(ctx,
+		`SELECT system_record_work_publication($1::uuid, $2::uuid, $3, $4, $5)::text`,
+		r.CandidateID, r.GraphID, bead, title(r.Record.Statement), "decision").Scan(&workRef); err != nil {
+		return false, fmt.Errorf("recording decision bead %s: %w", bead, err)
+	}
+	log.Info("created the bead for an accepted decision",
+		"record", r.Record.ID, "bead", bead, "graph", r.GraphName, "work_ref", workRef)
+	return true, nil
+}
+
+func decisionBody(r PendingRecord) string {
+	var b strings.Builder
+	b.WriteString(r.Record.Statement)
+	b.WriteString("\n\n---\nAn accepted decision. The reasoning lives in the Markdown record.\n")
+	fmt.Fprintf(&b, "Record: mem-%s\n", r.Record.ID)
+	if r.Record.Reviewer != "" {
+		fmt.Fprintf(&b, "Reviewed by: %s\n", r.Record.Reviewer)
+	}
+	fmt.Fprintf(&b, "Classification: %s\n", r.Record.Visibility)
+	return b.String()
+}
+
+func shortID(id string) string {
+	id = strings.ReplaceAll(id, "-", "")
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func (p *RecordPublisher) record(ctx context.Context, recordID, path, prURL string) (bool, error) {
+	// Refused rather than dereferenced. Run holds the same check, and this one
+	// is what makes the difference visible if that ever stops being true: a
+	// proposal nothing recorded is a pull request the control plane will open
+	// again on the next pass.
+	if p.DB == nil {
+		return false, errors.New("no database to record the publication in")
+	}
+	var recorded bool
+	err := p.DB.QueryRowContext(ctx,
+		`SELECT system_record_markdown_publication($1::uuid, $2, $3)`,
+		recordID, path, prURL).Scan(&recorded)
+	if err != nil {
+		return false, fmt.Errorf("recording the publication of %s: %w", recordID, err)
+	}
+	return recorded, nil
+}
+
+func (p *RecordPublisher) pending(ctx context.Context, limit int) ([]PendingRecord, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT record_id::text, record_type, statement, scope,
+		       coalesce(project_slug,''), coalesce(function_slug,''),
+		       visibility, coalesce(confidence,0), valid_from, review_after,
+		       reviewed_at, coalesce(reviewer_email,''), coalesce(owner_email,''),
+		       coalesce(author_email,''), human_authored,
+		       coalesce(supersedes::text,''), sources,
+		       coalesce(candidate_id::text,''),
+		       coalesce(graph_id::text,''), coalesce(graph_name,''),
+		       coalesce(graph_path,''), coalesce(graph_host,''),
+		       coalesce(blocked_reason,'')
+		  FROM system_pending_record_publications($1)`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing records awaiting a pull request: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PendingRecord
+	for rows.Next() {
+		var p PendingRecord
+		var validFrom, reviewAfter sql.NullTime
+		var reviewedAt sql.NullTime
+		var sources []byte
+		if err := rows.Scan(&p.Record.ID, &p.Record.Type, &p.Record.Statement, &p.Record.Scope,
+			&p.Record.Project, &p.Record.Function, &p.Record.Visibility, &p.Record.Confidence,
+			&validFrom, &reviewAfter, &reviewedAt, &p.Record.Reviewer, &p.Record.Owner,
+			&p.Record.Author, &p.Record.HumanAuthored, &p.Record.Supersedes, &sources,
+			&p.CandidateID, &p.GraphID, &p.GraphName, &p.GraphPath, &p.GraphHost,
+			&p.Blocked); err != nil {
+			return nil, err
+		}
+		if validFrom.Valid {
+			p.Record.ValidFrom = validFrom.Time
+		}
+		if reviewAfter.Valid {
+			p.Record.ReviewAfter = reviewAfter.Time
+		}
+		if reviewedAt.Valid {
+			p.Record.ReviewedAt = reviewedAt.Time
+		} else {
+			p.Record.ReviewedAt = time.Now().UTC()
+		}
+		if len(sources) > 0 {
+			if err := json.Unmarshal(sources, &p.Record.Sources); err != nil {
+				return nil, fmt.Errorf("decoding the provenance of %s: %w", p.Record.ID, err)
+			}
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

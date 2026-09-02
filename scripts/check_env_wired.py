@@ -30,6 +30,17 @@ TEMPLATES = [
     "infra/ansible/roles/control_api/templates/control-api.env.j2",
 ]
 
+# Unit files that set variables with Environment= directly. Same promise, same
+# failure: WP-H4 put WG_NODE_NAME, WG_BEADS_BINARY and WG_KNOWLEDGE_REPO in a
+# unit rather than the shared environment file -- correct, because only that one
+# unit needs them, and invisible to a check that reads environment files only.
+UNITS = [
+    "infra/ansible/roles/control_api/templates/workgraph-workspace.service.j2",
+    "infra/ansible/roles/control_api/templates/workgraph-reconcile.service.j2",
+    "infra/ansible/roles/control_api/templates/workgraph-worker.service.j2",
+    "infra/ansible/roles/control_api/templates/control-api.service.j2",
+]
+
 # Names read by something other than Go: a shell script, a systemd directive, or
 # the template's own logic. Each needs a reason, because "it is read elsewhere"
 # is exactly what was believed about the audience.
@@ -43,14 +54,15 @@ def main() -> int:
     problems = []
     checked = 0
 
-    for rel in TEMPLATES:
+    for rel in TEMPLATES + UNITS:
         path = ROOT / rel
         if not path.exists():
             problems.append(f"{rel} does not exist; update TEMPLATES in this script")
             continue
 
+        pattern = r"^(?:Environment=)?(WG_[A-Z0-9_]+)=" if rel in UNITS else r"^(WG_[A-Z0-9_]+)="
         for line in path.read_text().splitlines():
-            m = re.match(r"^(WG_[A-Z0-9_]+)=", line.strip())
+            m = re.match(pattern, line.strip())
             if not m:
                 continue
             name = m.group(1)

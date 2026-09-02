@@ -15,16 +15,19 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/datopian/workgraph/internal/beads"
 	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/workgraph/internal/githubapp"
 	"github.com/datopian/workgraph/internal/inference"
 	"github.com/datopian/workgraph/internal/ingest"
 	"github.com/datopian/workgraph/internal/publish"
@@ -54,8 +57,13 @@ func main() {
 			"the pinned bd binary that creates beads for accepted candidates")
 		node = flag.String("node", os.Getenv("WG_NODE_NAME"),
 			"this host's name as the registry records it; graphs on another host are left alone")
-		timeout = flag.Duration("timeout", 15*time.Minute, "overall deadline")
-		verbose = flag.Bool("v", false, "log the sources left alone too")
+		knowledgeRepo = flag.String("knowledge-repo", os.Getenv("WG_KNOWLEDGE_REPO"),
+			"owner/name of the repository accepted records are proposed in; empty publishes no Markdown")
+		knowledgeBase = flag.String("knowledge-base", envOr("WG_KNOWLEDGE_BASE", "main"),
+			"the branch pull requests target")
+		recordLimit = flag.Int("record-limit", 20, "most accepted records to propose in one pass")
+		timeout     = flag.Duration("timeout", 15*time.Minute, "overall deadline")
+		verbose     = flag.Bool("v", false, "log the sources left alone too")
 	)
 	flag.Parse()
 
@@ -217,6 +225,44 @@ func main() {
 			if res.Failed > 0 {
 				failedSomething = true
 			}
+
+			// The durable half: an accepted record proposed as Markdown, and
+			// an accepted decision given its bead. Runs in the same pass
+			// because it needs the same database and the same graphs; skipped
+			// with a word rather than silently when the repository or the
+			// GitHub App is not configured, because "no Markdown appeared" is
+			// otherwise indistinguishable from "nothing was accepted".
+			recPub := &publish.RecordPublisher{
+				DB:    db,
+				Beads: pub.Beads,
+				Owner: repoOwner(*knowledgeRepo),
+				Repo:  repoName(*knowledgeRepo),
+				Base:  *knowledgeBase,
+				Node:  *node,
+				Log:   log,
+			}
+			switch {
+			case *knowledgeRepo == "":
+				log.Info("no Markdown proposals; set WG_KNOWLEDGE_REPO to the repository records live in")
+			default:
+				gh, err := githubClient()
+				if err != nil {
+					log.Error("no Markdown proposals; the GitHub App is not configured", "error", err)
+					failedSomething = true
+					break
+				}
+				recPub.GitHub = gh
+				rres, err := recPub.Run(ctx, *recordLimit)
+				if err != nil {
+					fail(log, "record publication could not run", err)
+				}
+				log.Info("record publication finished",
+					"proposed", rres.Proposed, "decision_beads", rres.Beads,
+					"blocked", rres.Blocked, "failed", rres.Failed)
+				if rres.Failed > 0 {
+					failedSomething = true
+				}
+			}
 		}
 	}
 
@@ -275,4 +321,39 @@ func envOr(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// githubClient assembles the App from the same environment the other binaries
+// read it from.
+func githubClient() (*githubapp.Client, error) {
+	appID := os.Getenv("WG_GITHUB_APP_ID")
+	installation := os.Getenv("WG_GITHUB_INSTALLATION_ID")
+	keyPath := os.Getenv("WG_GITHUB_PRIVATE_KEY_PATH")
+	if appID == "" || installation == "" || keyPath == "" {
+		return nil, errors.New("set WG_GITHUB_APP_ID, WG_GITHUB_INSTALLATION_ID and WG_GITHUB_PRIVATE_KEY_PATH")
+	}
+	key, err := githubapp.LoadPrivateKey(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	return &githubapp.Client{AppID: appID, InstallationID: installation, PrivateKeyPEM: key}, nil
+}
+
+// repoOwner and repoName split an owner/name pair, and return nothing for
+// anything that is not one -- a half-configured repository must not become a
+// request against a guess.
+func repoOwner(full string) string {
+	owner, name, ok := strings.Cut(full, "/")
+	if !ok || owner == "" || name == "" {
+		return ""
+	}
+	return owner
+}
+
+func repoName(full string) string {
+	owner, name, ok := strings.Cut(full, "/")
+	if !ok || owner == "" || name == "" {
+		return ""
+	}
+	return name
 }

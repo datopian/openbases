@@ -34,6 +34,17 @@ Environment=WG_NODE_NAME={{ inventory_hostname }}
 # there too rather than behind a variable that could name a different one.
 Environment=WG_BEADS_BINARY=/usr/local/bin/bd
 
+# The repository accepted knowledge records are proposed in, as owner/name.
+#
+# Empty until the GitHub App installation includes it: the App reaches ten
+# repositories and company-workgraph is not one of them, so setting this before
+# the grant would turn every hourly pass red on a 404. Empty means beads are
+# published and no Markdown is, and the pass says so in one line rather than
+# leaving "no pull request appeared" indistinguishable from "nothing was
+# accepted".
+Environment=WG_KNOWLEDGE_REPO={{ control_api_knowledge_repo | default('') }}
+Environment=WG_KNOWLEDGE_BASE={{ control_api_knowledge_base | default('main') }}
+
 ExecStart={{ control_api_workspace_binary }}
 
 # This key can read every file in three shared drives as any user in the

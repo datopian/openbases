@@ -103,3 +103,12 @@ control_api_ai_gateway_base_url: >-
      if (cloudflare_account_id | default('') | length > 0 and ai_gateway_prefix | default('') | length > 0)
      else '' }}
 control_api_ai_gateway_token: "{{ ai_gateway_token | default('') }}"
+
+# Where accepted knowledge records are proposed as Markdown (WP-H4).
+#
+# Empty on purpose. The GitHub App installation does not include
+# company-workgraph yet, and a configured repository the App cannot reach makes
+# the hourly pass fail rather than skip. Set it to "datopian/company-workgraph"
+# once the installation covers it.
+control_api_knowledge_repo: ""
+control_api_knowledge_base: main

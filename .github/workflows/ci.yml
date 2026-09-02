@@ -240,6 +240,13 @@ jobs:
       - name: an accepted operational candidate becomes work, exactly once
         run: psql -v ON_ERROR_STOP=1 -f test/integration/work_publication.sql
 
+      # The durable half. The pull request is a GitHub call, so what is
+      # asserted here is the interface: the provenance that travels with a
+      # record, that the excerpt TEXT does not, and that recording the
+      # publication twice does not propose the same record again.
+      - name: an accepted record is offered for Git once, with its provenance
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/record_publication.sql
+
       # Personal API tokens: who can see whose, revocation taking effect on the
       # next lookup, and the CHECK constraints biting. The constraints are the
       # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes
