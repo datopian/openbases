@@ -21,7 +21,16 @@ beads_graphs:
     prefix: wg
   - name: project-cdt
     prefix: cdt
+    project: cdt
   - name: project-nged
     prefix: ngd
+    project: nged
 beads_hq_prefix: wg
 beads_hq_user: workgraph
+
+# The registry binary, for recording the graphs. Same binary the execution
+# registry uses; empty means the graphs are provisioned on disk and not
+# recorded, which is the state a host is in before a build has been copied to
+# it.
+beads_registry_binary: /usr/local/bin/wg-registry
+beads_registry_user: workgraph

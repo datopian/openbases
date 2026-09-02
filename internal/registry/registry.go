@@ -25,6 +25,25 @@ type Document struct {
 	Node     Node      `json:"node"`
 	Cells    []Cell    `json:"cells"`
 	Projects []Project `json:"projects"`
+	// Graphs are the Beads databases provisioned on this host. Optional,
+	// because the execution nodes have none: the graphs live on the control
+	// node, and a document from an execution host declaring cells and no
+	// graphs is complete rather than deficient.
+	Graphs []Graph `json:"graphs,omitempty"`
+}
+
+// Graph is one provisioned Beads database, as it exists on disk.
+//
+// The path is what makes this worth recording. beads_databases rows created by
+// the work queue infer a graph from a cell and carry no path, which is enough
+// to attribute work and not enough to run a command against it.
+type Graph struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	// Scope is company, project, function or personal. A project graph names
+	// its project; a company graph must not.
+	Scope   string `json:"scope"`
+	Project string `json:"project,omitempty"`
 }
 
 // Node is one execution host.
@@ -62,6 +81,9 @@ type Project struct {
 var (
 	validEnvironments = map[string]bool{"staging": true, "production": true}
 	validVisibility   = map[string]bool{"internal": true, "confidential": true, "restricted": true}
+	// Mirrors the CHECK on beads_databases.scope.
+	validGraphScopes = map[string]bool{
+		"company": true, "project": true, "function": true, "personal": true}
 )
 
 // Validate reports everything wrong with a document, not just the first thing.
@@ -80,8 +102,13 @@ func (d Document) Validate() error {
 		add("node %q has environment %q, which is not one of %s",
 			d.Node.Hostname, d.Node.Environment, keys(validEnvironments))
 	}
-	if len(d.Cells) == 0 {
-		add("node %q declares no cells", d.Node.Hostname)
+	// A document must declare SOMETHING. It used to have to declare cells,
+	// which was true while only execution nodes were registered -- the control
+	// node has no cells and now has the Beads graphs, so requiring cells
+	// specifically would refuse a correct document from it.
+	if len(d.Cells) == 0 && len(d.Graphs) == 0 {
+		add("node %q declares neither cells nor graphs, so there is nothing to register",
+			d.Node.Hostname)
 	}
 
 	seen := map[string]bool{}
@@ -114,6 +141,38 @@ func (d Document) Validate() error {
 		}
 		if c.MemoryLimitMB < 0 {
 			add("%s has a negative memory limit (%d)", where, c.MemoryLimitMB)
+		}
+	}
+
+	graphNames := map[string]bool{}
+	for i, g := range d.Graphs {
+		where := fmt.Sprintf("graph %d", i)
+		if n := strings.TrimSpace(g.Name); n == "" {
+			add("%s has no name", where)
+		} else {
+			where = fmt.Sprintf("graph %q", n)
+			if graphNames[n] {
+				add("%s is declared twice", where)
+			}
+			graphNames[n] = true
+		}
+		// Absolute, because the command runs with a working directory nobody
+		// chose. "Resolved against whatever systemd gave us" is not a location.
+		if !strings.HasPrefix(g.Path, "/") {
+			add("%s has path %q, which is not absolute", where, g.Path)
+		}
+		if !validGraphScopes[g.Scope] {
+			add("%s has scope %q, which is not one of %s", where, g.Scope, keys(validGraphScopes))
+		}
+		// A project graph must name its project and a company graph must not.
+		// Both directions matter: an unattached project graph collects work
+		// nobody can attribute, and a company graph pinned to a project quietly
+		// narrows what everyone thought was shared.
+		if g.Scope == "project" && strings.TrimSpace(g.Project) == "" {
+			add("%s is project-scoped but names no project", where)
+		}
+		if g.Scope == "company" && strings.TrimSpace(g.Project) != "" {
+			add("%s is company-scoped but names project %q", where, g.Project)
 		}
 	}
 

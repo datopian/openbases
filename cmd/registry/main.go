@@ -116,6 +116,28 @@ func apply(ctx context.Context, db *sql.DB, doc registry.Document) error {
 			c.MaxConcurrentAgents, state(changed))
 	}
 
+	// Graphs before projects, because a project graph names a project and the
+	// function refuses one that is not registered -- so if a document ever
+	// declares both, the clearer failure is the graph complaining about a
+	// missing project rather than a project silently having no graph.
+	for _, g := range doc.Graphs {
+		// Returns a phrase rather than a boolean: the graph functions report
+		// registered, updated or unchanged, and Ansible greps for "(updated)".
+		var result string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT system_register_beads_graph($1,$2,$3,$4,$5)`,
+			g.Name, g.Path, doc.Node.Hostname, g.Scope, nullableStr(g.Project),
+		).Scan(&result); err != nil {
+			return fmt.Errorf("registering graph %s: %w", g.Name, err)
+		}
+		project := "-"
+		if g.Project != "" {
+			project = g.Project
+		}
+		fmt.Printf("graph     %-36s scope=%s project=%s path=%s %s\n",
+			g.Name, g.Scope, project, g.Path, resultState(result))
+	}
+
 	for _, p := range doc.Projects {
 		if err := tx.QueryRowContext(ctx,
 			`SELECT system_attach_project_to_cell($1,$2,$3)`,
@@ -130,6 +152,18 @@ func apply(ctx context.Context, db *sql.DB, doc registry.Document) error {
 	}
 
 	return tx.Commit()
+}
+
+// resultState turns the function's phrase into the word Ansible greps for, so
+// the graph rows read the same as every other row rather than exposing a second
+// vocabulary in one output.
+func resultState(result string) string {
+	switch {
+	case strings.HasSuffix(result, "(registered)"), strings.HasSuffix(result, "(updated)"):
+		return "(updated)"
+	default:
+		return "(unchanged)"
+	}
 }
 
 // state is the word Ansible greps for. A deployment must be able to report that

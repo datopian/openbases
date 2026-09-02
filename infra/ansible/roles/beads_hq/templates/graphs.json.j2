@@ -1,0 +1,33 @@
+{#
+  The desired state of the Beads graphs on this host.
+
+  Same shape and same binary as the execution registry uses for cells: one
+  desired-state document, built from facts Ansible already has, applied by
+  cmd/registry. A second mechanism for "record a thing that exists on a host"
+  would be a second thing to keep in step.
+
+  The path is built from the same two variables the role provisioned the
+  directory with, so the registry cannot record a location the role did not
+  create.
+
+  Scope comes from whether the entry declares a project, not from parsing the
+  name. Deriving a slug from a directory name is the kind of cleverness that
+  breaks on the first graph called something else.
+#}
+{
+  "node": {
+    "hostname": {{ inventory_hostname | to_json }},
+    "environment": {{ (control_api_environment | default('staging')) | to_json }}
+  },
+  "cells": [],
+  "graphs": [
+    {% for g in beads_graphs %}
+    {
+      "name": {{ g.name | to_json }},
+      "path": {{ (beads_hq_root ~ '/' ~ g.name) | to_json }},
+      "scope": {{ (g.project is defined) | ternary('project', 'company') | to_json }}
+      {%- if g.project is defined %}, "project": {{ g.project | to_json }}{% endif %}
+    }{{ "," if not loop.last else "" }}
+    {% endfor %}
+  ]
+}
