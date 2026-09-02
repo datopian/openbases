@@ -50,3 +50,40 @@
   loop_control:
     loop_var: graph
     label: "{{ graph.name }}"
+
+# Record the graphs in the control plane, so `bd` can be run against a path the
+# database knows rather than one a caller guessed.
+#
+# Every beads_databases row before this had an empty path: 0035 creates one per
+# execution cell on first sight, inferring the graph from the cell. Enough to
+# attribute work, not enough to run a command.
+- name: Check whether the registry binary is present
+  ansible.builtin.stat:
+    path: "{{ beads_registry_binary }}"
+  register: beads_registry_stat
+
+- name: Record the provisioned Beads graphs
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --pipe
+      - --wait
+      # --collect for the reason the execution registry uses it: without it a
+      # failed run leaves the unit loaded and the NEXT run fails with "unit was
+      # already loaded", which reads like an unrelated problem.
+      - --collect
+      - --unit=wg-registry-graphs
+      - --property=Type=oneshot
+      - --property=User={{ beads_registry_user }}
+      - --property=EnvironmentFile=/etc/workgraph/control-api.env
+      - --property=LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+      - "{{ beads_registry_binary }}"
+      - -f
+      - "-"
+    stdin: "{{ lookup('template', 'graphs.json.j2') | trim }}"
+  register: beads_registry_run
+  # Derived from what the function reported, not assumed. A second run reporting
+  # no changes is WP-B2's acceptance criterion.
+  changed_when: "'(updated)' in beads_registry_run.stdout"
+  when: beads_registry_stat.stat.exists
