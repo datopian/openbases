@@ -197,19 +197,7 @@ func (r Record) Render() ([]byte, error) {
 	}
 	b.WriteString("status: accepted\n")
 
-	if len(r.RelatedWork) == 0 {
-		b.WriteString("related_work: []\n")
-	} else {
-		b.WriteString("related_work:\n")
-		for _, w := range r.RelatedWork {
-			fmt.Fprintf(&b, "  - organisation_id: %s\n", w.OrganisationID)
-			if w.ExecutionCellID != "" {
-				fmt.Fprintf(&b, "    execution_cell_id: %s\n", w.ExecutionCellID)
-			}
-			fmt.Fprintf(&b, "    beads_database_id: %s\n", w.BeadsDatabaseID)
-			fmt.Fprintf(&b, "    bead_id: %s\n", w.BeadID)
-		}
-	}
+	b.WriteString(renderRelatedWork(r.RelatedWork))
 	b.WriteString("---\n\n")
 
 	// The body is deliberately unfinished. This file arrives as a pull request
@@ -295,6 +283,69 @@ func yamlString(s string) string {
 		return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\""
 	}
 	return s
+}
+
+// SetRelatedWork patches the related_work block of a published record.
+//
+// A patch rather than a re-render, for the reason MarkSuperseded is: the body
+// belongs to whoever wrote it. This exists because the two halves of publishing
+// a decision are deliberately independent -- the bead does not wait on Git and
+// Git does not wait on the bead (0063) -- so a record can reach Git before its
+// bead exists, and then the file needs the link adding rather than the record
+// needing republishing.
+func SetRelatedWork(existing []byte, refs []WorkRef) ([]byte, error) {
+	if len(refs) == 0 {
+		return existing, nil
+	}
+	text := string(existing)
+	if !strings.HasPrefix(text, "---\n") {
+		return nil, errors.New("the file has no front matter to patch")
+	}
+	front, body, ok := strings.Cut(strings.TrimPrefix(text, "---\n"), "\n---\n")
+	if !ok {
+		return nil, errors.New("the front matter is not terminated")
+	}
+
+	var out []string
+	replaced := false
+	skipping := false
+	for _, line := range strings.Split(front, "\n") {
+		switch {
+		case strings.HasPrefix(line, "related_work:"):
+			out = append(out, strings.TrimRight(renderRelatedWork(refs), "\n"))
+			replaced = true
+			// An empty list is one line; a populated one continues into
+			// indented entries that all belong to the block being replaced.
+			skipping = !strings.Contains(line, "[]")
+		case skipping && (strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "- ")):
+			// Part of the old block.
+		default:
+			skipping = false
+			out = append(out, line)
+		}
+	}
+	if !replaced {
+		out = append(out, strings.TrimRight(renderRelatedWork(refs), "\n"))
+	}
+
+	return []byte("---\n" + strings.Join(out, "\n") + "\n---\n" + body), nil
+}
+
+func renderRelatedWork(refs []WorkRef) string {
+	if len(refs) == 0 {
+		return "related_work: []\n"
+	}
+	var b strings.Builder
+	b.WriteString("related_work:\n")
+	for _, w := range refs {
+		fmt.Fprintf(&b, "  - organisation_id: %s\n", w.OrganisationID)
+		if w.ExecutionCellID != "" {
+			fmt.Fprintf(&b, "    execution_cell_id: %s\n", w.ExecutionCellID)
+		}
+		fmt.Fprintf(&b, "    beads_database_id: %s\n", w.BeadsDatabaseID)
+		fmt.Fprintf(&b, "    bead_id: %s\n", w.BeadID)
+	}
+	return b.String()
 }
 
 // MarkSuperseded patches the front matter of a record that has been retired.

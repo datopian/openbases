@@ -316,3 +316,92 @@ func TestAnAlreadyOpenPullRequestThatCannotBeFoundFails(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+// A fresh decision carries its bead in the front matter rather than being
+// proposed with an empty list and patched a moment later. Ordering is the whole
+// mechanism: the bead is created before the file is rendered.
+func TestAFreshDecisionCarriesItsBead(t *testing.T) {
+	r := aPending()
+	r.OrganisationID = "aaaaaaaa-0000-0000-0000-000000000000"
+	r.CandidateID = "cccccccc-0000-0000-0000-000000000000"
+	r.GraphID = "bbbbbbbb-0000-0000-0000-000000000000"
+	r.GraphPath = "/srv/graphs/g"
+	r.GraphName = "g"
+
+	rec := &recorder{}
+	// A database that cannot be reached, not a nil one: decisionBead refuses
+	// outright without a database -- correctly, since a bead it cannot record
+	// is a bead nothing points at -- and this test is about what the bead
+	// carries, which is decided before the write.
+	p := &RecordPublisher{DB: sql.OpenDB(deadConnector{}), Beads: rec, Log: quietLog()}
+	ref, err := p.decisionBead(t.Context(), r, quietLog())
+	if err == nil {
+		t.Fatal("expected the recording step to fail")
+	}
+	if ref != nil {
+		t.Fatal("a bead that could not be recorded must not be reported as linked")
+	}
+	if len(rec.issues) != 1 {
+		t.Fatalf("created %d issues", len(rec.issues))
+	}
+	if rec.issues[0].Type != "decision" {
+		t.Fatalf("the bead is a %q", rec.issues[0].Type)
+	}
+}
+
+// A publisher with no database refuses to create the bead at all, rather than
+// creating one and losing the link to it.
+func TestNoDatabaseMeansNoBead(t *testing.T) {
+	r := aPending()
+	r.CandidateID = "c"
+	r.GraphID = "g"
+	r.GraphPath = "/srv/graphs/g"
+
+	rec := &recorder{}
+	p := &RecordPublisher{Beads: rec, Log: quietLog()}
+	if _, err := p.decisionBead(t.Context(), r, quietLog()); err == nil {
+		t.Fatal("a bead was created with nowhere to record it")
+	}
+	if len(rec.issues) != 0 {
+		t.Fatal("a bead was created that nothing can point at")
+	}
+}
+
+// A record already proposed, whose bead has only just arrived, is patched in
+// place. Republishing it would rewrite a body somebody may already have
+// edited in review.
+func TestALateBeadPatchesTheOpenPullRequest(t *testing.T) {
+	r := aPending()
+	r.MarkdownPublished = true
+	r.Record.RelatedWork = []knowledge.WorkRef{{
+		OrganisationID:  "o",
+		BeadsDatabaseID: "d",
+		BeadID:          "cdt-late",
+	}}
+
+	original, err := aPending().Record.Render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	edited := strings.Replace(string(original),
+		"What changes because this is true.", "A reviewer wrote this.", 1)
+
+	gh := newFakeGitHub()
+	gh.files[r.Record.Path()] = []byte(edited)
+
+	p := &RecordPublisher{GitHub: gh, Owner: "o", Repo: "r", Log: quietLog()}
+	if err := p.linkWork(t.Context(), &githubapp.InstallationToken{Token: "t"}, "main", r, quietLog()); err != nil {
+		t.Fatalf("linkWork: %v", err)
+	}
+
+	patched := string(gh.files[r.Record.Path()])
+	if !strings.Contains(patched, "bead_id: cdt-late") {
+		t.Fatalf("the bead was not linked:\n%s", patched)
+	}
+	if !strings.Contains(patched, "A reviewer wrote this.") {
+		t.Fatalf("the reviewer's edit was lost:\n%s", patched)
+	}
+	if len(gh.prs) != 0 {
+		t.Fatal("a second pull request was opened for a record already proposed")
+	}
+}

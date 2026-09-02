@@ -261,7 +261,7 @@ func main() {
 			}
 			log.Info("record publication finished",
 				"proposed", rres.Proposed, "decision_beads", rres.Beads,
-				"blocked", rres.Blocked, "failed", rres.Failed)
+				"linked", rres.Linked, "blocked", rres.Blocked, "failed", rres.Failed)
 			if rres.Failed > 0 {
 				failedSomething = true
 			}

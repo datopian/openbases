@@ -284,3 +284,82 @@ func TestMarkSupersededRefusesAFileWithNoFrontMatter(t *testing.T) {
 		t.Fatal("a file with no front matter was patched anyway")
 	}
 }
+
+// The two halves of publishing a decision are independent, so a record can
+// reach Git before its bead exists. The file then needs the link adding, not
+// the record republishing -- and the body still belongs to whoever wrote it.
+func TestSetRelatedWorkKeepsTheBody(t *testing.T) {
+	original, err := aRecord().Render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(string(original), "related_work: []") {
+		t.Fatalf("a record with no bead should render an empty list:\n%s", original)
+	}
+	edited := strings.Replace(string(original),
+		"What changes because this is true.",
+		"Streaming stays out of scope until the pilot ends.", 1)
+
+	patched, err := SetRelatedWork([]byte(edited), []WorkRef{{
+		OrganisationID:  "aaaaaaaa-0000-0000-0000-000000000000",
+		BeadsDatabaseID: "bbbbbbbb-0000-0000-0000-000000000000",
+		BeadID:          "cdt-abc",
+	}})
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+
+	if !strings.Contains(string(patched), "Streaming stays out of scope until the pilot ends.") {
+		t.Fatalf("the human's body text was lost:\n%s", patched)
+	}
+	if strings.Contains(string(patched), "related_work: []") {
+		t.Fatalf("the empty list survived:\n%s", patched)
+	}
+	_, lists := frontMatter(t, string(patched))
+	work := lists["related_work"]
+	if len(work) != 1 || work[0]["bead_id"] != "cdt-abc" {
+		t.Fatalf("related_work = %v", work)
+	}
+	if work[0]["beads_database_id"] != "bbbbbbbb-0000-0000-0000-000000000000" {
+		t.Fatalf("the graph is missing, so the bead id is ambiguous: %v", work[0])
+	}
+	// Everything after the block survives: a naive replace that ate the
+	// following lines would take status with it.
+	flat, _ := frontMatter(t, string(patched))
+	if flat["status"] != "accepted" || flat["visibility"] != "restricted" {
+		t.Fatalf("the patch consumed neighbouring keys: %v", flat)
+	}
+}
+
+// Patching twice is the retry path.
+func TestSetRelatedWorkIsIdempotent(t *testing.T) {
+	original, _ := aRecord().Render()
+	ref := []WorkRef{{OrganisationID: "o", BeadsDatabaseID: "d", BeadID: "cdt-abc"}}
+
+	once, err := SetRelatedWork(original, ref)
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	twice, err := SetRelatedWork(once, ref)
+	if err != nil {
+		t.Fatalf("second patch: %v", err)
+	}
+	if string(once) != string(twice) {
+		t.Fatalf("a second patch changed the file:\n%s", twice)
+	}
+	if strings.Count(string(twice), "bead_id:") != 1 {
+		t.Fatalf("the bead is listed twice:\n%s", twice)
+	}
+}
+
+// Nothing to add is not an error, and must not rewrite the file.
+func TestSetRelatedWorkWithNoBeadsChangesNothing(t *testing.T) {
+	original, _ := aRecord().Render()
+	same, err := SetRelatedWork(original, nil)
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	if string(same) != string(original) {
+		t.Fatal("the file was rewritten with nothing to add")
+	}
+}

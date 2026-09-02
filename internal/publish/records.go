@@ -28,8 +28,12 @@ type GitHub interface {
 
 // PendingRecord is an accepted durable record not yet proposed in Git.
 type PendingRecord struct {
-	Record      knowledge.Record
-	CandidateID string
+	Record knowledge.Record
+	// OrganisationID is the record's own, and becomes the first element of the
+	// bead's identity tuple. On the row rather than resolved once per pass,
+	// because deriving it from a bead that does not exist yet is circular.
+	OrganisationID string
+	CandidateID    string
 	// The graph a decision bead belongs in, chosen by the same routing the
 	// operational publisher uses.
 	GraphID   string
@@ -52,8 +56,11 @@ type PendingRecord struct {
 type RecordResult struct {
 	Proposed int
 	Beads    int
-	Blocked  int
-	Failed   int
+	// Linked counts records whose pull request was already open when their
+	// bead arrived, so the file was patched rather than republished.
+	Linked  int
+	Blocked int
+	Failed  int
 }
 
 // RecordPublisher proposes accepted durable records as Markdown pull requests,
@@ -135,32 +142,85 @@ func (p *RecordPublisher) Run(ctx context.Context, limit int) (RecordResult, err
 			continue
 		}
 
-		if markdown && !r.MarkdownPublished {
-			if err := p.propose(ctx, tok, head, base, r, log); err != nil {
-				res.Failed++
-				log.Error("proposing a record", "record", r.Record.ID, "error", err)
-				// The bead is still attempted: it does not depend on Git, and
-				// a GitHub outage should not also stop the work graph.
-			} else {
-				res.Proposed++
-			}
-		}
-
-		// The decision bead. Only for decisions: a constraint or a lesson is
-		// something to know, not something to do, and a graph full of beads
-		// nobody can act on is how a work graph stops being read.
+		// The bead FIRST, so a record reaching Git for the first time carries
+		// the link in its front matter rather than needing it patched in.
+		// Only for decisions: a constraint or a lesson is something to know,
+		// not something to do, and a graph full of beads nobody can act on is
+		// how a work graph stops being read.
 		if r.Record.Type == "decision" && !r.BeadPublished {
-			published, err := p.decisionBead(ctx, r, log)
+			ref, err := p.decisionBead(ctx, r, log)
 			switch {
 			case err != nil:
 				res.Failed++
 				log.Error("creating the decision bead", "record", r.Record.ID, "error", err)
-			case published:
+			case ref != nil:
 				res.Beads++
+				r.Record.RelatedWork = append(r.Record.RelatedWork, *ref)
+			}
+		}
+
+		switch {
+		case !markdown:
+			// Nothing to do in Git this pass.
+		case !r.MarkdownPublished:
+			if err := p.propose(ctx, tok, head, base, r, log); err != nil {
+				res.Failed++
+				log.Error("proposing a record", "record", r.Record.ID, "error", err)
+				// Deliberately after the bead: Git does not hold up the work
+				// graph, and the work graph does not hold up Git.
+			} else {
+				res.Proposed++
+			}
+		case len(r.Record.RelatedWork) > 0:
+			// Already proposed, and the bead has only just arrived -- the two
+			// halves are independent, so this ordering is possible whenever
+			// the bead failed on an earlier pass. The open pull request is
+			// patched rather than the record republished.
+			if err := p.linkWork(ctx, tok, base, r, log); err != nil {
+				res.Failed++
+				log.Error("adding the bead to a proposed record",
+					"record", r.Record.ID, "error", err)
+			} else {
+				res.Linked++
 			}
 		}
 	}
 	return res, nil
+}
+
+// linkWork adds the bead to a record whose pull request is already open.
+func (p *RecordPublisher) linkWork(ctx context.Context, tok *githubapp.InstallationToken,
+	base string, r PendingRecord, log *slog.Logger) error {
+
+	path := r.Record.Path()
+	branch := recordBranch(r.Record)
+
+	content, _, err := p.GitHub.FileContent(ctx, tok, p.Owner, p.Repo, branch, path)
+	if err != nil {
+		return err
+	}
+	patched, err := knowledge.SetRelatedWork(content, r.Record.RelatedWork)
+	if err != nil {
+		return err
+	}
+	if string(patched) == string(content) {
+		return nil
+	}
+	if err := p.GitHub.PutFile(ctx, tok, p.Owner, p.Repo, branch, path,
+		fmt.Sprintf("Link mem-%s to its bead", shortID(r.Record.ID)), patched); err != nil {
+		return err
+	}
+	log.Info("added the bead to a record already proposed in Git",
+		"record", r.Record.ID, "path", path)
+	return nil
+}
+
+// recordBranch names the branch a record is proposed on.
+//
+// One expression rather than two: the proposal and the later patch have to
+// agree on it, and a second copy is a second thing to keep in step.
+func recordBranch(r knowledge.Record) string {
+	return "knowledge/" + r.Type + "-" + shortID(r.ID)
 }
 
 func (p *RecordPublisher) propose(ctx context.Context, tok *githubapp.InstallationToken,
@@ -171,7 +231,7 @@ func (p *RecordPublisher) propose(ctx context.Context, tok *githubapp.Installati
 		return fmt.Errorf("rendering: %w", err)
 	}
 	path := r.Record.Path()
-	branch := "knowledge/" + r.Record.Type + "-" + shortID(r.Record.ID)
+	branch := recordBranch(r.Record)
 
 	if err := p.GitHub.CreateBranch(ctx, tok, p.Owner, p.Repo, branch, head); err != nil {
 		return err
@@ -297,29 +357,29 @@ func prBody(r PendingRecord) string {
 // Reuses the operational recording function, so a decision's bead is recorded
 // the same way and in the same place as a task's -- one answer to "which bead
 // did this become".
-func (p *RecordPublisher) decisionBead(ctx context.Context, r PendingRecord, log *slog.Logger) (bool, error) {
+func (p *RecordPublisher) decisionBead(ctx context.Context, r PendingRecord, log *slog.Logger) (*knowledge.WorkRef, error) {
 	switch {
 	case p.Beads == nil:
-		return false, nil
+		return nil, nil
 	case r.CandidateID == "":
 		// A hand-written decision has no candidate to hang the bead off. The
 		// pull request is still the record of it; saying so beats inventing a
 		// link.
 		log.Info("no decision bead: the record has no candidate to attribute it to",
 			"record", r.Record.ID)
-		return false, nil
+		return nil, nil
 	case r.GraphID == "" || r.GraphPath == "":
 		log.Error("no decision bead: no provisioned graph for this record",
 			"record", r.Record.ID, "project", r.Record.Project)
-		return false, nil
+		return nil, nil
 	case p.Node != "" && r.GraphHost != "" && r.GraphHost != p.Node:
 		log.Info("no decision bead: the graph is on another host",
 			"record", r.Record.ID, "graph", r.GraphName, "host", r.GraphHost)
-		return false, nil
+		return nil, nil
 	}
 
 	if p.DB == nil {
-		return false, errors.New("no database to record the bead in")
+		return nil, errors.New("no database to record the bead in")
 	}
 
 	ref := beads.DatabaseRef{ID: r.GraphID, Name: r.GraphName, Path: r.GraphPath}
@@ -331,7 +391,7 @@ func (p *RecordPublisher) decisionBead(ctx context.Context, r PendingRecord, log
 
 	existing, err := client.ByLabel(ctx, ref, label)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
 	bead := ""
@@ -355,7 +415,7 @@ func (p *RecordPublisher) decisionBead(ctx context.Context, r PendingRecord, log
 		}
 		created, err := client.Create(ctx, ref, issue)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		bead = created.BeadID
 	}
@@ -364,11 +424,19 @@ func (p *RecordPublisher) decisionBead(ctx context.Context, r PendingRecord, log
 	if err := p.DB.QueryRowContext(ctx,
 		`SELECT system_record_work_publication($1::uuid, $2::uuid, $3, $4, $5)::text`,
 		r.CandidateID, r.GraphID, bead, title(r.Record.Statement), "decision").Scan(&workRef); err != nil {
-		return false, fmt.Errorf("recording decision bead %s: %w", bead, err)
+		return nil, fmt.Errorf("recording decision bead %s: %w", bead, err)
 	}
 	log.Info("created the bead for an accepted decision",
 		"record", r.Record.ID, "bead", bead, "graph", r.GraphName, "work_ref", workRef)
-	return true, nil
+
+	// Returned so a record reaching Git in this same pass carries the link,
+	// rather than being proposed with an empty related_work and patched a
+	// moment later.
+	return &knowledge.WorkRef{
+		OrganisationID:  r.OrganisationID,
+		BeadsDatabaseID: r.GraphID,
+		BeadID:          bead,
+	}, nil
 }
 
 func decisionBody(r PendingRecord) string {
@@ -416,12 +484,13 @@ func (p *RecordPublisher) record(ctx context.Context, recordID, path, prURL stri
 
 func (p *RecordPublisher) pending(ctx context.Context, limit int) ([]PendingRecord, error) {
 	rows, err := p.DB.QueryContext(ctx, `
-		SELECT record_id::text, record_type, statement, scope,
+		SELECT record_id::text, organisation_id::text, record_type, statement, scope,
 		       coalesce(project_slug,''), coalesce(function_slug,''),
 		       visibility, coalesce(confidence,0), valid_from, review_after,
 		       reviewed_at, coalesce(reviewer_email,''), coalesce(owner_email,''),
 		       coalesce(author_email,''), human_authored,
 		       coalesce(supersedes::text,''), coalesce(supersedes_git_path,''), sources,
+		       related_work,
 		       coalesce(candidate_id::text,''), markdown_published, bead_published,
 		       coalesce(graph_id::text,''), coalesce(graph_name,''),
 		       coalesce(graph_path,''), coalesce(graph_host,''),
@@ -437,12 +506,13 @@ func (p *RecordPublisher) pending(ctx context.Context, limit int) ([]PendingReco
 		var p PendingRecord
 		var validFrom, reviewAfter sql.NullTime
 		var reviewedAt sql.NullTime
-		var sources []byte
-		if err := rows.Scan(&p.Record.ID, &p.Record.Type, &p.Record.Statement, &p.Record.Scope,
+		var sources, related []byte
+		if err := rows.Scan(&p.Record.ID, &p.OrganisationID,
+			&p.Record.Type, &p.Record.Statement, &p.Record.Scope,
 			&p.Record.Project, &p.Record.Function, &p.Record.Visibility, &p.Record.Confidence,
 			&validFrom, &reviewAfter, &reviewedAt, &p.Record.Reviewer, &p.Record.Owner,
 			&p.Record.Author, &p.Record.HumanAuthored, &p.Record.Supersedes,
-			&p.SupersedesGitPath, &sources,
+			&p.SupersedesGitPath, &sources, &related,
 			&p.CandidateID, &p.MarkdownPublished, &p.BeadPublished,
 			&p.GraphID, &p.GraphName, &p.GraphPath, &p.GraphHost,
 			&p.Blocked); err != nil {
@@ -462,6 +532,11 @@ func (p *RecordPublisher) pending(ctx context.Context, limit int) ([]PendingReco
 		if len(sources) > 0 {
 			if err := json.Unmarshal(sources, &p.Record.Sources); err != nil {
 				return nil, fmt.Errorf("decoding the provenance of %s: %w", p.Record.ID, err)
+			}
+		}
+		if len(related) > 0 {
+			if err := json.Unmarshal(related, &p.Record.RelatedWork); err != nil {
+				return nil, fmt.Errorf("decoding the work references of %s: %w", p.Record.ID, err)
 			}
 		}
 		out = append(out, p)
