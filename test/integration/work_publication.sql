@@ -109,8 +109,12 @@ BEGIN
   IF row_out.blocked_reason IS NOT NULL THEN
     RAISE EXCEPTION 'a routable task was blocked: %', row_out.blocked_reason;
   END IF;
-  IF row_out.due_date IS NULL OR row_out.graph_host <> 'test-control' THEN
-    RAISE EXCEPTION 'the publisher was not told the due date and the host';
+  IF row_out.due_date IS NULL THEN
+    RAISE EXCEPTION 'the publisher was not told the due date';
+  END IF;
+  IF row_out.graph_host IS DISTINCT FROM 'test-control' THEN
+    RAISE EXCEPTION 'the publisher was told the graph is on host %',
+      coalesce(row_out.graph_host, '(null)');
   END IF;
   IF row_out.reviewer_email IS NULL THEN
     RAISE EXCEPTION 'the accepting reviewer was not passed through as the actor';
