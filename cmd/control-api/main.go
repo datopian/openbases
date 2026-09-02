@@ -393,10 +393,10 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		}
 
 		var job work.Job
-		var bead, brief sql.NullString
+		var bead, brief, project sql.NullString
 		err := db.QueryRowContext(r.Context(),
-			`SELECT id, kind, bead, brief, rig FROM system_claim_work($1)`, cell).
-			Scan(&job.ID, &job.Kind, &bead, &brief, &job.Rig)
+			`SELECT id, kind, bead, brief, rig, project FROM system_claim_work($1)`, cell).
+			Scan(&job.ID, &job.Kind, &bead, &brief, &job.Rig, &project)
 		if errors.Is(err, sql.ErrNoRows) {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -407,7 +407,9 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 		job.Cell, job.Bead, job.Brief = cell, bead.String, brief.String
-		log.Info("work claimed", "cell", cell, "job", job.ID, "kind", job.Kind, "bead", job.Bead)
+		job.Project = project.String
+		log.Info("work claimed", "cell", cell, "job", job.ID, "kind", job.Kind,
+			"bead", job.Bead, "project", job.Project)
 		writeJSON(w, http.StatusOK, job)
 	})
 
@@ -739,9 +741,10 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 		var payload struct {
-			Brief string `json:"brief"`
-			Cell  string `json:"cell"`
-			Rig   string `json:"rig"`
+			Brief   string `json:"brief"`
+			Cell    string `json:"cell"`
+			Rig     string `json:"rig"`
+			Project string `json:"project"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
@@ -759,14 +762,32 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 		var jobID string
+		// id.UserID, never a user from the body: system_enqueue_work checks
+		// THAT user's membership of the project, so passing anything the
+		// caller supplied would make the check check nothing.
 		if err := db.QueryRowContext(r.Context(),
-			`SELECT system_enqueue_work('plan', $1, $2, NULL, $3, $4)`,
-			payload.Cell, payload.Rig, payload.Brief, id.UserID).Scan(&jobID); err != nil {
+			`SELECT system_enqueue_work('plan', $1, $2, NULL, $3, $4, $5)`,
+			payload.Cell, payload.Rig, payload.Brief, id.UserID,
+			nullableParam(strings.TrimSpace(payload.Project))).Scan(&jobID); err != nil {
+			// The function raises for an unknown project and for a requester
+			// who is not a member. Both are the caller's mistake and both are
+			// safe to name -- "not a member of project x" tells them nothing
+			// they did not just assert -- so this is a 400 with the reason
+			// rather than a 500 with "internal error".
+			msg := err.Error()
+			if strings.Contains(msg, "no project with the slug") ||
+				strings.Contains(msg, "is not a member of project") {
+				log.Info("plan refused", "by", id.UserID, "project", payload.Project, "reason", msg)
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "that project is not one you can file work into"})
+				return
+			}
 			log.Error("enqueueing a plan", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 			return
 		}
-		log.Info("plan enqueued", "job", jobID, "cell", payload.Cell, "by", id.UserID)
+		log.Info("plan enqueued", "job", jobID, "cell", payload.Cell,
+			"project", payload.Project, "by", id.UserID)
 		writeJSON(w, http.StatusAccepted, map[string]any{"job": jobID, "status": "queued"})
 	})
 

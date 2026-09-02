@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type WorkItem, type QueueJob } from "./api";
+import { api, type WorkItem, type QueueJob, type ProjectSummary } from "./api";
 
 /**
  * Work: a brief goes in, beads come out, agents run them (WP-D2/E3, WP-F1).
@@ -110,6 +110,8 @@ export function Work() {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [onlyOpen, setOnlyOpen] = useState(true);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [project, setProject] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -120,6 +122,22 @@ export function Work() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  }, []);
+
+  // Loaded once rather than on the five-second poll: the list of projects
+  // somebody belongs to does not change while they are looking at this page,
+  // and re-fetching it twelve times a minute to render an unchanged dropdown
+  // is a request per user per five seconds for nothing.
+  //
+  // /v1/projects is already filtered to what the caller may see, so this
+  // selector cannot offer a project they could not file into -- the check that
+  // matters is still the one in system_enqueue_work, because a selector is a
+  // convenience and not a boundary.
+  useEffect(() => {
+    api
+      .projects()
+      .then(setProjects)
+      .catch(() => setProjects([]));
   }, []);
 
   useEffect(() => {
@@ -136,8 +154,11 @@ export function Work() {
     setBusy(true);
     setNote(null);
     try {
-      const res = await api.plan(brief.trim());
-      setNote(`Planning job ${res.job.slice(0, 8)} queued. An agent will pick it up and file beads.`);
+      const res = await api.plan(brief.trim(), project || undefined);
+      setNote(
+        `Planning job ${res.job.slice(0, 8)} queued${project ? ` for ${project}` : ""}. ` +
+          `An agent will pick it up and file beads.`,
+      );
       setBrief("");
       refresh();
     } catch (e) {
@@ -186,6 +207,35 @@ export function Work() {
           It files beads and does none of the work, so you can read the plan
           before any of it runs.
         </p>
+        {/*
+          Above the brief, not beside the button: the project decides who can
+          read the beads this produces, so it belongs where somebody sees it
+          before they type rather than next to the thing they press afterwards.
+        */}
+        <div style={{ marginBottom: "0.6rem" }}>
+          <label htmlFor="project" style={{ ...css.small, ...css.muted, display: "block" }}>
+            File the beads into
+          </label>
+          <select
+            id="project"
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+            style={{ padding: "0.4rem", fontFamily: "inherit", fontSize: "0.9rem", borderRadius: "4px", border: "1px solid #ccc", minWidth: "18rem" }}
+          >
+            <option value="">No project — company-wide work</option>
+            {projects.map((p) => (
+              <option key={p.slug} value={p.slug}>
+                {p.name} ({p.slug})
+              </option>
+            ))}
+          </select>
+          {project === "" && (
+            <div style={{ ...css.small, ...css.muted, marginTop: "0.25rem" }}>
+              Company-wide beads are readable by everyone who can log in. Pick a
+              project for anything client-related.
+            </div>
+          )}
+        </div>
         <textarea
           id="brief"
           value={brief}
@@ -269,6 +319,7 @@ export function Work() {
             <tr>
               <th style={css.th}>Bead</th>
               <th style={css.th}>Title</th>
+              <th style={css.th}>Project</th>
               <th style={css.th}>Status</th>
               <th style={css.th}>Agent</th>
               <th style={{ ...css.th, textAlign: "right" }}>Cents</th>
@@ -283,6 +334,13 @@ export function Work() {
                 <tr key={`${i.cell}:${i.bead}`}>
                   <td style={{ ...css.td, ...css.mono, ...css.small }}>{i.bead}</td>
                   <td style={css.td}>{i.title || <span style={css.muted}>untitled</span>}</td>
+                  {/* "company" rather than blank: an empty cell reads as
+                      missing data, and a bead with no project is a real and
+                      different thing -- work everybody who can log in may
+                      read. */}
+                  <td style={{ ...css.td, ...css.small }}>
+                    {i.project || <span style={css.muted}>company</span>}
+                  </td>
                   <td style={{ ...css.td, ...css.small }}>{i.status}</td>
                   <td style={{ ...css.td, ...css.small, color: q.colour }}>
                     {q.text}
