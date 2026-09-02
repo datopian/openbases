@@ -23,9 +23,11 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/datopian/workgraph/internal/beads"
 	"github.com/datopian/workgraph/internal/config"
 	"github.com/datopian/workgraph/internal/inference"
 	"github.com/datopian/workgraph/internal/ingest"
+	"github.com/datopian/workgraph/internal/publish"
 	"github.com/datopian/workgraph/internal/workspace"
 )
 
@@ -44,10 +46,16 @@ func main() {
 		since = flag.Duration("since", 7*24*time.Hour,
 			"how far back -summary looks")
 		phase = flag.String("phase", "all",
-			"all, reconcile (subscriptions only) or ingest (registered sources only)")
-		ingestLimit = flag.Int("ingest-limit", 50, "most deliveries to ingest in one pass")
-		timeout     = flag.Duration("timeout", 15*time.Minute, "overall deadline")
-		verbose     = flag.Bool("v", false, "log the sources left alone too")
+			"all, reconcile (subscriptions only), ingest (registered sources only) "+
+				"or publish (accepted candidates only)")
+		ingestLimit  = flag.Int("ingest-limit", 50, "most deliveries to ingest in one pass")
+		publishLimit = flag.Int("publish-limit", 50, "most accepted candidates to publish in one pass")
+		beadsBinary  = flag.String("bd", envOr("WG_BEADS_BINARY", "/usr/local/bin/bd"),
+			"the pinned bd binary that creates beads for accepted candidates")
+		node = flag.String("node", os.Getenv("WG_NODE_NAME"),
+			"this host's name as the registry records it; graphs on another host are left alone")
+		timeout = flag.Duration("timeout", 15*time.Minute, "overall deadline")
+		verbose = flag.Bool("v", false, "log the sources left alone too")
 	)
 	flag.Parse()
 
@@ -169,6 +177,47 @@ func main() {
 		}
 	}
 
+	// Publication runs last, and needs no Google credential: it reads accepted
+	// candidates from the database and writes beads on this host's disk. In
+	// the same pass for the reason ingestion is -- one unit to notice had
+	// stopped -- but deliberately not gated on the credential, so a pass that
+	// cannot reach Google still turns yesterday's accepted work into work.
+	if *phase == "all" || *phase == "publish" {
+		if *dryRun {
+			log.Info("publication skipped; a dry run writes nothing")
+		} else {
+			pub := &publish.Publisher{
+				DB:   db,
+				Node: *node,
+				Log:  log,
+				Beads: &beads.CLIClient{
+					Binary: *beadsBinary,
+					// HOME per graph, because Dolt keeps its config under
+					// HOME and this node's service account has no home
+					// directory -- beads_hq initialised each graph with HOME
+					// pointing at the graph itself.
+					HomeAtDatabasePath: true,
+					Actor:              "workgraph-publisher",
+				},
+			}
+			res, err := pub.Run(ctx, *publishLimit)
+			if err != nil {
+				fail(log, "publication could not run", err)
+			}
+			log.Info("publication finished",
+				"published", res.Published, "adopted", res.Adopted,
+				"blocked", res.Blocked, "elsewhere", res.Elsewhere, "failed", res.Failed)
+			// Only a FAILURE fails the pass. A blocked candidate is logged
+			// as an error and left queued, because it needs a human decision
+			// -- a project assigned, or a graph registered -- and no number of
+			// retries changes it. A timer that goes red every hour forever is
+			// how people learn to ignore the hour it matters.
+			if res.Failed > 0 {
+				failedSomething = true
+			}
+		}
+	}
+
 	if failedSomething {
 		// Non-zero so the systemd unit records a failure and the monitor sees
 		// it. A pass that could not renew a subscription, or could not register
@@ -216,4 +265,12 @@ func fail(log *slog.Logger, msg string, err error) {
 		log.Error(msg)
 	}
 	os.Exit(1)
+}
+
+// envOr is the default-with-an-override the other flags spell out inline.
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
 }
