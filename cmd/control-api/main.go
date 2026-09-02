@@ -1170,6 +1170,34 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, cards)
 	})
 
+	// What review DID.
+	//
+	// The queue answers "what needs deciding"; this answers the question that
+	// comes straight after and had nowhere to be asked: a reviewer accepted a
+	// task last week, so where is it. An accepted candidate with no bead shows
+	// up as accepted with no bead, rather than as a decision that looks
+	// complete.
+	authed.HandleFunc("GET /v1/candidates/decided", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if store == nil || id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		limit := 50
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+		cards, err := store.DecidedCandidates(r.Context(), id.UserID, limit)
+		if err != nil {
+			log.Error("reading decided candidates", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, cards)
+	})
+
 	// Deciding on one candidate.
 	authed.HandleFunc("POST /v1/candidates/{id}/review", func(w http.ResponseWriter, r *http.Request) {
 		ident, _ := authn.FromContext(r.Context())

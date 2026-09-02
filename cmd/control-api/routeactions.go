@@ -62,6 +62,8 @@ var routeActions = map[string]routeAction{
 	"GET /v1/projects/{slug}/events": {Action: authz.ProjectRead},
 	// Reading the queue is reading project material; RLS then scopes the rows.
 	"GET /v1/candidates": {Action: authz.ProjectRead},
+	// Same material, seen after the decision rather than before it.
+	"GET /v1/candidates/decided": {Action: authz.ProjectRead},
 	// Deciding writes to company memory, so it is a write action rather than a
 	// read one -- and the policy additionally refuses a review recorded under
 	// anybody but the caller.

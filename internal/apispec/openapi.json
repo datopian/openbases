@@ -263,6 +263,45 @@
         "description": "Extracted candidates awaiting a decision, oldest first. Each carries the cited source excerpts, the meeting participants, whether the statement was said outright or inferred, and whether the source contained instruction-shaped text \u2014 everything a reviewer needs without a second request."
       }
     },
+    "/v1/candidates/decided": {
+      "get": {
+        "summary": "What review decided, and what it produced",
+        "operationId": "get_v1_candidates_decided",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Recently reviewed candidates with their destination: the durable record, or the bead and the graph it went into. An accepted candidate with no bead is shown as accepted with no bead \u2014 publication runs on a timer outside the request, so \"queued\" is a real state and hiding it would make an unpublished decision look complete."
+      }
+    },
     "/v1/events": {
       "get": {
         "summary": "Events since a cursor",
