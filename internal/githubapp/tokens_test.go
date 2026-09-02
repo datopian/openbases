@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -155,5 +156,20 @@ func TestMintFailureDoesNotEchoTheResponseBody(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "ghs_leaked") || strings.Contains(err.Error(), "secret_echo") {
 		t.Errorf("the error echoed the response body: %v", err)
+	}
+}
+
+// GitHub answers an owner-qualified repository name with the same 422 it uses
+// for a repository the installation does not cover, so the two are impossible
+// to tell apart from the response. This catches the caller's mistake before
+// the request, and names it.
+func TestScopedTokensRefuseOwnerQualifiedNames(t *testing.T) {
+	c := &Client{AppID: "1", InstallationID: "2", PrivateKeyPEM: testKeyPEM(t)}
+	_, err := c.InstallationToken(context.Background(), "datopian/company-workgraph")
+	if !errors.Is(err, ErrOwnerQualified) {
+		t.Fatalf("error = %v, want ErrOwnerQualified", err)
+	}
+	if !strings.Contains(err.Error(), "datopian/company-workgraph") {
+		t.Fatalf("the error does not name the offending value: %v", err)
 	}
 }

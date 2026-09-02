@@ -46,6 +46,15 @@ type Client struct {
 // makes every scheduled run red.
 var ErrNotInstalled = errors.New("repository is not covered by this installation")
 
+// ErrOwnerQualified reports a repository named "owner/name" where the API
+// wants "name".
+//
+// Its own error because GitHub answers both with the same 422, and the two
+// need opposite responses: one is a grant somebody has to make, the other is a
+// caller passing the wrong string. Publication spent a deploy believing the
+// installation was missing a repository the installation already had.
+var ErrOwnerQualified = errors.New("a scoped token takes bare repository names, not owner/name")
+
 // InstallationToken is a short-lived credential scoped to an installation.
 type InstallationToken struct {
 	Token     string    `json:"token"`
@@ -121,6 +130,14 @@ func (c *Client) appJWT() (string, error) {
 // Repositories, when non-empty, narrows the token to those names. A job that
 // touches one repository should not hold a credential for nine.
 func (c *Client) InstallationToken(ctx context.Context, repositories ...string) (*InstallationToken, error) {
+	// Caught here rather than at GitHub, which answers with the same 422 it
+	// uses for a repository the installation does not cover.
+	for _, r := range repositories {
+		if strings.Contains(r, "/") {
+			return nil, fmt.Errorf("%w: %q", ErrOwnerQualified, r)
+		}
+	}
+
 	// A narrowed token is never cached: the cache is keyed by nothing, so
 	// returning it for a different repository set would silently widen scope.
 	if len(repositories) == 0 {
