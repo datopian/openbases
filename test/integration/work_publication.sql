@@ -66,9 +66,9 @@ SET LOCAL ROLE workgraph_app;
 DO $$
 DECLARE
   n integer; res jsonb; cand uuid; row_out record; ref uuid; ref2 uuid;
-  graph uuid; before_refs integer;
+  graph uuid; before_refs integer; accepted integer;
 BEGIN
-  PERFORM set_config('app.current_user_id', current_setting('test.lead'), false);
+  PERFORM set_config('workgraph.user_id', current_setting('test.lead'), true);
 
   -- Nothing is offered before anything is accepted: the queue is driven by
   -- review, not by extraction.
@@ -79,6 +79,7 @@ BEGIN
     RAISE EXCEPTION 'a pending candidate was offered for publication before review';
   END IF;
 
+  accepted := 0;
   FOR cand IN
     SELECT id FROM knowledge_candidates
      WHERE source_id = current_setting('test.source')::uuid
@@ -89,7 +90,15 @@ BEGIN
     IF res ->> 'status' <> 'accepted' THEN
       RAISE EXCEPTION 'acceptance reported %', res ->> 'status';
     END IF;
+    accepted := accepted + 1;
   END LOOP;
+  -- Asserted, because everything below reads a row and NULL comparisons are
+  -- not TRUE: a loop that iterated zero times -- the reviewer's identity not
+  -- set, so RLS showing an empty table -- would pass every check that follows
+  -- by finding nothing at all.
+  IF accepted <> 5 THEN
+    RAISE EXCEPTION 'accepted % candidates, expected 5', accepted;
+  END IF;
 
   -- The durable one published in the transaction and is not work.
   SELECT count(*) INTO n FROM system_pending_work_publications(50) p
@@ -103,6 +112,9 @@ BEGIN
   -- who accepted it.
   SELECT * INTO row_out FROM system_pending_work_publications(50)
    WHERE statement = 'Send CDT the revised scope';
+  IF row_out.candidate_id IS NULL THEN
+    RAISE EXCEPTION 'the accepted cdt task was not offered for publication at all';
+  END IF;
   IF row_out.graph_name <> 'test-project-cdt' THEN
     RAISE EXCEPTION 'the cdt task routed to graph %', coalesce(row_out.graph_name, '(none)');
   END IF;
@@ -124,6 +136,9 @@ BEGIN
   -- An internal, projectless question routes to the company graph.
   SELECT * INTO row_out FROM system_pending_work_publications(50)
    WHERE candidate_type = 'question';
+  IF row_out.candidate_id IS NULL THEN
+    RAISE EXCEPTION 'the accepted question was not offered for publication at all';
+  END IF;
   IF row_out.graph_name <> 'test-company-hq' OR row_out.blocked_reason IS NOT NULL THEN
     RAISE EXCEPTION 'the company question routed to % (%)',
       coalesce(row_out.graph_name, '(none)'), coalesce(row_out.blocked_reason, 'no reason');
@@ -134,6 +149,9 @@ BEGIN
   -- commitment in front of the whole company.
   SELECT * INTO row_out FROM system_pending_work_publications(50)
    WHERE candidate_type = 'commitment';
+  IF row_out.candidate_id IS NULL THEN
+    RAISE EXCEPTION 'the accepted commitment was not offered for publication at all';
+  END IF;
   IF row_out.blocked_reason IS NULL THEN
     RAISE EXCEPTION 'a commitment whose graph has no path was routed to %', row_out.graph_name;
   END IF;
@@ -144,6 +162,9 @@ BEGIN
   -- Restricted with no project: refused, for the same reason stated out loud.
   SELECT * INTO row_out FROM system_pending_work_publications(50)
    WHERE candidate_type = 'risk';
+  IF row_out.candidate_id IS NULL THEN
+    RAISE EXCEPTION 'the accepted risk was not offered for publication at all';
+  END IF;
   IF row_out.blocked_reason IS NULL OR row_out.graph_id IS NOT NULL THEN
     RAISE EXCEPTION 'a restricted projectless risk was routed to %',
       coalesce(row_out.graph_name, '(none)');
@@ -196,7 +217,7 @@ END $$;
 DO $$
 DECLARE cand uuid; graph uuid; caught text;
 BEGIN
-  PERFORM set_config('app.current_user_id', current_setting('test.lead'), false);
+  PERFORM set_config('workgraph.user_id', current_setting('test.lead'), true);
 
   SELECT id INTO cand FROM knowledge_candidates
    WHERE statement = 'A statement that gets rejected';
