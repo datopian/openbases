@@ -10,11 +10,14 @@
 -- global constraint for the demo is that CDT, NGED and DataHub cells are not
 -- touched.
 --
--- Memberships are NOT created here. The attendee list is a separate input and
--- goes in with the Access allow-list (B3), so that the people who can log in
--- and the people who can select this project are decided together rather than
--- drifting apart. Company-wide role holders already reach it through their
--- grants.
+-- The owner and the backup owner get memberships; the ATTENDEES do not.
+--
+-- Those are different things. test/integration/pilot_registry.sql asserts that
+-- every project's primary owner is a member of it -- an owner who is not is an
+-- owner who cannot see their own project, and holding a management grant is
+-- not the same as being on the team. The attendee list is a separate input and
+-- goes in with the Access allow-list (B3), so who can log in and who can
+-- select this project are decided together rather than drifting apart.
 BEGIN;
 
 INSERT INTO projects (organisation_id, slug, name, objective, visibility,
@@ -31,5 +34,16 @@ SELECT o.id,
   LEFT JOIN execution_cells c ON c.slug = 'oss'
  WHERE o.slug = 'datopian'
 ON CONFLICT (organisation_id, slug) DO NOTHING;
+
+INSERT INTO project_memberships (project_id, user_id, role_name)
+SELECT p.id, u.id, v.role_name
+  FROM projects p
+  JOIN (VALUES
+          ('anuar.ustayev@datopian.com', 'contributor'),
+          ('osahon.okungbowa@datopian.com', 'contributor')
+       ) AS v(email, role_name) ON true
+  JOIN users u ON u.primary_email = v.email
+ WHERE p.slug = 'roseville-poc'
+ON CONFLICT DO NOTHING;
 
 COMMIT;

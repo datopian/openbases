@@ -37,9 +37,13 @@ BEGIN
   -- project is a deliberate edit here -- and makes the failure legible.
   --
   -- portaljs-oss and datopian-products came from 0009. nged and cdt are the two
-  -- client engagements; cdt was added 2026-09-01 (wg-8yv.37).
+  -- client engagements; cdt was added 2026-09-01 (wg-8yv.37). roseville-poc
+  -- was added 2026-09-02 for the 3 September demo (0073): a PROSPECT, not a
+  -- client, and internal rather than restricted because everything in it comes
+  -- from Roseville's public Socrata catalogue.
   SELECT count(*) INTO n FROM projects
-   WHERE slug NOT IN ('portaljs-oss', 'datopian-products', 'nged', 'cdt');
+   WHERE slug NOT IN ('portaljs-oss', 'datopian-products', 'nged', 'cdt',
+                      'roseville-poc');
   IF n <> 0 THEN
     RAISE EXCEPTION 'undeclared project(s): %',
       (SELECT string_agg(slug, ', ') FROM projects
