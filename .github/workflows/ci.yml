@@ -226,6 +226,15 @@ jobs:
       - name: only a project's members may review its candidates, as themselves
         run: psql -v ON_ERROR_STOP=1 -f test/integration/knowledge_review.sql
 
+      # A reviewer can correct a candidate as well as decide on it: reclassify,
+      # assign an owner, assign a project. Without those the queue's only
+      # answer to "this is nearly right" is to throw it away, and the
+      # transcript has already been ingested at that revision so it never
+      # comes back. The limits are the interesting part -- tightening a
+      # classification is allowed and widening is not.
+      - name: a reviewer can reclassify and assign, but never widen
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/reviewer_corrections.sql
+
       # The same gap was found three times in one day, each by somebody
       # happening to look. This asks the database which tables hold
       # source-derived content and asserts each one is actually protected, so a
