@@ -7,30 +7,8 @@ beads_sha256_linux_amd64: "643e602e27f666c8726abff0f22001e2b5883988fa960204bde20
 dolt_version: "v2.0.7"
 dolt_sha256_linux_amd64: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc314539a3b9795a"
 
-beads_hq_root: /srv/graphs
-beads_hq_name: company-hq
-
-# The graphs to provision. company-hq carries company-wide decisions; a project
-# graph carries the work accepted from that project's meetings.
-#
-# Prefixes differ so an id says which graph it came from. Beads graphs cannot
-# reference each other (plan section 2.3), so a bare id with no prefix is
-# ambiguous the moment there is more than one graph -- which is now.
-beads_graphs:
-  - name: company-hq
-    prefix: wg
-  - name: project-cdt
-    prefix: cdt
-    project: cdt
-  - name: project-nged
-    prefix: ngd
-    project: nged
+# beads_hq_root and beads_graphs are inventory data, in
+# group_vars/control.yml: execution_registry reads them too, to record the
+# graphs this role provisions, and a role default would be invisible to it.
 beads_hq_prefix: wg
 beads_hq_user: workgraph
-
-# The registry binary, for recording the graphs. Same binary the execution
-# registry uses; empty means the graphs are provisioned on disk and not
-# recorded, which is the state a host is in before a build has been copied to
-# it.
-beads_registry_binary: /usr/local/bin/wg-registry
-beads_registry_user: workgraph

@@ -69,3 +69,43 @@
   when:
     - registry_binary_stat.stat.exists
     - item.stdout_lines is defined
+
+# Record the Beads graphs beads_hq provisioned, so `bd` can be run against a
+# path the database knows rather than one a caller guessed.
+#
+# Here rather than in beads_hq, for the same reason the cells are recorded here
+# rather than in execution_cell: recording has to come after everything it
+# describes exists. beads_hq runs before control_api, so during a first deploy
+# it has neither the registry binary nor the migration that defines the
+# registration function.
+#
+# Every beads_databases row before this had an empty path: 0035 creates one per
+# execution cell on first sight, inferring the graph from the cell. Enough to
+# attribute work, not enough to run a command.
+- name: Record the provisioned Beads graphs
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --pipe
+      - --wait
+      - --collect
+      - --unit=wg-registry-graphs
+      - --property=Type=oneshot
+      - --property=User={{ registry_user }}
+      - --property=EnvironmentFile=/etc/workgraph/control-api.env
+      - --property=LoadCredential=db_app_password:/etc/workgraph/credentials/db_app_password
+      - "{{ registry_binary }}"
+      - -f
+      - "-"
+    stdin: "{{ lookup('template', 'graphs.json.j2') | trim }}"
+  register: graph_registry_run
+  changed_when: "'(updated)' in graph_registry_run.stdout"
+  when: registry_binary_stat.stat.exists
+
+- name: Report the recorded graphs
+  ansible.builtin.debug:
+    var: graph_registry_run.stdout_lines
+  when:
+    - registry_binary_stat.stat.exists
+    - graph_registry_run.stdout_lines is defined
