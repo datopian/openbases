@@ -247,6 +247,12 @@ jobs:
       - name: an accepted record is offered for Git once, with its provenance
         run: psql -v ON_ERROR_STOP=1 -f test/integration/record_publication.sql
 
+      # Correcting company memory. The columns for supersession existed from
+      # 0002 and nothing could reach them, which in practice means the first
+      # correction anybody makes is an UPDATE and the evidence is gone.
+      - name: correcting a record supersedes it rather than overwriting it
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/supersession.sql
+
       # Personal API tokens: who can see whose, revocation taking effect on the
       # next lookup, and the CHECK constraints biting. The constraints are the
       # reason this cannot be a Go test — wg-p4h.2 puts the ungrantable scopes

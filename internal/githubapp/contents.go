@@ -91,6 +91,39 @@ func (c *Client) FileSHA(ctx context.Context, tok *InstallationToken, owner, rep
 	return out.SHA, nil
 }
 
+// FileContent returns a file's bytes and its blob SHA at a ref.
+//
+// Used to patch a published record rather than regenerate it: the body of a
+// knowledge record is written by a person, so an update has to start from what
+// is there.
+func (c *Client) FileContent(ctx context.Context, tok *InstallationToken, owner, repo, ref, path string) ([]byte, string, error) {
+	if tok == nil || tok.Token == "" {
+		return nil, "", errors.New("no installation token")
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/contents/%s?ref=%s",
+		c.baseURL(), owner, repo, escapePath(path), url.QueryEscape(ref))
+	var out struct {
+		SHA      string `json:"sha"`
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+	}
+	if err := c.callJSON(ctx, tok, http.MethodGet, u, nil, &out, http.StatusOK); err != nil {
+		return nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	if out.Encoding != "base64" {
+		// A file over a megabyte comes back with no content and encoding
+		// "none". Saying so beats returning empty bytes that read as an empty
+		// file.
+		return nil, out.SHA, fmt.Errorf("%s came back %s-encoded; too large to read this way", path, out.Encoding)
+	}
+	// GitHub wraps the base64 at 60 characters.
+	decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(out.Content, "\n", ""))
+	if err != nil {
+		return nil, out.SHA, fmt.Errorf("decoding %s: %w", path, err)
+	}
+	return decoded, out.SHA, nil
+}
+
 // PutFile writes a file on a branch, creating or replacing it.
 //
 // Replacing requires the blob SHA of what is there, which is GitHub's

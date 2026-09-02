@@ -296,3 +296,47 @@ func yamlString(s string) string {
 	}
 	return s
 }
+
+// MarkSuperseded patches the front matter of a record that has been retired.
+//
+// A patch rather than a re-render, and that is the whole point: the body of a
+// published record is written by a person, and regenerating the file from the
+// database would delete their reasoning in the name of updating two fields.
+// This changes `status` and adds `superseded_by`, and touches nothing else --
+// including the front matter keys it does not recognise.
+func MarkSuperseded(existing []byte, successorID string) ([]byte, error) {
+	if successorID == "" {
+		return nil, errors.New("marking a record superseded needs its successor")
+	}
+	text := string(existing)
+	if !strings.HasPrefix(text, "---\n") {
+		return nil, errors.New("the file has no front matter to patch")
+	}
+	front, body, ok := strings.Cut(strings.TrimPrefix(text, "---\n"), "\n---\n")
+	if !ok {
+		return nil, errors.New("the front matter is not terminated")
+	}
+
+	var out []string
+	sawStatus, sawSuccessor := false, false
+	for _, line := range strings.Split(front, "\n") {
+		switch {
+		case strings.HasPrefix(line, "status:"):
+			out = append(out, "status: superseded")
+			sawStatus = true
+		case strings.HasPrefix(line, "superseded_by:"):
+			out = append(out, "superseded_by: mem-"+successorID)
+			sawSuccessor = true
+		default:
+			out = append(out, line)
+		}
+	}
+	if !sawSuccessor {
+		out = append(out, "superseded_by: mem-"+successorID)
+	}
+	if !sawStatus {
+		out = append(out, "status: superseded")
+	}
+
+	return []byte("---\n" + strings.Join(out, "\n") + "\n---\n" + body), nil
+}
