@@ -193,3 +193,63 @@ func TestEveryDeclaredGraphIsInTheObservedDetail(t *testing.T) {
 		t.Errorf("states wrong: %v", states)
 	}
 }
+
+// A provisioned-but-empty graph is not an outage.
+//
+// beads_hq creates the directory and Dolt initialises on first write, so a
+// declared graph nobody has written to is normal — two of the three graphs on
+// staging are in that state. The first version of this check called it a
+// failure, and the very first live run reported two false outages.
+func TestAnUninitialisedGraphIsReportedAndDoesNotFail(t *testing.T) {
+	f := EvaluateGraphs([]Graph{
+		{Name: "company-hq", Path: "/a", Readable: true},
+		{Name: "project-cdt", Path: "/b", Uninitialised: true},
+	})
+	if f.Failing {
+		t.Fatalf("an empty graph is not an outage, got %q", f.Summary)
+	}
+	if !strings.Contains(f.Summary, "not yet initialised") {
+		t.Errorf("the summary should still mention it, got %q", f.Summary)
+	}
+	entries, ok := f.Observed["graphs"].([]map[string]any)
+	if !ok {
+		t.Fatalf("observed graphs should be entries, got %T", f.Observed["graphs"])
+	}
+	for _, e := range entries {
+		if e["name"] == "project-cdt" && e["state"] != "uninitialised" {
+			t.Errorf("an empty graph should be labelled uninitialised, got %v", e["state"])
+		}
+	}
+}
+
+// An uninitialised graph must not mask a broken one beside it.
+func TestAnUninitialisedGraphDoesNotHideARealFailure(t *testing.T) {
+	f := EvaluateGraphs([]Graph{
+		{Name: "project-cdt", Path: "/b", Uninitialised: true},
+		{Name: "company-hq", Path: "/a", Readable: false, Reason: "permission denied"},
+	})
+	if !f.Failing {
+		t.Fatal("an unreadable graph must still fail when another is merely empty")
+	}
+	if !strings.Contains(f.Summary, "company-hq") {
+		t.Errorf("the summary must name the broken graph, got %q", f.Summary)
+	}
+}
+
+// The reason text is the operator's only clue, so "cannot read" and "could not
+// find out" must not read the same. The first version reported a manifest that
+// `test -r` confirmed was readable as unreadable, because the sudo probe itself
+// was refused.
+func TestAProbeThatCouldNotRunSaysSoRatherThanBlamingTheFile(t *testing.T) {
+	f := EvaluateGraphs([]Graph{
+		{Name: "company-hq", Path: "/a", Readable: false,
+			Reason: "could not test whether workgraph can read /a/manifest: sudo refused (sudo: a password is required)"},
+	})
+	if !f.Failing {
+		t.Fatal("an undetermined result is still a failure: the question went unanswered")
+	}
+	if !strings.Contains(f.Summary, "could not test") {
+		t.Errorf("the summary should say the probe failed, not that the file is unreadable, got %q",
+			f.Summary)
+	}
+}
