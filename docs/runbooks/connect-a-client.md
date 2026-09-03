@@ -114,20 +114,39 @@ protected the way this runbook assumes.
 
 ### The hosted clients fail but Claude Code works
 
-Almost certainly the dynamic-registration redirect allow-list. localhost and
-loopback are allowed, which covers the command-line clients; Anthropic's cloud
-callback URI is not published and is deliberately absent from
+The dynamic-registration redirect allow-list. localhost and loopback are
+allowed, which covers the command-line clients — Claude Code declares
+`http://localhost/callback` and `http://127.0.0.1/callback` with only the port
+configurable — and a hosted client is refused at **registration**, before
+anybody sees a login page, unless its URI is in
 `access_oauth_allowed_redirect_uris`.
 
-Read the URI the registration actually asked for, from Zero Trust → Logs →
-Access → the failed authentication event, then add it:
+`https://claude.ai/api/mcp/auth_callback` is configured for staging. If a
+hosted client still fails, read the URI the registration actually asked for
+from Zero Trust → Logs → Access → the failed authentication event, and replace
+it. Add the exact URI, or a path ending in `/*`; never a bare domain wildcard.
 
-```hcl
-access_oauth_allowed_redirect_uris = ["https://claude.ai/..."]
+You can check what the allow-list accepts without opening a browser. The
+registration endpoint answers honestly, and a refused registration creates
+nothing:
+
+```bash
+curl -sS -X POST   https://datopian.cloudflareaccess.com/cdn-cgi/access/oauth/registration   -H 'Content-Type: application/json'   -d '{"client_name":"probe","redirect_uris":["https://example.invalid/never-allowed"],
+       "grant_types":["authorization_code"],"response_types":["code"],
+       "token_endpoint_auth_method":"none"}'
 ```
 
-and apply. Add the exact URI, or a path ending in `/*`. Do not add a bare
-domain wildcard.
+A refused URI answers:
+
+```json
+{"error":"invalid_client_metadata",
+ "error_description":"redirect_uri is not allowed by the account configuration"}
+```
+
+An allowed one answers `201` with a `client_id` — which **registers a client**,
+so probe with a URI you expect to be refused unless you mean to create one.
+Registrations come back without a `registration_access_token`, so there is no
+RFC 7592 way to delete them; removal is a dashboard action.
 
 ### A tool call is refused
 
