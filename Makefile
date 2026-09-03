@@ -7,6 +7,22 @@ LDFLAGS  := -X github.com/datopian/workgraph/internal/version.Version=$(shell gi
             -X github.com/datopian/workgraph/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
             -X github.com/datopian/workgraph/internal/version.BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# The node binaries additionally drop the symbol table and DWARF.
+#
+# Not a micro-optimisation: bin/linux-amd64 is 174MB, the control node installs
+# ten of those, and every one is re-uploaded on every commit because LDFLAGS
+# embeds the commit and so every hash always differs. Measured throughput
+# through the cloudflared tunnel was 4MB/s on a good day and about 88KB/s on a
+# bad one, which is where "a deploy takes fourteen minutes" came from. -s -w
+# takes monitor from 14.9MB to 10.4MB, and with SSH compression on it reaches
+# the node as 3.7MB.
+#
+# What this costs: delve cannot debug a node binary. What it does NOT cost is
+# readable panics — Go's traceback comes from pclntab, which -w does not touch.
+# The host builds keep their symbols, so anything you actually attach a debugger
+# to still has them.
+NODE_LDFLAGS := $(LDFLAGS) -s -w
+
 .PHONY: help bootstrap dev test check fmt vet lint build clean \
         web-install web-build web-dev verify-versions pins-check migrate-check sql-check infra-check \
         live-zones e2e
@@ -60,44 +76,44 @@ build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 	@# The nodes are linux/amd64 and development happens on macOS, so a binary
 	@# from `build` cannot be deployed. Ansible is pointed at this output.
 	@mkdir -p $(BIN)/linux-amd64
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/witness ./cmd/witness
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/monitor ./cmd/monitor
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/worker ./cmd/worker
 	@# control-api and reconcile belong here too. They were cross-compiled by
 	@# hand, which is how the deployed API came to report version=dev
 	@# commit=unknown: a hand-rolled `go build` omits LDFLAGS, and then nothing
 	@# can answer "is the running code the deployed code" — the question that
 	@# matters most during an incident.
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/control-api ./cmd/control-api
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/reconcile ./cmd/reconcile
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/costimport ./cmd/costimport
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/registry ./cmd/registry
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/budget ./cmd/budget
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/runner ./cmd/runner
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/dispatcher ./cmd/dispatcher
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/work ./cmd/work
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/workspaced ./cmd/workspaced
 	@# wg is the HTTP client, and belongs on a laptop rather than a node — but it
 	@# is cross-compiled here so a node can carry one for an incident where the
 	@# database is the thing that is broken.
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/wg ./cmd/wg
 	@# migrate belongs here for the same reason, and for one more: it embeds the
 	@# migrations, so a stale hand-built copy on a node applies a stale schema
 	@# while reporting success.
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/migrate ./cmd/migrate
 	@echo "built: $(BIN)/linux-amd64/{witness,monitor,worker,control-api,reconcile,costimport,registry,budget,runner,dispatcher,work,workspaced,wg,migrate}"
 

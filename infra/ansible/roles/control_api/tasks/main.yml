@@ -30,6 +30,7 @@
     group: root
   when: control_api_local_binary | length > 0
   notify: Restart control-api
+  tags: [binaries, code]
 
 - name: Install the budget tool
   ansible.builtin.copy:
@@ -39,6 +40,7 @@
     owner: root
     group: root
   when: budget_local_binary | length > 0
+  tags: [binaries, code]
 
 - name: Install the work queue tool
   ansible.builtin.copy:
@@ -48,6 +50,7 @@
     owner: root
     group: root
   when: work_local_binary | length > 0
+  tags: [binaries, code]
 
 - name: Install the migration tool
   ansible.builtin.copy:
@@ -57,6 +60,7 @@
     owner: root
     group: root
   when: migrate_local_binary | length > 0
+  tags: [binaries, code]
 
 # Credential source files. systemd reads these at start and copies them into a
 # per-service tmpfs; the service user never needs to read them itself, which is
@@ -154,6 +158,13 @@
 #
 # Peer authentication over the socket means no password is assembled, passed on
 # a command line, or placed in the environment for this.
+# Tagged `code` alongside the binaries rather than getting a tag of its own.
+#
+# Deploying with --start-at-task "Install the migration tool" applied the
+# migrations without the API binary, because the binary task comes earlier in
+# this role: the schema moved, the code did not, and the run reported success.
+# A tag that always carries both makes that mistake unavailable instead of
+# documenting it.
 - name: Apply database migrations
   become: true
   become_user: postgres
@@ -167,11 +178,13 @@
   # actually moved.
   changed_when: "'msg=applied' in migrate_run.stdout"
   when: migrate_local_binary | length > 0
+  tags: [binaries, code]
 
 - name: Report what the migrations did
   ansible.builtin.debug:
     msg: "{{ migrate_run.stdout_lines | default([]) | select('search', 'applied|up to date|migrations found') | list }}"
   when: migrate_local_binary | length > 0
+  tags: [binaries, code]
 
 - name: Install the systemd unit
   ansible.builtin.template:
@@ -257,6 +270,7 @@
   # remove. Reading the config files said "migrated"; the running process said
   # otherwise, and only /proc/<pid>/environ showed the difference.
   when: control_api_local_reconcile_binary | default('') | length > 0
+  tags: [binaries, code]
 
 # The App private key can mint tokens for every installed repository, so its
 # mode is part of the security model — the loader refuses a key readable by
@@ -280,6 +294,7 @@
     mode: "0755"
   when: control_api_local_worker_binary | default('') | length > 0
   notify: Restart the worker
+  tags: [binaries, code]
 
 - name: Install the worker unit
   ansible.builtin.template:
@@ -337,6 +352,7 @@
     group: root
     mode: "0755"
   when: control_api_local_workspace_binary | default('') | length > 0
+  tags: [binaries, code]
 
 # This key impersonates any user in the domain for Drive and Meet reads, so its
 # mode is part of the security model rather than tidiness.
