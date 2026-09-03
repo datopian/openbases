@@ -61,7 +61,8 @@
           "scope_or_lifetime_refused",
           "invalid_until",
           "invalid_cursor",
-          "scope_refused"
+          "scope_refused",
+          "scope_unknown"
         ],
         "description": "Stable codes. token_scope_insufficient and role_grant_missing are deliberately distinct: one means this credential may not, the other means you may not, and they have different fixes."
       }

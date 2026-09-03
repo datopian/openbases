@@ -108,10 +108,25 @@ If a token does end up in a conversation, say so plainly and tell them to
 revoke it: the web interface, Tokens, or `DELETE /v1/tokens/{id}`. Do not
 quietly keep using it.
 
-Useful scopes for this skill: `project.read`, `work.create`, `agent.dispatch`,
-`organisation.read`, `audit.read`. Eight actions can never be granted to a
-token at all — approvals and knowledge review among them — so those stay in the
-browser however good your credential is.
+### Scopes
+
+The set is closed, so a plausible-sounding name is simply refused. There is no
+`work.read`, no `work.write` and no `project.write`; reads are governed by
+row-level security rather than a read scope, so **the useful scopes are the
+write ones**. Every grantable scope, in full:
+
+`organisation.read`, `project.read`, `project.manage`, `work.create`,
+`work.update`, `work.assign`, `agent.dispatch`, `agent.inspect`, `agent.stop`,
+`repository.read`, `pull_request.create`, `audit.read`
+
+For this skill, `project.read work.create work.update agent.dispatch
+organisation.read` covers everything below.
+
+Eight actions can never be granted to a token at all — approvals, merges,
+deployments, secrets, policy, marketing publishing and both knowledge actions —
+so those stay in the browser however good your credential is. Asking for one
+returns `400` with `"code": "scope_refused"`; a misspelling returns `400` with
+`"code": "scope_unknown"` and the grantable list in `grantable`.
 
 ## Working over HTTP, with no binary
 

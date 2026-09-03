@@ -66,6 +66,13 @@ var (
 
 	// ErrLifetime is returned for a missing, past, or over-long expiry.
 	ErrLifetime = errors.New("expiry must be in the future and within the maximum lifetime")
+
+	// ErrUnknownScope is returned when a requested scope is not an action this
+	// system has. Separate from ErrProtectedScope because the two deserve
+	// different answers: a protected action is refused permanently, an unknown
+	// one is nearly always a typo the caller can fix. Both are the caller's own
+	// input, so both are safe to name back to them.
+	ErrUnknownScope = errors.New("not an action this system has")
 )
 
 // Token is a stored token's metadata. It never carries the secret.
@@ -292,12 +299,26 @@ var Ungrantable = map[authz.Action]struct{}{
 	authz.KnowledgeReview: {},
 }
 
+// GrantableScopes returns the actions a token may actually hold, sorted. It is
+// the answer to "then what may I ask for", which is the only useful thing to
+// say to a caller who named a scope that does not exist.
+func GrantableScopes() []string {
+	var out []string
+	for _, a := range authz.AllActions() {
+		if _, no := Ungrantable[a]; no || a.Protected() {
+			continue
+		}
+		out = append(out, string(a))
+	}
+	return out
+}
+
 // ValidateScopes refuses any action a token may never carry.
 func ValidateScopes(scopes []string) error {
 	for _, s := range scopes {
 		a := authz.Action(s)
 		if !a.Known() {
-			return fmt.Errorf("unknown action %q", s)
+			return fmt.Errorf("%w: %s", ErrUnknownScope, s)
 		}
 		// Protected() is consulted as well as the explicit set, so an action
 		// that becomes protected in internal/authz later is refused here

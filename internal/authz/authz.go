@@ -8,6 +8,7 @@ package authz
 import (
 	"context"
 	"errors"
+	"slices"
 )
 
 // Action is a permission verb. The set is closed: an unrecognised action is
@@ -57,6 +58,18 @@ var allActions = map[Action]struct{}{
 
 // Known reports whether a is a recognised action.
 func (a Action) Known() bool { _, ok := allActions[a]; return ok }
+
+// AllActions returns every recognised action, sorted, so a caller who got a
+// name wrong can be told what the real ones are. Sorted rather than in map
+// order because this ends up in an error message a person reads.
+func AllActions() []Action {
+	out := make([]Action, 0, len(allActions))
+	for a := range allActions {
+		out = append(out, a)
+	}
+	slices.Sort(out)
+	return out
+}
 
 // Protected reports whether an action normally requires a durable human
 // approval before execution (plan section 10.1).
