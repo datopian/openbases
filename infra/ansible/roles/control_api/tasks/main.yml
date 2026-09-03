@@ -380,3 +380,42 @@
     - control_api_workspace_stat.stat.exists
     - control_api_google_subject | default('') | length > 0
     - control_api_google_topic | default('') | length > 0
+
+# And the other direction, which is the half that was missing.
+#
+# The gate above only ever enabled. One deploy ran with WG_GOOGLE_SUBJECT in its
+# environment and started the timer; every later deploy without it re-templated
+# the unit with an empty subject and left the timer running, so the service
+# failed hourly on "no delegation subject" — exactly the noise the comment above
+# exists to prevent. A conditional that can only turn something on describes an
+# intention, not a state.
+#
+# Stopped as well as disabled: disabling alone leaves the current timer armed,
+# so the next fire still fails and the deploy that "fixed" it looks ineffective
+# for an hour.
+- name: Disable the workspace reconciliation timer when it is not fully configured
+  ansible.builtin.systemd_service:
+    name: workgraph-workspace.timer
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: >-
+    not control_api_workspace_stat.stat.exists
+    or (control_api_google_subject | default('') | length == 0)
+    or (control_api_google_topic | default('') | length == 0)
+
+# Said once, at deploy time, where somebody is looking. The alternative is an
+# hourly journal entry on a machine nobody is reading, which is how this went
+# unnoticed in the first place.
+- name: Say that workspace reconciliation is off and why
+  ansible.builtin.debug:
+    msg: >-
+      Workspace reconciliation is disabled:
+      {{ 'the reconciler binary is not installed; ' if not control_api_workspace_stat.stat.exists else '' }}
+      {{ 'control_api_google_subject is empty (set WG_GOOGLE_SUBJECT to the Workspace user the reconciler impersonates); ' if (control_api_google_subject | default('') | length == 0) else '' }}
+      {{ 'control_api_google_topic is empty; ' if (control_api_google_topic | default('') | length == 0) else '' }}
+      Drive and Meet sources will not be ingested until this is set.
+  when: >-
+    not control_api_workspace_stat.stat.exists
+    or (control_api_google_subject | default('') | length == 0)
+    or (control_api_google_topic | default('') | length == 0)
