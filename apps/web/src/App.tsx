@@ -283,6 +283,35 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
   // it. The empty state says which it is.
   const [received, setReceived] = useState<string>("");
 
+  // Which portfolio the reader is looking at, remembered across visits.
+  //
+  // The home page listed every project, which for a company with client
+  // engagements, open-source projects, products and prospect work means the
+  // question "how are the clients doing" is answered by a table where most
+  // rows are not clients. The filter is per portfolio because that is the
+  // grouping the schema actually has -- there are no subprojects.
+  //
+  // localStorage rather than a URL parameter: it is a per-reader preference
+  // rather than a thing to share, and a link that carries somebody else's
+  // filter is worse than one that carries none. Wrapped in try/catch because a
+  // private window throws on access rather than returning empty.
+  const [portfolio, setPortfolio] = useState<string>(() => {
+    try {
+      return window.localStorage.getItem("wg.portfolio") ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const choosePortfolio = (p: string) => {
+    setPortfolio(p);
+    try {
+      window.localStorage.setItem("wg.portfolio", p);
+    } catch {
+      // A reader who cannot store a preference still gets to use the filter
+      // for this visit, which is the part that matters.
+    }
+  };
+
   useEffect(() => {
     api
       .projectsRaw()
@@ -298,7 +327,50 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
   if (error)
     return <p style={{ color: "#a33" }}>Could not load projects: {error}</p>;
   if (!projects) return <p style={css.muted}>Loading…</p>;
-  const rows = asList(projects);
+  const all = asList(projects);
+  // Portfolios present in what came back, rather than a hardcoded list: a new
+  // portfolio should appear here without a release, and one with no projects
+  // should not offer a filter that yields an empty table.
+  const portfolios = Array.from(
+    new Set(all.map((p) => p.portfolio).filter((p) => p.length > 0)),
+  ).sort();
+  // An unknown remembered value shows everything rather than nothing. A
+  // portfolio can be renamed or emptied between visits, and a filter that
+  // silently hides every project is indistinguishable from a broken page.
+  const active = portfolios.includes(portfolio) ? portfolio : "";
+  const rows = active === "" ? all : all.filter((p) => p.portfolio === active);
+
+  const filter =
+    portfolios.length > 1 ? (
+      <p style={{ margin: "0 0 0.9rem", fontSize: "0.85rem" }}>
+        <span style={{ ...css.muted, marginRight: "0.6rem" }}>Portfolio</span>
+        {[{ key: "", label: `All (${all.length})` }]
+          .concat(
+            portfolios.map((p) => ({
+              key: p,
+              label: `${p} (${all.filter((x) => x.portfolio === p).length})`,
+            })),
+          )
+          .map((opt) => (
+            <a
+              key={opt.key}
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                choosePortfolio(opt.key);
+              }}
+              style={{
+                marginRight: "0.75rem",
+                textDecoration: "none",
+                fontWeight: opt.key === active ? 700 : 400,
+                color: opt.key === active ? "#1a1a1a" : "#0b5cad",
+              }}
+            >
+              {opt.label}
+            </a>
+          ))}
+      </p>
+    ) : null;
   // The create form sits above both the table and the empty state, because the
   // case where somebody most needs it is the one where there is nothing to
   // list. A newly created project is prepended rather than refetched: it is
@@ -312,9 +384,11 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
     return (
       <>
         <CreateProject onCreated={created} />
+        {filter}
         <p style={css.muted}>
-          No projects are visible to you. That may be because none exist yet, or
-          because you are not a member of any.
+          {active !== ""
+            ? `No projects in the ${active} portfolio.`
+            : "No projects are visible to you. That may be because none exist yet, or because you are not a member of any."}
           <br />
           <span style={{ fontSize: "0.75rem" }}>
             received: {received || "nothing"}
@@ -327,6 +401,7 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
   return (
     <>
       <CreateProject onCreated={created} />
+      {filter}
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>

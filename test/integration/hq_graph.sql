@@ -13,7 +13,19 @@ DO $$
 DECLARE org uuid; hq uuid; proj uuid; pid uuid; a uuid; b uuid; n integer;
 BEGIN
   SELECT id INTO org FROM organisations WHERE slug = 'datopian';
-  SELECT id INTO pid FROM projects WHERE slug = 'datopian-products';
+  -- datahub, because 0080 deleted datopian-products when it dissolved the
+  -- products project.
+  --
+  -- Asserted rather than assumed. When the project vanished this silently became
+  -- NULL, and the project-scoped graph below was then inserted naming no
+  -- project -- which is exactly the state wg-43n was about, where every bead in
+  -- a graph is unattributable. The project_scope_names_project constraint added
+  -- in 0078 is what caught it, and this check is so the next failure says
+  -- "the project is missing" instead of "a constraint was violated".
+  SELECT id INTO pid FROM projects WHERE slug = 'datahub';
+  IF pid IS NULL THEN
+    RAISE EXCEPTION 'the datahub project is missing, so this test has no project to attach a graph to';
+  END IF;
 
   -- A company graph, deliberately with NO execution cell.
   INSERT INTO beads_databases (organisation_id, name, scope, path)
