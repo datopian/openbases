@@ -3,6 +3,7 @@ import { Ask } from "./Ask";
 import { Inbox } from "./Inbox";
 import { Work } from "./Work";
 import { Device, deviceCodeFromHash } from "./Device";
+import { CreateProject, ManageRepositories } from "./ProjectAdmin";
 import {
   age,
   api,
@@ -57,7 +58,11 @@ const css = {
     borderBottom: "1px solid #e3e3e3",
     padding: "0.5rem 0.75rem 0.5rem 0",
   } as const,
-  td: { padding: "0.7rem 0.75rem 0.7rem 0", borderBottom: "1px solid #f0f0f0", verticalAlign: "top" } as const,
+  td: {
+    padding: "0.7rem 0.75rem 0.7rem 0",
+    borderBottom: "1px solid #f0f0f0",
+    verticalAlign: "top",
+  } as const,
   link: { color: "#0b5cad", textDecoration: "none", fontWeight: 600 } as const,
 };
 
@@ -70,7 +75,13 @@ function Visibility({ value }: { value: string }) {
     restricted: "#a33",
   };
   return (
-    <span style={{ color: tone[value] ?? "#444", fontWeight: 600, fontSize: "0.85rem" }}>
+    <span
+      style={{
+        color: tone[value] ?? "#444",
+        fontWeight: 600,
+        fontSize: "0.85rem",
+      }}
+    >
       {value}
     </span>
   );
@@ -87,17 +98,32 @@ function SignalCard({ signal }: { signal: Signal }) {
   const stale = isStale(signal.observed_at);
   return (
     <div style={css.card}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "1rem",
+          flexWrap: "wrap",
+        }}
+      >
         <strong>{signal.name}</strong>
         <span
           title={signal.observed_at ?? "no observation recorded"}
-          style={{ ...css.muted, fontSize: "0.85rem", color: stale ? "#a33" : "#666" }}
+          style={{
+            ...css.muted,
+            fontSize: "0.85rem",
+            color: stale ? "#a33" : "#666",
+          }}
         >
-          {signal.observed_at ? `observed ${age(signal.observed_at)}` : "never observed"}
+          {signal.observed_at
+            ? `observed ${age(signal.observed_at)}`
+            : "never observed"}
           {stale && signal.observed_at ? " — may be out of date" : ""}
         </span>
       </div>
-      <div style={{ fontSize: "1.1rem", margin: "0.2rem 0 0.4rem" }}>{signal.value}</div>
+      <div style={{ fontSize: "1.1rem", margin: "0.2rem 0 0.4rem" }}>
+        {signal.value}
+      </div>
       <div style={{ ...css.muted, fontSize: "0.9rem" }}>{signal.basis}</div>
     </div>
   );
@@ -113,30 +139,61 @@ function Repositories({ repos }: { repos: RepositoryStatus[] }) {
         const prs = asList(r.pull_requests);
         return (
           <div key={r.full_name} style={css.card}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: "1rem",
+                flexWrap: "wrap",
+              }}
+            >
               <strong>{r.full_name}</strong>
-              <span style={{ ...css.muted, fontSize: "0.85rem" }} title={r.last_projected ?? ""}>
-                {r.last_projected ? `last activity ${age(r.last_projected)}` : "never reported"}
+              <span
+                style={{ ...css.muted, fontSize: "0.85rem" }}
+                title={r.last_projected ?? ""}
+              >
+                {r.last_projected
+                  ? `last activity ${age(r.last_projected)}`
+                  : "never reported"}
               </span>
             </div>
             {prs.length === 0 ? (
-              <p style={{ ...css.muted, fontSize: "0.9rem", margin: "0.4rem 0 0" }}>
+              <p
+                style={{
+                  ...css.muted,
+                  fontSize: "0.9rem",
+                  margin: "0.4rem 0 0",
+                }}
+              >
                 {r.last_projected
                   ? "No pull requests recorded."
                   : "Nothing has been received for this repository yet. That may mean no activity, or that the integration is not delivering."}
               </p>
             ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "0.5rem" }}>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  marginTop: "0.5rem",
+                }}
+              >
                 <tbody>
                   {prs.slice(0, 8).map((pr) => (
                     <tr key={pr.number}>
-                      <td style={{ ...css.td, width: "3.5rem" }}>#{pr.number}</td>
+                      <td style={{ ...css.td, width: "3.5rem" }}>
+                        #{pr.number}
+                      </td>
                       <td style={css.td}>{pr.title}</td>
                       <td style={{ ...css.td, width: "6rem" }}>{pr.state}</td>
                       <td style={{ ...css.td, width: "7rem" }}>
-                        {pr.checks_state ? `checks: ${pr.checks_state}` : "checks: none"}
+                        {pr.checks_state
+                          ? `checks: ${pr.checks_state}`
+                          : "checks: none"}
                       </td>
-                      <td style={{ ...css.td, width: "7rem", ...css.muted }} title={pr.updated_at}>
+                      <td
+                        style={{ ...css.td, width: "7rem", ...css.muted }}
+                        title={pr.updated_at}
+                      >
                         {age(pr.updated_at)}
                       </td>
                     </tr>
@@ -152,7 +209,9 @@ function Repositories({ repos }: { repos: RepositoryStatus[] }) {
 }
 
 function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
-  const [detail, setDetail] = useState<(ProjectDetail & { repositories: RepositoryStatus[] }) | null>(null);
+  const [detail, setDetail] = useState<
+    (ProjectDetail & { repositories: RepositoryStatus[] }) | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -161,7 +220,9 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
     api
       .projectDetail(slug)
       .then(setDetail)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : String(e)),
+      );
   }, [slug]);
 
   return (
@@ -176,22 +237,30 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
       >
         ← All projects
       </a>
-      {error && <p style={{ color: "#a33" }}>Could not load this project: {error}</p>}
+      {error && (
+        <p style={{ color: "#a33" }}>Could not load this project: {error}</p>
+      )}
       {!detail && !error && <p style={css.muted}>Loading…</p>}
       {detail && (
         <>
           <h1 style={{ marginBottom: "0.15rem" }}>{detail.name}</h1>
           <p style={{ ...css.muted, marginTop: 0 }}>
             {detail.portfolio ? `${detail.portfolio} · ` : ""}
-            <Visibility value={detail.visibility} /> · {detail.status} · owner {detail.primary_owner}
+            <Visibility value={detail.visibility} /> · {detail.status} · owner{" "}
+            {detail.primary_owner}
             {detail.backup_owner ? ` (backup ${detail.backup_owner})` : ""}
           </p>
 
           <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Status</h2>
-          {asList(detail.signals).map((s) => <SignalCard key={s.name} signal={s} />)}
+          {asList(detail.signals).map((s) => (
+            <SignalCard key={s.name} signal={s} />
+          ))}
 
-          <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Repositories</h2>
+          <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>
+            Repositories
+          </h2>
           <Repositories repos={asList(detail.repositories)} />
+          <ManageRepositories slug={detail.slug} />
         </>
       )}
     </>
@@ -216,63 +285,81 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
         setReceived(describe(raw));
         setProjects(asList((raw as { projects?: ProjectSummary[] })?.projects));
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : String(e)),
+      );
   }, []);
 
-  if (error) return <p style={{ color: "#a33" }}>Could not load projects: {error}</p>;
+  if (error)
+    return <p style={{ color: "#a33" }}>Could not load projects: {error}</p>;
   if (!projects) return <p style={css.muted}>Loading…</p>;
   const rows = asList(projects);
+  // The create form sits above both the table and the empty state, because the
+  // case where somebody most needs it is the one where there is nothing to
+  // list. A newly created project is prepended rather than refetched: it is
+  // already in hand, and a refetch would make the thing you just made appear
+  // after a delay, which reads like it did not work.
+  const created = (p: ProjectSummary) => setProjects([p, ...asList(projects)]);
+
   if (rows.length === 0) {
     // Empty because of permissions is a different thing from empty because
     // nothing exists, and the reader cannot tell from a blank table.
     return (
-      <p style={css.muted}>
-        No projects are visible to you. That may be because none exist yet, or because you are not a
-        member of any.
-        <br />
-        <span style={{ fontSize: "0.75rem" }}>received: {received || "nothing"}</span>
-      </p>
+      <>
+        <CreateProject onCreated={created} />
+        <p style={css.muted}>
+          No projects are visible to you. That may be because none exist yet, or
+          because you are not a member of any.
+          <br />
+          <span style={{ fontSize: "0.75rem" }}>
+            received: {received || "nothing"}
+          </span>
+        </p>
+      </>
     );
   }
 
   return (
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead>
-        <tr>
-          <th style={css.th}>Project</th>
-          <th style={css.th}>Portfolio</th>
-          <th style={css.th}>Visibility</th>
-          <th style={css.th}>Status</th>
-          <th style={css.th}>Owner</th>
-          <th style={css.th}>Repos</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((p) => (
-          <tr key={p.slug}>
-            <td style={css.td}>
-              <a
-                href={`#/projects/${p.slug}`}
-                style={css.link}
-                onClick={(e) => {
-                  e.preventDefault();
-                  onOpen(p.slug);
-                }}
-              >
-                {p.name}
-              </a>
-            </td>
-            <td style={{ ...css.td, ...css.muted }}>{p.portfolio || "—"}</td>
-            <td style={css.td}>
-              <Visibility value={p.visibility} />
-            </td>
-            <td style={css.td}>{p.status}</td>
-            <td style={{ ...css.td, ...css.muted }}>{p.primary_owner}</td>
-            <td style={css.td}>{p.repositories}</td>
+    <>
+      <CreateProject onCreated={created} />
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={css.th}>Project</th>
+            <th style={css.th}>Portfolio</th>
+            <th style={css.th}>Visibility</th>
+            <th style={css.th}>Status</th>
+            <th style={css.th}>Owner</th>
+            <th style={css.th}>Repos</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.slug}>
+              <td style={css.td}>
+                <a
+                  href={`#/projects/${p.slug}`}
+                  style={css.link}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onOpen(p.slug);
+                  }}
+                >
+                  {p.name}
+                </a>
+              </td>
+              <td style={{ ...css.td, ...css.muted }}>{p.portfolio || "—"}</td>
+              <td style={css.td}>
+                <Visibility value={p.visibility} />
+              </td>
+              <td style={css.td}>{p.status}</td>
+              <td style={{ ...css.td, ...css.muted }}>{p.primary_owner}</td>
+              <td style={css.td}>{p.repositories}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   );
 }
 
@@ -308,12 +395,17 @@ function describe(v: unknown): string {
   if (v === null) return "null";
   if (v === undefined) return "undefined";
   if (Array.isArray(v)) return `array(${v.length})`;
-  if (typeof v === "object") return `object{${Object.keys(v as object).slice(0, 5).join(",")}}`;
+  if (typeof v === "object")
+    return `object{${Object.keys(v as object)
+      .slice(0, 5)
+      .join(",")}}`;
   return `${typeof v}`;
 }
 
 function buildStamp(): string {
-  const script = document.querySelector<HTMLScriptElement>('script[src*="/assets/"]');
+  const script = document.querySelector<HTMLScriptElement>(
+    'script[src*="/assets/"]',
+  );
   const src = script?.src ?? "";
   const m = /index-([A-Za-z0-9_-]+)\.js/.exec(src);
   return m?.[1] ?? "unknown";
@@ -328,11 +420,19 @@ export function App() {
   const [work, setWork] = useState<boolean>(() => onWork());
   // null when the fragment is not a device link; "" when it is one with no
   // code, so the page can offer a field instead of an error.
-  const [device, setDevice] = useState<string | null>(() => deviceCodeFromHash());
+  const [device, setDevice] = useState<string | null>(() =>
+    deviceCodeFromHash(),
+  );
 
   useEffect(() => {
-    api.me().then(setMe).catch(() => setMe(null));
-    api.version().then(setVersion).catch(() => setVersion(null));
+    api
+      .me()
+      .then(setMe)
+      .catch(() => setMe(null));
+    api
+      .version()
+      .then(setVersion)
+      .catch(() => setVersion(null));
   }, []);
 
   useEffect(() => {
@@ -361,8 +461,23 @@ export function App() {
 
   return (
     <main style={css.page}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "1rem", marginBottom: "2rem" }}>
-        <a href="#" style={{ ...css.link, fontSize: "1rem" }} onClick={(e) => { e.preventDefault(); back(); }}>
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          gap: "1rem",
+          marginBottom: "2rem",
+        }}
+      >
+        <a
+          href="#"
+          style={{ ...css.link, fontSize: "1rem" }}
+          onClick={(e) => {
+            e.preventDefault();
+            back();
+          }}
+        >
           Datopian Workgraph
         </a>
         <span style={{ fontSize: "0.85rem" }}>
@@ -408,11 +523,23 @@ export function App() {
           >
             Ask
           </a>
-          <span style={css.muted}>{me ? me.email || me.subject : "not signed in"}</span>
+          <span style={css.muted}>
+            {me ? me.email || me.subject : "not signed in"}
+          </span>
         </span>
       </header>
 
-      {device !== null ? <Device code={device} /> : work ? <Work /> : ask ? <Ask /> : inbox ? <Inbox /> : slug ? <ProjectPage slug={slug} onBack={back} /> : (
+      {device !== null ? (
+        <Device code={device} />
+      ) : work ? (
+        <Work />
+      ) : ask ? (
+        <Ask />
+      ) : inbox ? (
+        <Inbox />
+      ) : slug ? (
+        <ProjectPage slug={slug} onBack={back} />
+      ) : (
         <>
           <h1 style={{ marginBottom: "0.15rem" }}>Projects</h1>
           <p style={{ ...css.muted, marginTop: 0, marginBottom: "1.5rem" }}>
@@ -431,7 +558,9 @@ export function App() {
         }}
       >
         interface {buildStamp()}
-        {version ? ` · api ${version.version} (${version.commit.slice(0, 8)}) · ${version.env}` : ""}
+        {version
+          ? ` · api ${version.version} (${version.commit.slice(0, 8)}) · ${version.env}`
+          : ""}
       </footer>
     </main>
   );

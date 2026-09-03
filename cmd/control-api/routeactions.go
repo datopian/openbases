@@ -54,6 +54,15 @@ var routeActions = map[string]routeAction{
 	"GET /v1/projects":               {Action: authz.ProjectRead},
 	"GET /v1/projects/{slug}":        {Action: authz.ProjectRead},
 	"GET /v1/projects/{slug}/detail": {Action: authz.ProjectRead},
+
+	// Creating a project and changing which repositories it holds (wg-1dm,
+	// wg-m6p). ProjectManage rather than ProjectRead: attaching a repository
+	// changes who can see its pull requests, which is a management decision
+	// and not a read.
+	"POST /v1/projects":                                      {Action: authz.ProjectManage},
+	"GET /v1/projects/{slug}/repositories":                   {Action: authz.ProjectRead},
+	"POST /v1/projects/{slug}/repositories":                  {Action: authz.ProjectManage},
+	"DELETE /v1/projects/{slug}/repositories/{owner}/{name}": {Action: authz.ProjectManage},
 	// Reading a project's Workspace events is reading the project. The rows
 	// themselves are then filtered by can_read_source, so this action and the
 	// policy have to agree -- naming a weaker action here would let a token

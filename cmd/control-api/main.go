@@ -1441,6 +1441,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 
 	// The write surface over domain code that already exists (wg-p4h.4).
 	registerWrites(authed, inbox, idem, log)
+	registerProjectWrites(authed, store, idem, log)
 
 	// The event stream and cursor pagination (wg-p4h.8).
 	registerStream(authed, eventLog, log)
