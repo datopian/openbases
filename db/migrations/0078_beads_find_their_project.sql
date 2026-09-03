@@ -79,7 +79,20 @@ ALTER TABLE beads_databases ADD CONSTRAINT project_scope_names_project
 -- prior-arity call then fails with "is not unique" -- which is how
 -- system_enqueue_work broke on a deploy once already. The old five-argument
 -- form must go.
+-- BOTH signatures, not only the old one.
+--
+-- Dropping the five-argument form and then CREATE-ing the six-argument form is
+-- not re-runnable: the second attempt fails with "function
+-- system_project_bead already exists with same argument types" (42723). That
+-- is exactly what happened -- this migration's DDL reached staging through an
+-- out-of-band probe without a tracking row, and the deploy that should have
+-- recorded it failed on its own work instead.
+--
+-- A migration normally runs once, so this is not a rule the tool enforces. It
+-- costs one line, and the line is the difference between a deploy that
+-- converges and a deploy that has to be unpicked by hand.
 DROP FUNCTION IF EXISTS system_project_bead(text, text, text, text, text);
+DROP FUNCTION IF EXISTS system_project_bead(text, text, text, text, text, text[]);
 
 CREATE FUNCTION system_project_bead(
     p_cell text, p_bead text, p_title text, p_kind text, p_status text,
