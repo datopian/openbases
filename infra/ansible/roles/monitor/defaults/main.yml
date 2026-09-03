@@ -142,9 +142,25 @@ monitor_expect_cells: "{{ groups['execution'] | default([]) | length }}"
 # execution_registry registers them -- and a second list here would be a second
 # list to forget: adding a graph would silently leave it unchecked, which is the
 # state this whole check exists to end.
+# Built with an explicit loop rather than regex_replace with a backreference.
+#
+# The first version was:
+#
+#   monitor_graphs: >-
+#     {{ ... | map('regex_replace', '^(.*)$', '\1=' ~ root ~ '/\1') | join(',') }}
+#
+# In a `>-` block scalar a backslash is literal, so Jinja received the
+# backreference as text and the unit was templated with the string `\1` three
+# times. The monitor then reported three graphs "not on disk at /srv/graphs/\1"
+# and filed alerts for them -- a check meant to catch a real failure inventing
+# three false ones on its first run.
+#
+# It got that far because the expression was verified on an ad-hoc command line,
+# where the shell's escaping happened to produce the right thing, rather than
+# from the file that actually ships. A loop has no escaping to get wrong.
 monitor_graphs: >-
-  {{ (beads_graphs | default([]))
-     | map(attribute='name')
-     | map('regex_replace', '^(.*)$', '\\1=' ~ (beads_hq_root | default('/srv/graphs')) ~ '/\\1')
-     | join(',') }}
+  {% for g in beads_graphs | default([]) -%}
+  {{ g.name }}={{ beads_hq_root | default('/srv/graphs') }}/{{ g.name }}
+  {%- if not loop.last %},{% endif %}
+  {%- endfor %}
 monitor_graph_user: "{{ beads_hq_user | default('workgraph') }}"
