@@ -107,12 +107,15 @@ flowchart TD
     repo["<b>project_repositories</b><br/><small>provider/owner/name, unique per provider<br/>so a repository belongs to at most one project</small>"]
     fn["<b>function</b><br/><small>cross-cutting: engineering, delivery, marketing</small>"]
     cell["<b>execution_cell</b><br/><small>where the work runs<br/>a restricted project must have its own</small>"]
-    graph[("<b>beads_database</b><br/><small>the work graph<br/>company · project · function · personal</small>")]
+    gdb[("<b>beads_database</b><br/><small>the work graph<br/>company · project · function · personal</small>")]
 
-    org --> pf --> proj --> repo
-    org --> fn -.->|"a project belongs to at most one"| proj
+    org --> pf
+    pf --> proj
+    proj --> repo
+    org --> fn
+    fn -.->|"a project belongs to at most one"| proj
     proj -.->|"runs in"| cell
-    cell --> graph
+    cell --> gdb
 ```
 
 Read as a sentence: an organisation has portfolios, a portfolio has projects, a project has
