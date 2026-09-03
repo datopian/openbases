@@ -170,3 +170,48 @@ func TestCodexVariantMatchesTheSkill(t *testing.T) {
 			"is how one of them becomes wrong.")
 	}
 }
+
+// The skill must tell an agent NOT to install wg in a sandbox, and must give it
+// a path that works there.
+//
+// Dropped into Claude Cowork, the skill sent the agent to `go install`, which
+// needs GitHub access to a private module that an ephemeral container does not
+// have. It then concluded the work was impossible and asked the person to paste
+// a token into the chat. Both halves are what these assert against.
+func TestSkillHasAnHTTPPathThatNeedsNoBinary(t *testing.T) {
+	skill := read(t, skillPath)
+
+	if !strings.Contains(skill, "/v1/openapi.json") {
+		t.Error("the skill does not point at the OpenAPI contract, which is the only thing " +
+			"an agent has when wg is unavailable")
+	}
+	if !strings.Contains(skill, "authorization: bearer $wg_token") {
+		t.Error("the skill does not show how to call the API directly with a token")
+	}
+	if !strings.Contains(skill, "do not try to install it") {
+		t.Error("the skill does not tell an agent to stop before installing wg in a sandbox")
+	}
+}
+
+// A token pasted into a conversation is a live bearer credential in a
+// transcript. The skill has to forbid asking for one, and say what to do when
+// it happens anyway.
+func TestSkillForbidsAskingForATokenInChat(t *testing.T) {
+	skill := read(t, skillPath)
+
+	if !strings.Contains(skill, "never ask the user to paste a token into the conversation") {
+		t.Error("the skill does not forbid asking for a token in chat")
+	}
+	if !strings.Contains(skill, "revoke") {
+		t.Error("the skill does not say to revoke a token that reached a conversation")
+	}
+}
+
+// wg login reads a token; it does not open a browser. An agent that believes
+// otherwise waits for something that never happens.
+func TestSkillSaysLoginIsNotABrowserFlow(t *testing.T) {
+	skill := read(t, skillPath)
+	if !strings.Contains(skill, "does **not** open a browser") {
+		t.Error("the skill does not say that wg login is not a browser flow")
+	}
+}
