@@ -32,6 +32,13 @@ TESTS = ROOT / "test" / "integration"
 # Tests that legitimately run as the owner, with the reason. An entry here is a
 # claim that the file asserts nothing about who may READ a protected table.
 OWNER_ONLY = {
+    "bead_attribution.sql":
+        "asserts which project system_project_bead attributes a bead to, and "
+        "the constraint requiring a project-scoped graph to name its project. "
+        "system_project_bead is SECURITY DEFINER and writes regardless of the "
+        "caller, so the property under test is attribution rather than "
+        "visibility. Who may READ work_refs is covered by "
+        "project_creation_visibility.sql and rls_isolation.sql.",
     "invariants.sql":
         "asserts CHECK constraints and triggers, which apply to every role "
         "including the owner. RLS is not the property under test.",

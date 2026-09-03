@@ -246,6 +246,11 @@ type beadRow struct {
 	Title  string `json:"title"`
 	Kind   string `json:"kind"`
 	Status string `json:"status"`
+	// Labels, because project attribution comes from the bead now: a
+	// project:<slug> label is what lets one cell serve several projects
+	// (wg-43n). Omitted when empty, so an older control plane sees the payload
+	// it always saw.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // readBeads asks bd for the cell's beads as JSON.
@@ -285,6 +290,15 @@ func (d *dispatcher) readBeads(ctx context.Context) ([]beadRow, error) {
 			row.Kind, _ = r["type"].(string)
 		}
 		row.Status, _ = r["status"].(string)
+		// bd omits the field entirely for a bead with no labels rather than
+		// emitting an empty list, so absence has to be tolerated.
+		if raw, ok := r["labels"].([]any); ok {
+			for _, l := range raw {
+				if s, ok := l.(string); ok && strings.TrimSpace(s) != "" {
+					row.Labels = append(row.Labels, s)
+				}
+			}
+		}
 		rows = append(rows, row)
 	}
 	return rows, nil

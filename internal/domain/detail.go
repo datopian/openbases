@@ -20,6 +20,26 @@ type ProjectDetail struct {
 	ProjectSummary
 	Repositories []RepositoryStatus `json:"repositories"`
 	Signals      []Signal           `json:"signals"`
+	// Work is the project's beads (wg-43n).
+	//
+	// Absent until now, which is the whole of "I have no visibility of beads in
+	// existing projects": the beads were visible on the global Work page all
+	// along, and opening a project said nothing about them.
+	Work []WorkItem `json:"work"`
+}
+
+// WorkItem is one bead as the project page shows it.
+//
+// A projection of a projection: work_refs caches Beads, and this reads that
+// cache. Beads stays canonical, and last_seen says how stale this view is
+// rather than pretending it is live.
+type WorkItem struct {
+	Bead     string     `json:"bead"`
+	Title    string     `json:"title"`
+	Kind     string     `json:"kind"`
+	Status   string     `json:"status"`
+	Cell     string     `json:"cell,omitempty"`
+	LastSeen *time.Time `json:"last_seen"`
 }
 
 // RepositoryStatus is one repository and the pull requests projected for it.
@@ -68,6 +88,7 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 		ProjectSummary: summary,
 		Repositories:   []RepositoryStatus{},
 		Signals:        []Signal{},
+		Work:           []WorkItem{},
 	}
 
 	err = authz.WithUser(ctx, s.db, userID, func(tx *sql.Tx) error {
@@ -129,6 +150,44 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 		}
 		for _, full := range order {
 			detail.Repositories = append(detail.Repositories, *byRepo[full])
+		}
+
+		// The project's beads.
+		//
+		// Filtered on project_id and nothing else: row-level security decides
+		// which work_refs rows exist for this caller, and adding a visibility
+		// clause here would be a second, weaker copy of that rule.
+		//
+		// Ordered so the page opens on what is moving. Beads with a project
+		// come from work_refs.project_id, which is set by system_project_bead
+		// from a project:<slug> label, or from the cell when the cell serves
+		// exactly one project.
+		work, err := tx.QueryContext(ctx, `
+			SELECT w.bead_id, COALESCE(w.title,''), COALESCE(w.kind,''),
+			       COALESCE(w.status,''), COALESCE(c.slug,''), w.last_seen_at
+			  FROM work_refs w
+			  LEFT JOIN execution_cells c ON c.id = w.execution_cell_id
+			 WHERE w.project_id = $1::uuid
+			 ORDER BY (w.status = 'closed'), w.last_seen_at DESC NULLS LAST, w.bead_id`,
+			summary.ID)
+		if err != nil {
+			return err
+		}
+		defer work.Close()
+		for work.Next() {
+			var it WorkItem
+			var seen sql.NullTime
+			if err := work.Scan(&it.Bead, &it.Title, &it.Kind, &it.Status, &it.Cell, &seen); err != nil {
+				return err
+			}
+			if seen.Valid {
+				t := seen.Time.UTC()
+				it.LastSeen = &t
+			}
+			detail.Work = append(detail.Work, it)
+		}
+		if err := work.Err(); err != nil {
+			return err
 		}
 		return nil
 	})

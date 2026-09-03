@@ -95,6 +95,50 @@ The dashed edges are the ones that matter for security:
   cannot even enumerate the others' names, cgroup limits, and `hidepid` so one cannot read
   another's process arguments — where a gateway token would otherwise be visible.
 
+## How the registry is shaped
+
+There are no subprojects. The grouping level is the portfolio, and it already exists.
+
+```mermaid
+flowchart TD
+    org["<b>organisation</b>"]
+    pf["<b>portfolio</b><br/><small>client · product · oss · internal</small>"]
+    proj["<b>project</b><br/><small>slug unique per organisation<br/>primary AND backup owner, both required</small>"]
+    repo["<b>project_repositories</b><br/><small>provider/owner/name, unique per provider<br/>so a repository belongs to at most one project</small>"]
+    fn["<b>function</b><br/><small>cross-cutting: engineering, delivery, marketing</small>"]
+    cell["<b>execution_cell</b><br/><small>where the work runs<br/>a restricted project must have its own</small>"]
+    graph[("<b>beads_database</b><br/><small>the work graph<br/>company · project · function · personal</small>")]
+
+    org --> pf --> proj --> repo
+    org --> fn -.->|"a project belongs to at most one"| proj
+    proj -.->|"runs in"| cell
+    cell --> graph
+```
+
+Read as a sentence: an organisation has portfolios, a portfolio has projects, a project has
+repositories. A project optionally belongs to one function, and runs in one execution cell. The
+work itself lives in Beads, in a graph attached to a cell.
+
+**A project has no parent project.** `projects` carries `portfolio_id`, `function_id` and
+`execution_cell_id`, and there is no `parent_project_id` — nothing in the schema or the policies
+contemplates nesting. If a body of work needs subdivision, it becomes several projects under one
+portfolio, or one project whose beads carry an epic. Adding real subprojects would mean a schema
+change *and* a rewrite of `can_read_project()`, because membership would have to become
+transitive; the reach of every policy that delegates to it would change at the same time.
+
+**A cell may serve more than one project.** That is what a shared proof-of-concept sandbox is,
+and it has a consequence worth knowing: a bead is attributed to a project by the
+`project:<slug>` label it carries, and only falls back to the cell when the cell serves exactly
+one project. A bead in a shared cell with no label belongs to no project and shows an empty
+project column.
+
+Creating a project: `POST /v1/projects`, or the **New project** button on the portfolio view. The
+primary owner defaults to the caller; a backup owner is required and must be somebody else,
+because the schema refuses full-cycle ownership by one person. Both owners are made members —
+without that the project is invisible to the very people responsible for it, since
+`can_read_project()` grants access by membership or by an organisation-wide
+`organisation_admin` / `executive` grant, and by nothing else.
+
 ## How one unit of work moves
 
 ```mermaid

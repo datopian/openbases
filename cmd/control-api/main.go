@@ -456,10 +456,11 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		var payload struct {
 			Cell  string `json:"cell"`
 			Beads []struct {
-				Bead   string `json:"bead"`
-				Title  string `json:"title"`
-				Kind   string `json:"kind"`
-				Status string `json:"status"`
+				Bead   string   `json:"bead"`
+				Title  string   `json:"title"`
+				Kind   string   `json:"kind"`
+				Status string   `json:"status"`
+				Labels []string `json:"labels"`
 			} `json:"beads"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&payload); err != nil {
@@ -477,8 +478,9 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			}
 			var ok bool
 			if err := db.QueryRowContext(r.Context(),
-				`SELECT system_project_bead($1,$2,$3,$4,$5)`,
-				payload.Cell, b.Bead, b.Title, b.Kind, b.Status).Scan(&ok); err != nil {
+				`SELECT system_project_bead($1,$2,$3,$4,$5,$6)`,
+				payload.Cell, b.Bead, b.Title, b.Kind, b.Status,
+				beadLabels(b.Labels)).Scan(&ok); err != nil {
 				log.Error("projecting a bead", "cell", payload.Cell, "bead", b.Bead, "error", err)
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 				return

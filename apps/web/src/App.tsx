@@ -13,6 +13,7 @@ import {
   type ProjectDetail,
   type ProjectSummary,
   type RepositoryStatus,
+  type ProjectWorkItem,
   type VersionInfo,
   type Signal,
 } from "./api";
@@ -256,6 +257,9 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
             <SignalCard key={s.name} signal={s} />
           ))}
 
+          <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Work</h2>
+          <ProjectWork work={asList(detail.work)} slug={detail.slug} />
+
           <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>
             Repositories
           </h2>
@@ -355,6 +359,83 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
               <td style={css.td}>{p.status}</td>
               <td style={{ ...css.td, ...css.muted }}>{p.primary_owner}</td>
               <td style={css.td}>{p.repositories}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+/**
+ * The project's beads (wg-43n).
+ *
+ * The global Work page has always shown these; opening a project said nothing
+ * about them, which is what "no visibility of beads in existing projects"
+ * meant. A bead reaches this list by carrying a project:<slug> label, or by
+ * living in a cell that serves exactly one project.
+ */
+export function ProjectWork({
+  work,
+  slug,
+}: {
+  work: ProjectWorkItem[];
+  slug: string;
+}) {
+  const rows = asList(work);
+  if (rows.length === 0) {
+    // Empty here is ambiguous in a way worth spelling out: it can mean the
+    // project genuinely has no beads, or that its beads exist and carry no
+    // project label. The second case looked exactly like the first for eighty
+    // beads, so the empty state names it.
+    return (
+      <p style={css.muted}>
+        No beads are attributed to this project. Either none exist yet, or they
+        exist in a shared cell without a <code>project:{slug}</code> label —
+        attribution comes from the bead, not from the cell, whenever a cell
+        serves more than one project.
+      </p>
+    );
+  }
+  const open = rows.filter((w) => w.status !== "closed").length;
+  return (
+    <>
+      <p style={{ ...css.muted, fontSize: "0.8rem", marginTop: 0 }}>
+        {rows.length} bead{rows.length === 1 ? "" : "s"}, {open} still open
+      </p>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={css.th}>Bead</th>
+            <th style={css.th}>Title</th>
+            <th style={css.th}>Kind</th>
+            <th style={css.th}>Status</th>
+            <th style={css.th}>Seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((w) => (
+            <tr key={w.bead}>
+              <td
+                style={{
+                  ...css.td,
+                  fontFamily: "ui-monospace, monospace",
+                  fontSize: "0.8rem",
+                }}
+              >
+                {w.bead}
+              </td>
+              <td style={css.td}>
+                {w.title || <span style={css.muted}>untitled</span>}
+              </td>
+              <td style={{ ...css.td, ...css.muted }}>{w.kind || "—"}</td>
+              <td style={css.td}>{w.status || "—"}</td>
+              <td
+                style={{ ...css.td, ...css.muted, fontSize: "0.8rem" }}
+                title={w.last_seen ?? "never projected"}
+              >
+                {age(w.last_seen)}
+              </td>
             </tr>
           ))}
         </tbody>

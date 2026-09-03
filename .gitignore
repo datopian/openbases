@@ -81,3 +81,19 @@ __pycache__/
 
 # Worktrees other sessions create here are separate checkouts, not content.
 .claude/worktrees/
+
+# Stray root-level binaries from `go build ./cmd/<name>/` without -o, which
+# writes the binary into the working directory. `work` got as far as `git add
+# -A` once; a compiled 15MB Mach-O in the repository root is never intended.
+/work
+/control-api
+/monitor
+/dispatcher
+/registry
+/witness
+/costimport
+/budget
+/migrate
+/reconcile
+/runner
+/workspaced

@@ -91,10 +91,35 @@ export interface Signal {
   observed_at: string | null;
 }
 
+/**
+ * One bead as the PROJECT page shows it.
+ *
+ * Narrower than WorkItem, which the global Work page uses: that one carries
+ * queue state and spend, and this is the subset ProjectDetail returns. Kept
+ * separate rather than made optional on WorkItem, so a field that is always
+ * present on one page is not typed as maybe-absent on both.
+ */
+export interface ProjectWorkItem {
+  bead: string;
+  title: string;
+  kind: string;
+  status: string;
+  cell?: string;
+  last_seen: string | null;
+}
+
 export interface ProjectDetail extends ProjectSummary {
   repositories_detail?: RepositoryStatus[];
   repositories_list?: RepositoryStatus[];
   signals: Signal[];
+  /**
+   * The project's beads.
+   *
+   * Optional on the type, not because the API omits it, but because a browser
+   * may still be holding a page served by an older binary. Treated through
+   * asList everywhere, so absent and empty behave the same.
+   */
+  work?: ProjectWorkItem[] | null;
 }
 
 export interface AttentionItem {
