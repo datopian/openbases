@@ -215,3 +215,19 @@ func TestSkillSaysLoginIsNotABrowserFlow(t *testing.T) {
 		t.Error("the skill does not say that wg login is not a browser flow")
 	}
 }
+
+// The device flow must be reachable without the binary.
+//
+// It was documented as `wg login --device` alone, which made the one answer
+// designed for a sandbox unreachable from one: no binary, and the same skill
+// correctly says not to install it there. An agent read both rules together
+// and concluded, reasonably, that it was stuck.
+func TestSkillShowsTheDeviceFlowOverHTTP(t *testing.T) {
+	skill := read(t, skillPath)
+
+	for _, want := range []string{"/v1/device/code", "/v1/device/token", "authorization_pending"} {
+		if !strings.Contains(skill, strings.ToLower(want)) {
+			t.Errorf("the skill does not show %s, so the device flow needs a binary it may not have", want)
+		}
+	}
+}

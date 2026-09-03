@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Ask } from "./Ask";
 import { Inbox } from "./Inbox";
 import { Work } from "./Work";
+import { Device, deviceCodeFromHash } from "./Device";
 import {
   age,
   api,
@@ -325,6 +326,9 @@ export function App() {
   const [inbox, setInbox] = useState<boolean>(() => onInbox());
   const [ask, setAsk] = useState<boolean>(() => onAsk());
   const [work, setWork] = useState<boolean>(() => onWork());
+  // null when the fragment is not a device link; "" when it is one with no
+  // code, so the page can offer a field instead of an error.
+  const [device, setDevice] = useState<string | null>(() => deviceCodeFromHash());
 
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
@@ -337,6 +341,7 @@ export function App() {
       setInbox(onInbox());
       setAsk(onAsk());
       setWork(onWork());
+      setDevice(deviceCodeFromHash());
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -407,7 +412,7 @@ export function App() {
         </span>
       </header>
 
-      {work ? <Work /> : ask ? <Ask /> : inbox ? <Inbox /> : slug ? <ProjectPage slug={slug} onBack={back} /> : (
+      {device !== null ? <Device code={device} /> : work ? <Work /> : ask ? <Ask /> : inbox ? <Inbox /> : slug ? <ProjectPage slug={slug} onBack={back} /> : (
         <>
           <h1 style={{ marginBottom: "0.15rem" }}>Projects</h1>
           <p style={{ ...css.muted, marginTop: 0, marginBottom: "1.5rem" }}>

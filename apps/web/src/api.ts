@@ -246,6 +246,14 @@ export const api = {
   },
 
   // The unwrapped response, so a caller can report what actually arrived.
+  // The device authorization flow's approval page (wg-8la).
+  deviceRequest: (code: string) =>
+    get<{ client_label: string; scopes: string[]; expires_at: string; approved: boolean }>(
+      `/v1/device/request?code=${encodeURIComponent(code)}`,
+    ),
+  deviceApprove: (code: string) =>
+    post<{ approved: boolean }>("/v1/device/approve", { user_code: code }),
+
   projectsRaw: () => get<unknown>("/v1/projects"),
 
   questions: async () =>

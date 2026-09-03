@@ -107,12 +107,17 @@ func (s *Store) StartDevice(ctx context.Context, clientLabel string, scopes []st
 		return DeviceGrant{}, fmt.Errorf("starting a device grant: %w", err)
 	}
 
+	// The interface routes on the URL fragment, so the verification URI has to
+	// carry the code in the fragment too. A path like /device?code=... reaches
+	// the single-page app's index and is then routed to nothing -- which is
+	// what the first version of this shipped, and it meant the flow printed a
+	// URL that went nowhere.
 	base := strings.TrimRight(baseURL, "/")
 	return DeviceGrant{
 		DeviceCode:              secret,
 		UserCode:                userCode,
-		VerificationURI:         base + "/device",
-		VerificationURIComplete: base + "/device?code=" + userCode,
+		VerificationURI:         base + "/#/device",
+		VerificationURIComplete: base + "/#/device/" + userCode,
 		ExpiresIn:               int(ttl.Seconds()),
 		// Five seconds, which is what the RFC suggests and what the client
 		// scripts in this organisation already use.

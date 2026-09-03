@@ -41,21 +41,41 @@ GOPRIVATE=github.com/datopian go install github.com/datopian/workgraph/cmd/wg@la
 
 ### 3. No token and no way to be given one? Ask for one.
 
+**This is the answer for a sandbox, and it needs no binary and no environment
+variable.** You ask for a code, a person approves it in a browser, you collect
+the token. Nothing is pasted into the conversation.
+
+With `wg`, if you happen to have it:
+
 ```bash
 wg login --device
 ```
 
-This is the answer for a sandbox: it prints a URL and a short code, waits while
-a person opens the URL and approves, then stores the token itself. Nothing is
-pasted into the conversation and no environment variable is needed.
+**Without it — the usual case in a sandbox — it is two curl calls:**
 
-**Tell the person the URL and the code, then wait.** The command blocks for up
-to ten minutes and polls; that is the flow working, not hanging. It needs `wg`
-on PATH — if you have no binary, use HTTP below and ask the person for a token
-through the interface instead.
+```bash
+API="${WG_API:-https://api-staging.openbases.com}"
 
-The token it gets lasts eight hours and carries only what an agent needs.
-A person approving an agent session is not agreeing to ninety days.
+# 1. Ask. Returns device_code (yours, keep it), user_code (theirs, show it)
+#    and verification_uri_complete (the link to send them).
+curl -sS -X POST "$API/v1/device/code" -H 'Content-Type: application/json' \
+  -d '{"client_label":"claude cowork","scopes":["project.read","work.create","agent.dispatch","organisation.read"]}'
+
+# 2. Poll every 5 seconds with the device_code until it stops answering
+#    authorization_pending. Then read access_token from the body.
+curl -sS -X POST "$API/v1/device/token" -H 'Content-Type: application/json' \
+  -d '{"device_code":"wgd_..."}'
+```
+
+**Show the person `verification_uri_complete` and the `user_code`, then poll.**
+`authorization_pending` is the normal answer for most of this flow's life — a
+400 with that in it means keep waiting, not that something failed. `slow_down`
+means poll less often. `expired_token` and `invalid_grant` are final: start
+again.
+
+Hold the `access_token` in the session and send it as `Authorization: Bearer`.
+It lasts eight hours, carries only what you asked for, and is recorded against
+the person who approved it — which is why asking for less is worth doing.
 
 ### 4. Store a token you were given
 
