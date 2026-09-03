@@ -36,7 +36,20 @@ for arg in "$@"; do
   quoted+=" $(printf '%q' "$arg")"
 done
 
+# HOME points at the graph directory, exactly as the beads_hq role does for
+# every bd invocation it makes (roles/beads_hq/tasks/graph.yml).
+#
+# Without it, `sudo -u workgraph bd` runs with root's HOME. Dolt writes its
+# configuration under $HOME, and on this path it rewrote
+# .beads/embeddeddolt/wg/.dolt/noms/manifest as ROOT — after which the service
+# user could not read its own work graph. That happened twice on 3 September:
+# once found only because wg-backup-beads.service failed, and again after a
+# batch of label edits through this script. Both times the repair was a full
+# playbook run.
+#
+# So this is not tidiness. It is the difference between a script that reads the
+# graph and a script that breaks it for every service on the node.
 exec ssh -o ProxyCommand="cloudflared access ssh --hostname %h" \
          -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
          "root@${HOST}" \
-         "cd $(printf '%q' "$GRAPH") && sudo -u $(printf '%q' "$USER_ON_NODE") bd${quoted}"
+         "cd $(printf '%q' "$GRAPH") && sudo -u $(printf '%q' "$USER_ON_NODE") env HOME=$(printf '%q' "$GRAPH") bd${quoted}"
