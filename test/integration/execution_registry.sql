@@ -143,7 +143,11 @@ BEGIN
   END IF;
 
   -- Now share the cell.
-  PERFORM system_attach_project_to_cell('datopian-products', 'wg-test-oss');
+  --
+  -- datahub rather than datopian-products, which 0080 deleted when it dissolved
+  -- the products project. Any second project makes the cell shared, which is
+  -- the only property this needs.
+  PERFORM system_attach_project_to_cell('datahub', 'wg-test-oss');
 
   PERFORM system_record_usage('wg-test-usage-2', 'g', 'anthropic', 'claude-haiku-4-5',
                               100, 10, 0.0088, false, true, 'polecat', 'wg-test-oss', 'sandbox',

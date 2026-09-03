@@ -16,7 +16,11 @@ DECLARE
   proj uuid; requester uuid; approver uuid; other uuid;
   req uuid; d1 text; d2 text; n integer;
 BEGIN
-  SELECT id INTO proj FROM projects WHERE slug = 'portaljs-oss';
+  -- portaljs, not portaljs-oss: 0080 split the latter per repository and closed
+  -- it. It still exists, so this worked either way -- but a fixture resting on a
+  -- closed project is one deletion away from failing for a reason that has
+  -- nothing to do with approvals.
+  SELECT id INTO proj FROM projects WHERE slug = 'portaljs';
   SELECT user_id INTO requester FROM project_memberships WHERE project_id = proj LIMIT 1;
   SELECT user_id INTO approver FROM project_memberships
    WHERE project_id = proj AND user_id <> requester LIMIT 1;
@@ -109,7 +113,11 @@ $$;
 DO $$
 DECLARE proj uuid; u uuid;
 BEGIN
-  SELECT id INTO proj FROM projects WHERE slug = 'portaljs-oss';
+  -- portaljs, not portaljs-oss: 0080 split the latter per repository and closed
+  -- it. It still exists, so this worked either way -- but a fixture resting on a
+  -- closed project is one deletion away from failing for a reason that has
+  -- nothing to do with approvals.
+  SELECT id INTO proj FROM projects WHERE slug = 'portaljs';
   SELECT user_id INTO u FROM project_memberships WHERE project_id = proj LIMIT 1;
 
   BEGIN
