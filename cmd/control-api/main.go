@@ -1572,6 +1572,14 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 
 	mux.Handle("/v1/", authn.Middleware(auth, resolver, log)(enforced))
 
+	// The remote MCP transport, on the same hostname and behind the same Access
+	// application. See cmd/control-api/mcp.go for why no OAuth lives here.
+	//
+	// `enforced` is passed as the dispatcher, not `authed`: a tool call must
+	// pay the same rate limit, spend cap and role check as the same request
+	// over HTTPS, and those live in enforced.
+	registerMCP(mux, cfg, enforced, auth, resolver, log)
+
 	// The GitHub webhook is deliberately OUTSIDE the authenticated mux.
 	//
 	// GitHub cannot complete a Cloudflare Access challenge, so this endpoint

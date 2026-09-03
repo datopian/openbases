@@ -6,10 +6,29 @@ description: Work with Datopian's Workgraph from your own tools — read what ne
 # Workgraph
 
 Workgraph is Datopian's work graph: projects, beads (work items), agents that run
-them, and the attention inbox that says what needs a person. This skill reaches it
-over HTTP with a personal API token, so you never need the browser.
+them, and the attention inbox that says what needs a person.
 
-## Step 0: get a working credential, in this order
+## Step 0: is a Workgraph connector already loaded?
+
+**Look at your own tool list first.** If you can see tools named
+`workgraph_inbox`, `workgraph_ask`, `workgraph_work_list`,
+`workgraph_project_list`, `workgraph_file_work` and `workgraph_dispatch`, then
+Workgraph is already connected and **you should use those tools and stop
+reading this section.** They are the same six operations the rest of this skill
+describes, they carry the person's own identity, and they need no credential of
+yours (ADR-0028).
+
+There is no login command on that path and you must not look for one. The
+connector was authorised by the person in their browser; if a tool call comes
+back saying the authorisation expired, tell them to reconnect the connector in
+their client's settings. Do not tell them to run `wg login` — over a connector
+there is no shell to run it in, and sending them to one is the failure this
+whole path exists to remove.
+
+Everything below is the fallback for when there is no connector: a shell, a
+`wg` binary or `curl`, and a personal API token.
+
+## Step 0b: get a working credential, in this order
 
 **Do these in order and stop at the first one that works. Do not improvise.**
 
@@ -241,6 +260,23 @@ Branch on exit codes, never on message text:
 **4 and 5 are different on purpose.** 4 is fixed by changing the credential;
 5 is fixed by asking a person. Retrying either is wrong, and retrying 5 forever
 is the failure this table exists to prevent.
+
+### The same table, over a connector
+
+Through the MCP tools there is no exit code: a refusal arrives as a tool result
+flagged as an error, carrying the server's own words and what to do about it.
+The semantics are identical and only the carrier changes.
+
+| The message says | Same as exit | What to do |
+|---|---|---|
+| *do not retry; this needs a different credential or a person* | 4 or 5 | report it; do not retry |
+| *rate limited; wait before retrying* | 6 | back off |
+| *the connector's authorisation has expired or was revoked* | 3 | tell the person to reconnect the connector — **not** to run `wg login` |
+| anything else, flagged as an error | 1 or 7 | read it; retry once at most |
+
+A refusal by policy or budget is a **normal result you can read**, not a
+transport failure. "The budget for this bead is spent" is information to act on
+and to relay, and the right action is almost never to call the tool again.
 
 ## An empty list is usually an answer about you, not about the data
 

@@ -251,7 +251,7 @@ Sequenced so the thing that can invalidate the decision comes first and costs le
 | `wg-p4h.7` | The Workgraph skill | The deliverable people actually install. |
 | `wg-p4h.8` | Event stream and cursor pagination | Once clients exist, this is what stops them polling. |
 | `wg-p4h.10` | MCP server over the same contract | Curated tools for clients that prefer them. |
-| `wg-p4h.11` | Remote MCP with OAuth 2.1 and DCR | Filed, unstarted. The escape route if pasted tokens do not reach the clients people want. |
+| `wg-p4h.11` | Remote MCP with OAuth 2.1 and DCR | **Superseded by [ADR-0028](0028-remote-mcp-via-access-managed-oauth.md).** The escape route was needed — Cowork and the phones cannot hold a pasted token — but not built: Cloudflare Access has offered Managed OAuth since March 2026, so `/mcp` sits behind the existing Access application and Workgraph implements no OAuth at all. |
 
 ## Alternatives considered
 

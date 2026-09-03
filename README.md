@@ -392,6 +392,26 @@ make build        # build control-api, worker, and agentd into ./bin
 `make bootstrap` downloads only release artefacts and verifies each SHA-256 against
 [`versions.lock`](versions.lock). A mismatch aborts the install. Nothing resolves to `latest`.
 
+### Connecting a client
+
+Workgraph serves a remote MCP server at `/mcp`, so its tools appear inside the
+clients people already use. Add `https://work-staging.openbases.com/mcp` as a
+custom connector, or for Claude Code:
+
+```bash
+claude mcp add --transport http workgraph https://work-staging.openbases.com/mcp
+```
+
+Your browser opens the normal Google Workspace login and Cloudflare Access
+issues the token — Workgraph implements no OAuth of its own, and what you see
+through a connector is exactly what you see in the browser
+([ADR-0028](docs/adr/0028-remote-mcp-via-access-managed-oauth.md)). On a laptop
+with a shell, `wg mcp` serves the same six tools over stdio and needs no
+connector.
+
+Which clients this has actually been confirmed with, and how to revoke access,
+are in [docs/runbooks/connect-a-client.md](docs/runbooks/connect-a-client.md).
+
 ## Layout
 
 ```

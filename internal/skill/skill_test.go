@@ -270,3 +270,78 @@ func TestSkillDoesNotInventScopes(t *testing.T) {
 		}
 	}
 }
+
+// The skill must prefer the connector when one is loaded (wg-p4h.11).
+//
+// Dropped into a client that already has the Workgraph tools, the old skill
+// sent the agent hunting for a token and a binary — which is the exact failure
+// the remote transport was built to remove. It has to look at its own tool list
+// first.
+func TestSkillPrefersTheConnectorWhenOneIsPresent(t *testing.T) {
+	for _, path := range []string{skillPath, "../../skills/workgraph/AGENTS.md"} {
+		doc := read(t, path)
+		for _, want := range []string{
+			// The tool names, so the agent can recognise them.
+			"workgraph_inbox",
+			"workgraph_dispatch",
+			// And the instruction to use them and stop.
+			"use those tools",
+		} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s does not mention %q, so an agent with the connector loaded "+
+					"would go looking for a token instead", path, want)
+			}
+		}
+	}
+}
+
+// Over a connector there is no shell, so the skill must never answer an expired
+// authorisation with a command to run. Telling a phone to run `wg login` is
+// worse than saying nothing: it sends the model somewhere that does not exist.
+func TestTheSkillDoesNotSendConnectorUsersToWgLogin(t *testing.T) {
+	for _, path := range []string{skillPath, "../../skills/workgraph/AGENTS.md"} {
+		doc := read(t, path)
+		i := strings.Index(doc, "connector")
+		if i < 0 {
+			t.Errorf("%s never mentions a connector", path)
+			continue
+		}
+		// The instruction must appear near where connectors are discussed: the
+		// skill still tells CLI users to run `wg login`, and that is correct.
+		// What must be present is the explicit "not wg login" for the
+		// connector path.
+		if !strings.Contains(doc, "reconnect the connector") {
+			t.Errorf("%s does not tell an agent to have the person reconnect the connector; "+
+				"it will fall back to telling them to run a command they have no shell for", path)
+		}
+		if !strings.Contains(doc, "not to run `wg login`") &&
+			!strings.Contains(doc, "not** to run `wg login`") &&
+			!strings.Contains(doc, "do not tell them to run `wg login`") {
+			t.Errorf("%s does not rule out `wg login` on the connector path explicitly", path)
+		}
+	}
+}
+
+// The Codex variant must match the skill's WHOLE body, not just the part after
+// the mid-file anchor.
+//
+// TestCodexVariantMatchesTheSkill compares from "## before anything else"
+// onward, and the connector instruction added in wg-p4h.11 sits above it — so
+// AGENTS.md kept a stale opening and passed. Codex would have been told to hunt
+// for a token while Claude was told to use the tools, which is exactly the
+// disagreement that test exists to prevent.
+func TestCodexVariantMatchesTheSkillFromTheTitleOnward(t *testing.T) {
+	skill := read(t, skillPath)
+	codex := read(t, "../../skills/workgraph/AGENTS.md")
+
+	const anchor = "workgraph is datopian's work graph"
+	si := strings.Index(skill, anchor)
+	ci := strings.Index(codex, anchor)
+	if si < 0 || ci < 0 {
+		t.Fatal("one of the two files no longer opens with the same sentence; they cannot be compared")
+	}
+	if skill[si:] != codex[ci:] {
+		t.Error("skills/workgraph/AGENTS.md has drifted from SKILL.md above the old anchor.\n" +
+			"Regenerate it: its own preamble, then the skill from `# Workgraph` onward.")
+	}
+}

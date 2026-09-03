@@ -408,6 +408,66 @@ resource "cloudflare_zero_trust_access_application" "this" {
   # account with no Workspace credentials keeps working instead of locking out.
   allowed_idps = local.allowed_idps
 
+  # Managed OAuth, which is what makes the remote MCP server reachable from a
+  # hosted client (wg-p4h.11, ADR-0028).
+  #
+  # This is a TRANSPORT for the authentication that already exists, not a second
+  # way in. A non-browser client that hits an Access-protected URL without a
+  # credential gets a 401 with a WWW-Authenticate header pointing at Access's
+  # RFC 8414 discovery documents; the client opens the person's browser to the
+  # normal login above -- same Google Workspace IdP, same MFA, same allow-list
+  # policies -- and Access issues an opaque token it then enforces with those
+  # same policies. The origin still receives Cf-Access-Jwt-Assertion and
+  # internal/authn verifies it unchanged.
+  #
+  # So no OAuth server exists in Workgraph, and none is wanted: the credential
+  # is minted by an interactive Access session precisely so that revoking
+  # somebody's access revokes their tool calls.
+  #
+  # Opt-in per environment. Turning it on changes how an unauthenticated
+  # request to this hostname is ANSWERED -- a 401 with discovery metadata rather
+  # than a redirect to the login page -- and that is a change worth making
+  # deliberately per environment rather than everywhere at once.
+  oauth_configuration = var.access_managed_oauth ? {
+    enabled = true
+
+    # Dynamic client registration, on Access's side.
+    #
+    # Supported but not required by Managed OAuth, and the MCP authorization
+    # spec expects it: a client that cannot pre-register has no other way to
+    # obtain a client_id. Enabling it here is not "implementing DCR" -- the
+    # registration endpoint is Cloudflare's, and nothing about it reaches the
+    # origin.
+    #
+    # localhost and loopback cover the command-line clients: Claude Code binds
+    # a random local port for its callback (http://localhost:PORT/callback)
+    # unless --callback-port pins one, and Codex behaves similarly. Allowing
+    # any redirect on those addresses is what makes "no configuration" work for
+    # them; it is narrow because the redirect must be to the person's own
+    # machine.
+    dynamic_client_registration = {
+      enabled                = true
+      allow_any_on_localhost = true
+      allow_any_on_loopback  = true
+
+      # The hosted clients' callback, which is deliberately EMPTY here.
+      #
+      # Claude connects to a custom connector from Anthropic's cloud rather than
+      # from the device, and one registration serves claude.ai, the desktop app,
+      # Cowork and the phones. Its callback URI is not in Anthropic's public
+      # documentation, so putting a guess here would be inventing a value that
+      # either silently does nothing or silently allows a redirect somewhere we
+      # did not mean.
+      #
+      # It is read from the first real connection attempt instead -- the Access
+      # authentication log records the redirect_uri a registration asked for --
+      # and added here afterwards. docs/runbooks/connect-a-client.md says how.
+      # Until then the command-line clients work and the hosted ones may not,
+      # which is a limitation to observe rather than to design around.
+      allowed_uris = var.access_oauth_allowed_redirect_uris
+    }
+  } : null
+
   policies = [
     for policy in cloudflare_zero_trust_access_policy.allowed_users : {
       id         = policy.id

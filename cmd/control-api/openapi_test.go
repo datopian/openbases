@@ -282,3 +282,38 @@ func TestEveryEmittedErrorCodeIsDocumented(t *testing.T) {
 		}
 	}
 }
+
+// /mcp is served and is deliberately NOT in the OpenAPI document (wg-p4h.11).
+//
+// The spec describes a REST surface: paths, methods, and JSON bodies a client
+// generator can turn into functions. /mcp is a JSON-RPC transport behind one
+// path, where the interesting contract is the tool list — which MCP clients
+// discover by calling tools/list, not by reading OpenAPI. Describing it as a
+// REST route would produce a generated client with one method called `postMcp`
+// taking `any`, which is worse than an honest omission.
+//
+// It is asserted rather than left implicit because of HOW it currently escapes
+// the agreement test: TestSpecAndMuxAgree scans for `HandleFunc("METHOD /path"`
+// and /mcp is registered with `mux.Handle("/mcp", …)` — no method prefix — so
+// it is invisible to the scanner by accident. A later refactor to HandleFunc
+// would break that test for a reason nobody could see. This test is the
+// decision written down: /mcp is served, and it is not in the spec.
+func TestMCPIsServedAndDeliberatelyAbsentFromTheSpec(t *testing.T) {
+	spec := loadSpec(t)
+	for path := range spec.Paths {
+		if strings.HasPrefix(path, "/mcp") {
+			t.Errorf("the spec describes %q; /mcp is a JSON-RPC transport and its "+
+				"contract is the tool list, discovered with tools/list", path)
+		}
+	}
+
+	// And it really is served, so this test cannot pass by the route having
+	// been deleted.
+	src, err := os.ReadFile("mcp.go")
+	if err != nil {
+		t.Fatalf("reading mcp.go: %v", err)
+	}
+	if !strings.Contains(string(src), `mux.Handle("/mcp"`) {
+		t.Error("mcp.go no longer registers /mcp; if the transport moved, this test should move with it")
+	}
+}
