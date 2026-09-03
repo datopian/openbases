@@ -353,6 +353,47 @@ resource "cloudflare_zero_trust_access_policy" "allowed_users" {
   ]
 }
 
+# Which identity providers a human may log in with.
+#
+# The account has two, and only one was chosen. Cloudflare enables its own
+# One-time PIN provider on every Zero Trust account, and an application with an
+# empty allowed_idps offers ALL of them -- so the login page showed two buttons
+# and nobody picked the second.
+#
+# The two are not equivalent. Google Workspace means the account password plus
+# whatever MFA the Workspace tenant enforces. One-time PIN means possession of
+# the mailbox: a code is emailed and typed in, with no password and no second
+# factor. The Access policy still gates on the email allow-list either way, so
+# this is not about WHO gets in -- it is about how strongly they prove it, on a
+# system holding client-restricted material.
+#
+# Looked up rather than passed in. The provider lives in the account root module
+# with its own state, so a variable would mean pasting an id that breaks
+# silently when the provider is recreated -- and "silently" here means the
+# allow-list points at a provider that no longer exists.
+data "cloudflare_zero_trust_access_identity_providers" "all" {
+  account_id = var.cloudflare_account_id
+}
+
+locals {
+  # google-apps is the Workspace integration created in the account module.
+  # Deliberately by TYPE rather than by name: the name is a display string
+  # somebody may reasonably change, the type is what makes it the Workspace
+  # provider.
+  workspace_idp_ids = [
+    for idp in data.cloudflare_zero_trust_access_identity_providers.all.result :
+    idp.id if idp.type == "google-apps"
+  ]
+
+  # Empty means "offer every provider", which is the state this is fixing. So
+  # when the lookup finds nothing -- a fresh account before Workspace
+  # credentials are supplied -- fall back to leaving the applications as they
+  # are rather than silently restricting them to nothing and locking everyone
+  # out. There is no value that means "no interactive login at all", and if
+  # there were, this is not the place to discover it.
+  allowed_idps = local.workspace_idp_ids
+}
+
 resource "cloudflare_zero_trust_access_application" "this" {
   account_id                 = var.cloudflare_account_id
   name                       = local.name
@@ -361,6 +402,11 @@ resource "cloudflare_zero_trust_access_application" "this" {
   session_duration           = var.access_session_duration
   auto_redirect_to_identity  = false
   http_only_cookie_attribute = true
+  # Workspace only. See the data source above for why the other provider is
+  # not equivalent. Left unset when the lookup finds nothing, because an empty
+  # list means "offer everything" rather than "offer nothing" -- so a fresh
+  # account with no Workspace credentials keeps working instead of locking out.
+  allowed_idps = local.allowed_idps
 
   policies = [
     for policy in cloudflare_zero_trust_access_policy.allowed_users : {
@@ -455,6 +501,9 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
   domain           = var.ssh_hostname
   type             = "self_hosted"
   session_duration = "1h"
+  # Reaching a node is a browser login for a human, so the MFA argument above
+  # applies here more sharply than anywhere else.
+  allowed_idps = local.allowed_idps
 
   # Humans first, then the service token. The email policy is evaluated at
   # precedence 1 so an operator's identity is what matches when both could,
@@ -481,6 +530,8 @@ resource "cloudflare_zero_trust_access_application" "ssh_execution" {
   domain           = var.ssh_hostname_execution
   type             = "self_hosted"
   session_duration = "1h"
+  # Same reason as the control node's SSH application.
+  allowed_idps = local.allowed_idps
 
   # Humans first, then the service token. The email policy is evaluated at
   # precedence 1 so an operator's identity is what matches when both could,
