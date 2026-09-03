@@ -45,12 +45,25 @@ tool is unreliable.
 ### File this properly
 
 ```bash
-wg work plan "one paragraph describing the outcome"
+wg project list                                    # what you may file into
+wg work plan "one paragraph describing the outcome" --project <slug>
 ```
 
 A bead needs acceptance criteria — something that can be checked, not "make it
 better". If the user's brief has none, ask for one before filing. A bead nobody
 can close is worse than no bead.
+
+**Ask which project before filing, and do not guess one.** Omitting `--project`
+files the beads company-wide, and company-wide means every colleague who can log
+in can read them — the brief included. That is right for company work and wrong
+for anything client- or prospect-shaped. The server refuses a project the person
+is not a member of, so a wrong guess is a 4 rather than a leak, but guessing
+still wastes their time.
+
+For prospect proof-of-concept work the project is `poc`: one standing project,
+a label per prospect. It is for **pre-NDA, public-data** work only. A prospect
+who has shared anything under NDA needs their own project, which is not
+something you can create — say so and stop.
 
 ### Run it, and what did it cost
 
@@ -82,6 +95,19 @@ Branch on exit codes, never on message text:
 **4 and 5 are different on purpose.** 4 is fixed by changing the credential;
 5 is fixed by asking a person. Retrying either is wrong, and retrying 5 forever
 is the failure this table exists to prevent.
+
+## An empty list is usually an answer about you, not about the data
+
+`wg work list` and `wg work queue` are filtered by project membership. A person
+sees their projects' beads and company-wide work, and nothing else; company
+management sees everything, through role grants rather than through an exception
+in the code.
+
+So **an empty result is not evidence that there is no work.** Check `wg whoami`
+before concluding anything from emptiness — most often it means the credential
+resolved to somebody with no memberships, or to nobody at all. Reporting "there
+is no work" when the answer is "you cannot see it" is the mistake this section
+exists to prevent.
 
 ## The rules that are not yours to bend
 
@@ -119,7 +145,7 @@ the user to do it in the interface.
 wg inbox                      # what needs me
 wg ask ["question"]           # chief of staff; no argument lists what it answers
 wg work list | queue          # what exists, what is queued, what it cost
-wg work plan "brief"          # queue a planning job (spends money)
+wg work plan "brief" [--project <slug>]   # queue a planning job (spends money)
 wg work dispatch <bead>       # run one bead (spends money)
 wg project list | show <slug>
 wg tokens list                # this credential's siblings

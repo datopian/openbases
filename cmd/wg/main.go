@@ -124,10 +124,18 @@ func work(args []string, jsonOut bool) (int, error) {
 	case "queue":
 		return get("/v1/work/queue", jsonOut, renderWork)
 	case "plan":
-		if len(args) < 2 {
-			return exitUsage, errors.New(`wg work plan "a brief"`)
+		// A trailing --project <slug> rather than a leading flag, because the
+		// brief is a multi-word positional and a flag package would need the
+		// user to quote it differently from every other wg command.
+		rest, project := takeProject(args[1:])
+		if len(rest) == 0 {
+			return exitUsage, errors.New(`wg work plan "a brief" [--project <slug>]`)
 		}
-		return post("/v1/work/plan", map[string]any{"brief": strings.Join(args[1:], " ")}, jsonOut)
+		body := map[string]any{"brief": strings.Join(rest, " ")}
+		if project != "" {
+			body["project"] = project
+		}
+		return post("/v1/work/plan", body, jsonOut)
 	case "dispatch":
 		if len(args) < 2 {
 			return exitUsage, errors.New("wg work dispatch <bead>")
@@ -368,4 +376,29 @@ func emit(status int, body []byte, jsonOut bool, render func([]byte)) (int, erro
 	}
 	render(body)
 	return exitOK, nil
+}
+
+// takeProject pulls a trailing `--project <slug>` out of a brief's words.
+//
+// Without a project the beads are filed company-wide, and since 0071 that means
+// every colleague who can log in can read them. That is right for company work
+// and wrong for anything client-shaped, which is why this exists at all: the
+// API has taken a project since 0072 and this CLI could not send one, so every
+// brief filed through `wg` was company-wide whether the person meant it or not.
+func takeProject(words []string) (rest []string, project string) {
+	for i := 0; i < len(words); i++ {
+		if words[i] != "--project" && !strings.HasPrefix(words[i], "--project=") {
+			rest = append(rest, words[i])
+			continue
+		}
+		if after, ok := strings.CutPrefix(words[i], "--project="); ok {
+			project = after
+			continue
+		}
+		if i+1 < len(words) {
+			project = words[i+1]
+			i++
+		}
+	}
+	return rest, project
 }
