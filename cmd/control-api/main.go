@@ -1065,6 +1065,17 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 					"error": err.Error(), "code": "scope_refused"})
 				return
 			}
+			// An unknown scope is a typo, and answering "internal error" to a
+			// typo is the dead end this whole flow exists to remove: a caller
+			// with no credential guesses a plausible name, learns nothing, and
+			// stops. Name it and say what the real ones are.
+			if errors.Is(err, tokens.ErrUnknownScope) {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error":     err.Error(),
+					"code":      "scope_unknown",
+					"grantable": tokens.GrantableScopes()})
+				return
+			}
 			log.Error("starting a device grant", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 			return
@@ -1185,6 +1196,16 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			// A refusal the caller can act on, unlike the generic 400 above.
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": err.Error(), "code": "scope_or_lifetime_refused",
+			})
+			return
+		}
+		// Same reasoning as the device grant: a misspelled scope is the
+		// caller's own input, so it is safe to name and useless to hide.
+		if errors.Is(err, tokens.ErrUnknownScope) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":     err.Error(),
+				"code":      "scope_unknown",
+				"grantable": tokens.GrantableScopes(),
 			})
 			return
 		}

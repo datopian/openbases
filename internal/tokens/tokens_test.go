@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -222,6 +223,64 @@ func TestUngrantableMatchesTheMigration(t *testing.T) {
 func TestUnknownActionIsRefused(t *testing.T) {
 	if err := ValidateScopes([]string{"work.destroy"}); err == nil {
 		t.Fatal("an unrecognised action was accepted; the set is meant to be closed")
+	}
+}
+
+// The original test above asserted only that an error came back, which is how
+// an unknown scope reached the API as a 500 "internal error" for a fortnight:
+// the handler had nothing to match on, so it fell through to the generic
+// branch. The sentinel is the contract, so the sentinel is what is asserted.
+func TestUnknownActionIsRefusedWithASentinelAndTheOffendingName(t *testing.T) {
+	err := ValidateScopes([]string{"work.destroy"})
+	if !errors.Is(err, ErrUnknownScope) {
+		t.Fatalf("want ErrUnknownScope so a handler can answer 400, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "work.destroy") {
+		t.Errorf("the refusal should name what was refused, got %q", err)
+	}
+	if errors.Is(err, ErrProtectedScope) {
+		t.Error("a typo is not a protected action; conflating them gives the caller the wrong advice")
+	}
+}
+
+// These three are the names an agent actually guessed against the live API.
+// They read like they should exist, which is why the refusal has to be legible
+// rather than a 500.
+func TestPlausibleButWrongScopeNamesAreUnknownNotProtected(t *testing.T) {
+	for _, s := range []string{"project.write", "work.read", "work.write"} {
+		if !errors.Is(ValidateScopes([]string{s}), ErrUnknownScope) {
+			t.Errorf("%s: expected an unknown-scope refusal", s)
+		}
+	}
+}
+
+func TestGrantableScopesExcludesEveryUngrantableAction(t *testing.T) {
+	grantable := GrantableScopes()
+	if len(grantable) == 0 {
+		t.Fatal("no grantable scope at all would make every token useless")
+	}
+	for _, s := range grantable {
+		if err := ValidateScopes([]string{s}); err != nil {
+			t.Errorf("%s is advertised as grantable but ValidateScopes refuses it: %v", s, err)
+		}
+	}
+	// The hint must not name something the caller would then be refused for.
+	for a := range Ungrantable {
+		if slices.Contains(grantable, string(a)) {
+			t.Errorf("%s is ungrantable but advertised as grantable", a)
+		}
+	}
+	for _, a := range authz.AllActions() {
+		if a.Protected() && slices.Contains(grantable, string(a)) {
+			t.Errorf("%s is protected but advertised as grantable", a)
+		}
+	}
+}
+
+func TestGrantableScopesIsSortedSoTheHintIsStable(t *testing.T) {
+	got := GrantableScopes()
+	if !slices.IsSorted(got) {
+		t.Errorf("the hint is read by people and diffed in tests; want sorted, got %v", got)
 	}
 }
 

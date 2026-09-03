@@ -4,6 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/workgraph/internal/tokens"
 )
 
 // The skill states the governance rules the server already enforces.
@@ -228,6 +231,42 @@ func TestSkillShowsTheDeviceFlowOverHTTP(t *testing.T) {
 	for _, want := range []string{"/v1/device/code", "/v1/device/token", "authorization_pending"} {
 		if !strings.Contains(skill, strings.ToLower(want)) {
 			t.Errorf("the skill does not show %s, so the device flow needs a binary it may not have", want)
+		}
+	}
+}
+
+// The scope vocabulary is closed, and the skill is where an agent with no
+// credential learns it. When the doc omits it, the agent guesses: `work.read`
+// and `project.write` both read like they should exist, and both are refused.
+// So every grantable action must be named in the skill, and none of the
+// ungrantable ones may be offered as if it were usable.
+func TestSkillNamesEveryGrantableScope(t *testing.T) {
+	doc := read(t, skillPath)
+	for _, s := range tokens.GrantableScopes() {
+		if !strings.Contains(doc, strings.ToLower(s)) {
+			t.Errorf("the skill never names the grantable scope %q, so an agent has to guess it", s)
+		}
+	}
+}
+
+// The three names that were actually guessed against the live API. If one of
+// them ever becomes a real action this fails, which is the point: the doc says
+// they do not exist, so the doc has to change with the vocabulary.
+func TestSkillDoesNotInventScopes(t *testing.T) {
+	for _, s := range []string{"work.read", "work.write", "project.write"} {
+		if authz.Action(s).Known() {
+			t.Errorf("%s is now a real action, but the skill tells agents it is not", s)
+		}
+	}
+	doc := read(t, skillPath)
+	for _, a := range authz.AllActions() {
+		if _, no := tokens.Ungrantable[a]; !no && !a.Protected() {
+			continue
+		}
+		// Naming an ungrantable action inside the grantable list is the
+		// failure worth catching: it sends the agent to a guaranteed refusal.
+		if strings.Contains(doc, "`"+strings.ToLower(string(a))+"`") {
+			t.Errorf("the skill formats the ungrantable action %s as a scope literal; an agent will try it", a)
 		}
 	}
 }
