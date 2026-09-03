@@ -19,10 +19,35 @@ over HTTP with a personal API token, so you never need the browser.
 wg whoami
 ```
 
-Exit 3 means no usable credential. Tell the user to run `wg login` — and **do not
-try to mint a token yourself.** Minting requires an interactive Cloudflare Access
-session, deliberately: a token that can mint its own successor makes revocation
-meaningless. You cannot do it and should not try.
+Exit 3 means no usable credential — either none is stored or the stored one was
+rejected. Both mean the same thing: tell the user to run `wg login`. **Do not
+try to mint a token yourself.** Minting requires an interactive Cloudflare
+Access session, deliberately: a token that can mint its own successor makes
+revocation meaningless. You cannot do it and should not try.
+
+If `wg` is not on PATH at all, install it — it is one command and needs only Go
+and the user's normal GitHub access:
+
+```bash
+GOPRIVATE=github.com/datopian go install github.com/datopian/workgraph/cmd/wg@latest
+```
+
+`workgraph` is a private module, which is what `GOPRIVATE` is for: without it Go
+tries the public proxy, gets a 404 and reports the module as non-existent rather
+than as private. The binary lands in `$(go env GOPATH)/bin`, so add that to PATH
+if it is not there. There is no released binary to download.
+
+Then, once per machine:
+
+```bash
+wg login                    # paste a token on stdin, or set WG_TOKEN
+```
+
+The token comes from the web interface — Tokens, then a new token. Ask the
+person to create one; the scopes worth having for this skill are
+`project.read`, `work.create`, `agent.dispatch`, `organisation.read` and
+`audit.read`. Eight actions can never be granted to a token at all, including
+deciding an approval and reviewing a knowledge candidate; those need a browser.
 
 ## The four things people actually ask for
 

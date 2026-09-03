@@ -5,7 +5,8 @@
 //	wg inbox                    what needs me
 //	wg ask "what changed"       the chief-of-staff questions
 //	wg work list|queue          what work exists, and what it cost
-//	wg work plan "a brief"      queue a planning job
+//	wg work plan "a brief" [--project <slug>]
+//	                            queue a planning job
 //	wg work dispatch wg-abc     run one bead
 //	wg project list|show <slug>
 //	wg tokens list
@@ -233,6 +234,16 @@ func login(args []string) (int, error) {
 	return exitOK, nil
 }
 
+// errNoCredential is "there is no token here", as distinct from "the token was
+// rejected".
+//
+// A sentinel rather than a string, because both have to exit 3 and the skill
+// tells agents to branch on the exit code and never on message text. Before
+// this, a missing credential exited 1 (a generic error) while a REJECTED one
+// exited 3 -- so the more common case, and the only one a fresh machine ever
+// hits, was the one the documented table got wrong.
+var errNoCredential = errors.New("not logged in: run `wg login`")
+
 func loadCredentials() (credentials, error) {
 	if t := os.Getenv("WG_TOKEN"); t != "" {
 		base := os.Getenv("WG_API")
@@ -247,7 +258,7 @@ func loadCredentials() (credentials, error) {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return credentials{}, errors.New("not logged in: run `wg login`")
+		return credentials{}, errNoCredential
 	}
 	var c credentials
 	if err := json.Unmarshal(b, &c); err != nil {
@@ -333,7 +344,7 @@ func codeFor(status int, body []byte) int {
 func get(path string, jsonOut bool, render func([]byte)) (int, error) {
 	status, body, err := do(http.MethodGet, path, nil)
 	if err != nil {
-		return exitError, err
+		return exitFor(err), err
 	}
 	return emit(status, body, jsonOut, render)
 }
@@ -341,9 +352,21 @@ func get(path string, jsonOut bool, render func([]byte)) (int, error) {
 func post(path string, body any, jsonOut bool) (int, error) {
 	status, out, err := do(http.MethodPost, path, body)
 	if err != nil {
-		return exitError, err
+		return exitFor(err), err
 	}
 	return emit(status, out, jsonOut, nil)
+}
+
+// exitFor maps a pre-request failure to an exit code.
+//
+// Only one of them is interesting: no credential is exit 3, the same as a
+// rejected one, because to a caller they mean the same thing -- run `wg login`.
+// Everything else is a generic failure.
+func exitFor(err error) int {
+	if errors.Is(err, errNoCredential) {
+		return exitUnauthenticated
+	}
+	return exitError
 }
 
 func emit(status int, body []byte, jsonOut bool, render func([]byte)) (int, error) {
