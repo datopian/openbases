@@ -1,0 +1,160 @@
+# Runbook: connect a client to Workgraph
+
+**For:** anyone at Datopian who wants Workgraph's tools inside Claude or Codex
+**Applies to:** staging (`https://work-staging.openbases.com`) — see ADR-0028
+
+Workgraph exposes a remote MCP server at `/mcp`. Adding it as a connector gives
+your client six tools: your inbox, the ask endpoint, the work list, the project
+list, and the two that file and run work.
+
+**You will be asked to log in with Google.** That is expected and is the whole
+design: the connector has no password and no pasted token. Your client opens
+your browser, you complete the normal Workgraph login — Google Workspace, MFA,
+the same allow-list as the web interface — and the client receives a token
+Cloudflare Access issues and enforces. Workgraph itself never sees a password
+and implements no OAuth (ADR-0028).
+
+What you see through a connector is exactly what you see in the browser: the
+same user record, the same project memberships, the same row-level security. A
+connector is not an elevated path.
+
+## Connect
+
+### Claude desktop, Cowork, claude.ai web, and the phone apps
+
+One connector serves all of them, because Claude connects to a custom connector
+from Anthropic's cloud rather than from your device.
+
+1. Settings → Connectors → **Add custom connector**
+2. URL: `https://work-staging.openbases.com/mcp`
+3. Save, then **Connect**. Your browser opens the Google login.
+4. The tool list appears. Try "what needs me" — it should match the
+   **Needs you** page.
+
+### Claude Code
+
+```bash
+claude mcp add --transport http workgraph https://work-staging.openbases.com/mcp
+```
+
+Then run any Workgraph prompt; Claude Code opens the browser on first use.
+It binds a random local port for the OAuth callback. If you need a fixed one,
+`--callback-port` sets it.
+
+### Codex CLI
+
+```bash
+codex mcp add workgraph --url https://work-staging.openbases.com/mcp
+```
+
+Verify the flag spelling against your Codex version — CLI flags here have
+changed between releases and a wrong one fails quietly. If Codex's remote MCP
+does not complete the OAuth discovery flow, fall back to stdio, which needs no
+connector and no OAuth:
+
+```bash
+wg login                 # once
+codex mcp add workgraph --command wg --args mcp
+```
+
+`wg mcp` serves the same six tools from the same code, so nothing is lost except
+the ability to use it from a machine without `wg`.
+
+## Add the connector for everyone (Claude Team/Enterprise admins)
+
+Settings → Connectors → the organisation tab → **Add custom connector**, same
+URL. Each person still logs in individually the first time: an
+organisation-level connector shares the URL, not the credential.
+
+Only people on the Access allow-list can complete the login. Adding the
+connector org-wide does not grant anybody access to Workgraph.
+
+## Revoke
+
+Access is the single place, and there are two levels.
+
+**End one person's sessions**, without removing them:
+Zero Trust → Access controls → Applications → the Workgraph application → their
+session. Their next tool call fails with an authentication error rather than a
+stale success.
+
+**Remove them entirely**: take the address out of `access_allowed_emails` and
+apply.
+
+```bash
+scripts/with_secrets.sh staging scripts/tofu.sh staging apply
+```
+
+Their next tool call fails. There is no Workgraph-side token to hunt for,
+because Workgraph never issued one — that is the property the whole design was
+chosen for.
+
+## When it does not work
+
+### The client says it cannot authenticate, or shows a raw 302
+
+Managed OAuth is probably not enabled on the Access application. Check what an
+unauthenticated request is answered with:
+
+```bash
+curl -sS -i -X POST https://work-staging.openbases.com/mcp \
+  -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+  | grep -iE '^HTTP|^www-authenticate'
+```
+
+You want a `401` and a `WWW-Authenticate` header. A `302` means Access is
+redirecting to a login page instead of answering a non-browser client, which is
+what it does with Managed OAuth off. Confirm `oauth_configuration.enabled` is
+`true` in `infra/tofu/modules/environment/main.tf` and applied.
+
+If you get **control-api's own 401** — a JSON body with an `error` field —
+Access is not intercepting at all, and the request reached the origin. That is a
+different problem: do not work around it, because it means the route is not
+protected the way this runbook assumes.
+
+### The hosted clients fail but Claude Code works
+
+Almost certainly the dynamic-registration redirect allow-list. localhost and
+loopback are allowed, which covers the command-line clients; Anthropic's cloud
+callback URI is not published and is deliberately absent from
+`access_oauth_allowed_redirect_uris`.
+
+Read the URI the registration actually asked for, from Zero Trust → Logs →
+Access → the failed authentication event, then add it:
+
+```hcl
+access_oauth_allowed_redirect_uris = ["https://claude.ai/..."]
+```
+
+and apply. Add the exact URI, or a path ending in `/*`. Do not add a bare
+domain wildcard.
+
+### A tool call is refused
+
+The message says which and what to do about it, in the same terms as the CLI's
+exit codes:
+
+| It says | Means | Do |
+|---|---|---|
+| *do not retry; this needs a different credential or a person* | your role may not, or policy/budget refused | ask, do not retry |
+| *rate limited; wait before retrying* | too many calls for this identity | wait |
+| *the connector's authorisation has expired or was revoked* | your Access session ended | reconnect the connector |
+
+A budget refusal is a normal answer, not a fault. The model can read it.
+
+### Nothing appears in the tool list
+
+Check the version the origin is running and that `/mcp` is served:
+
+```bash
+scripts/on.sh staging control 'curl -sS http://127.0.0.1:8080/version'
+```
+
+## Related
+
+- [ADR-0028](../adr/0028-remote-mcp-via-access-managed-oauth.md) — why Access
+  issues the token and Workgraph implements no OAuth
+- [ADR-0025](../adr/0025-api-first-external-clients.md) — why the tool set is
+  six tools and not the whole API
+- `test/acceptance/mcp_remote.sh` — proves the transport end to end, given a
+  token

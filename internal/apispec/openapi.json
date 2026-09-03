@@ -65,7 +65,8 @@
           "scope_unknown",
           "invalid_project",
           "slug_taken",
-          "not_found"
+          "not_found",
+          "origin_refused"
         ],
         "description": "Stable codes. token_scope_insufficient and role_grant_missing are deliberately distinct: one means this credential may not, the other means you may not, and they have different fixes."
       }

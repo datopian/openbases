@@ -359,3 +359,33 @@ variable "ai_gateway_store_id" {
   type        = string
   default     = ""
 }
+
+# Managed OAuth on the main Access application (wg-p4h.11, ADR-0028).
+#
+# What it changes: an unauthenticated non-browser request to var.hostname is
+# answered with 401 plus a WWW-Authenticate header pointing at Access's OAuth
+# discovery documents, instead of a redirect to the login page. Browser traffic
+# is unaffected -- a person still gets the same login -- so the blast radius is
+# limited to clients that were previously unable to authenticate at all.
+#
+# Default true because the remote MCP server is useless without it, and the
+# environments file can turn it off for one environment without a code change.
+variable "access_managed_oauth" {
+  description = "Enable Cloudflare Access Managed OAuth on the main application, so hosted MCP clients can authenticate."
+  type        = bool
+  default     = true
+}
+
+# Redirect URIs allowed for clients that register dynamically with Access.
+#
+# Empty by default and NOT a guess. Claude's hosted clients call a connector
+# from Anthropic's cloud and their callback URI is not publicly documented;
+# reading it from the Access authentication log on the first real connection
+# attempt and adding it here is the honest order. localhost and loopback are
+# allowed separately in main.tf and cover the command-line clients without
+# needing anything in this list.
+variable "access_oauth_allowed_redirect_uris" {
+  description = "HTTPS redirect URIs permitted for dynamically registered OAuth clients. Must be exact or end in /* for sub-paths."
+  type        = list(string)
+  default     = []
+}
