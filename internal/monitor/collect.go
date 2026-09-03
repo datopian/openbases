@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -316,54 +318,102 @@ func (c Collector) RunWithoutDatabase(ctx context.Context, now time.Time, t Thre
 // ObserveGraphs tests whether each declared graph can be read by the service
 // user.
 //
-// The readability test runs AS THAT USER rather than as the monitor. That is
-// the whole point: on 3 September the graph files were present and intact and
-// root-owned, so any check performed as root would have reported a healthy
-// graph while the service could not open its own database. `sudo -u <user> test
-// -r` asks the question that actually matters.
+// Three things about this were wrong on first contact with the real node, and
+// all three are recorded here because each would be easy to reintroduce.
+//
+// The monitor unit runs as User=workgraph, which IS the service user, and
+// `sudo -n -u workgraph` from that account fails with "a password is required".
+// The first version reported that as "cannot read the manifest" for a graph
+// whose manifest `test -r` confirmed was readable. So: when this process is
+// already the target user, read the file directly, and when the probe itself
+// cannot run, say that rather than blaming the file.
+//
+// The Dolt database is named after the graph's PREFIX, not "wg" — company-hq
+// has .beads/embeddeddolt/wg/... and project-cdt has
+// .beads/embeddeddolt/cdt/... — so a hardcoded path found nothing for two of
+// the three declared graphs. Globbed instead, which needs no second
+// declaration of something group_vars already knows.
+//
+// And a declared graph with no Dolt database at all is a real, non-broken state
+// on this system: a graph is provisioned before anything is written to it.
+// Failing on it turned an empty graph into an outage.
 func (c Collector) ObserveGraphs(ctx context.Context) []Graph {
 	out := make([]Graph, 0, len(c.Graphs))
 	for _, g := range c.Graphs {
-		// The manifest specifically, not the directory. A directory can be
-		// traversable while the file the database needs is not readable, which
-		// is exactly the shape the 3 September failure took:
-		//   open .../noms/manifest: permission denied
-		manifest := filepath.Join(g.Path, ".beads", "embeddeddolt", "wg", ".dolt", "noms", "manifest")
 		if _, err := os.Stat(g.Path); err != nil {
+			// A declared graph that is not on disk. This one IS an outage, and
+			// it is the reason the list is declared rather than discovered.
 			g.Missing = true
 			g.Reason = err.Error()
 			out = append(out, g)
 			continue
 		}
-		if _, err := os.Stat(manifest); err != nil {
-			// Present directory, absent manifest. Not "missing" — the graph is
-			// there and its database is not, which is a different fix.
-			g.Readable = false
-			g.Reason = "the Dolt manifest is not present: " + err.Error()
+
+		// Globbed because the database is named after the graph's prefix.
+		manifests, err := filepath.Glob(
+			filepath.Join(g.Path, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest"))
+		if err != nil {
+			g.Reason = "the manifest path could not be searched: " + err.Error()
 			out = append(out, g)
 			continue
 		}
-		if c.GraphUser == "" {
-			// No user declared, so the best available answer is whether THIS
-			// process can read it. Recorded in the reason so the report does
-			// not overclaim.
-			if err := readable(manifest); err != nil {
-				g.Reason = "not readable by the monitor's own user (no service user declared): " + err.Error()
-			} else {
-				g.Readable = true
+		if len(manifests) == 0 {
+			// Provisioned and never written to. Not a failure: beads_hq creates
+			// the directory, and Dolt initialises on first write.
+			g.Uninitialised = true
+			out = append(out, g)
+			continue
+		}
+
+		g.Readable = true
+		for _, m := range manifests {
+			if err := c.canServiceUserRead(ctx, m); err != nil {
+				g.Readable = false
+				g.Reason = err.Error()
+				break
 			}
-			out = append(out, g)
-			continue
-		}
-		cmd := exec.CommandContext(ctx, "sudo", "-n", "-u", c.GraphUser, "test", "-r", manifest)
-		if err := cmd.Run(); err != nil {
-			g.Reason = fmt.Sprintf("%s cannot read %s", c.GraphUser, manifest)
-		} else {
-			g.Readable = true
 		}
 		out = append(out, g)
 	}
 	return out
+}
+
+// canServiceUserRead reports whether the service account can read path.
+//
+// Nil means yes. A non-nil error is either "it cannot" or "this could not be
+// determined", and the message says which — collapsing those is how a check
+// blames a file for a problem with the check.
+func (c Collector) canServiceUserRead(ctx context.Context, path string) error {
+	if c.GraphUser == "" || c.GraphUser == currentUsername() {
+		// Already the right user, so read it directly. This is the normal case:
+		// wg-monitor.service runs as the service account.
+		if err := readable(path); err != nil {
+			return fmt.Errorf("%s cannot read %s: %w", currentUsername(), path, err)
+		}
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "sudo", "-n", "-u", c.GraphUser, "test", "-r", path)
+	outBytes, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(string(outBytes), "password is required") ||
+		strings.Contains(string(outBytes), "may not run sudo") {
+		// The probe could not run. Saying "unreadable" here would be a
+		// statement about the file that the check never actually tested.
+		return fmt.Errorf("could not test whether %s can read %s: sudo refused (%s)",
+			c.GraphUser, path, strings.TrimSpace(string(outBytes)))
+	}
+	return fmt.Errorf("%s cannot read %s", c.GraphUser, path)
+}
+
+// currentUsername returns this process's account name, or its numeric uid when
+// the name cannot be resolved.
+func currentUsername() string {
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return strconv.Itoa(os.Getuid())
 }
 
 // readable reports whether this process can open a file for reading.

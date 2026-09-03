@@ -552,6 +552,14 @@ type Graph struct {
 	// Missing is true when the graph directory does not exist at all, which is
 	// different from present-and-unreadable and has a different fix.
 	Missing bool
+	// Uninitialised is true when the directory exists and holds no Dolt
+	// database yet.
+	//
+	// NOT a failure. beads_hq provisions a graph directory and Dolt creates its
+	// database on first write, so a declared graph nobody has written to is a
+	// normal state — two of the three graphs on staging are in it. The first
+	// version of this check called that an outage.
+	Uninitialised bool
 }
 
 // EvaluateGraphs judges whether the work graphs can be read by the service.
@@ -581,6 +589,11 @@ func EvaluateGraphs(graphs []Graph) Finding {
 		case g.Missing:
 			entry["state"] = "missing"
 			broken = append(broken, fmt.Sprintf("%s is not on disk at %s", g.Name, g.Path))
+		case g.Uninitialised:
+			// Reported, not failed. Worth seeing — a graph that stays empty for
+			// weeks may be a graph nothing is writing to — but it is not the
+			// present outage this class exists for.
+			entry["state"] = "uninitialised"
 		case !g.Readable:
 			entry["state"] = "unreadable"
 			entry["reason"] = g.Reason
@@ -598,6 +611,19 @@ func EvaluateGraphs(graphs []Graph) Finding {
 		f.Summary = strings.Join(broken, "; ")
 		return f
 	}
-	f.Summary = fmt.Sprintf("%d work graph(s) readable by the service user", len(graphs))
+	var ready, empty int
+	for _, g := range graphs {
+		if g.Uninitialised {
+			empty++
+		} else {
+			ready++
+		}
+	}
+	if empty > 0 {
+		f.Summary = fmt.Sprintf("%d work graph(s) readable by the service user, %d not yet initialised",
+			ready, empty)
+		return f
+	}
+	f.Summary = fmt.Sprintf("%d work graph(s) readable by the service user", ready)
 	return f
 }
