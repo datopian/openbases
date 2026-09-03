@@ -31,6 +31,7 @@ DECLARE
     backup     uuid;
     oss_owner  uuid;
     prod_owner uuid;
+    prod_backup uuid;
     v_wg       uuid;
     v_bizdev   uuid;
     n          integer;
@@ -41,14 +42,46 @@ BEGIN
     SELECT id INTO product_pf FROM portfolios WHERE organisation_id = org AND slug = 'product';
     SELECT id INTO oss_cell   FROM execution_cells WHERE slug = 'oss';
 
+    -- Owners, resolved so that a SECOND run still works.
+    --
+    -- This migration renames poc to bizdev and deletes datopian-products, so on
+    -- a re-run the projects it read owners FROM no longer exist under those
+    -- names. The first draft looked them up by the old slug only and would have
+    -- raised "an owner could not be resolved" on the deploy that recorded it --
+    -- the same shape of failure 0078 had, where the migration tripped over its
+    -- own previous run.
+    --
+    -- So each lookup takes the new name first and falls back to the old.
     SELECT primary_owner_id, backup_owner_id INTO anuar, backup
-      FROM projects WHERE organisation_id = org AND slug = 'poc';
-    SELECT primary_owner_id INTO oss_owner
-      FROM projects WHERE organisation_id = org AND slug = 'portaljs-oss';
-    SELECT primary_owner_id INTO prod_owner
-      FROM projects WHERE organisation_id = org AND slug = 'datopian-products';
+      FROM projects
+     WHERE organisation_id = org AND slug IN ('bizdev', 'poc')
+     ORDER BY (slug = 'bizdev') DESC LIMIT 1;
 
-    IF anuar IS NULL OR backup IS NULL OR oss_owner IS NULL OR prod_owner IS NULL THEN
+    SELECT primary_owner_id INTO oss_owner
+      FROM projects
+     WHERE organisation_id = org AND slug IN ('portaljs', 'portaljs-oss')
+     ORDER BY (slug = 'portaljs') DESC LIMIT 1;
+
+    -- The product owners BY EMAIL, not inherited.
+    --
+    -- Inheriting from datopian-products worked on the first run and then
+    -- stopped meaning anything: the project is deleted by this migration, so a
+    -- re-run fell back to reading datahub -- its own output -- and converged on
+    -- whatever the first run happened to write rather than on the decision.
+    --
+    -- wg-8yv.37 named aleksandra and ANUAR for this work, and every other
+    -- project on this database has osahon as backup, so defaulting to the house
+    -- convention would quietly overwrite a recorded decision. A reorganisation
+    -- moves work between containers; it does not reassign who is accountable
+    -- for it. Stated by address, which is the Cloudflare Access identity and
+    -- the only key a person has -- the same way 0049 wired the pilot operators.
+    SELECT id INTO prod_owner FROM users
+     WHERE organisation_id = org AND lower(primary_email) = 'aleksandra.rubaj@datopian.com';
+    SELECT id INTO prod_backup FROM users
+     WHERE organisation_id = org AND lower(primary_email) = 'anuar.ustayev@datopian.com';
+
+    IF anuar IS NULL OR backup IS NULL OR oss_owner IS NULL
+       OR prod_owner IS NULL OR prod_backup IS NULL THEN
         RAISE EXCEPTION 'an owner could not be resolved; refusing to guess one';
     END IF;
 
@@ -66,17 +99,20 @@ BEGIN
     -- renaming the slug without relabelling those beads turns the next
     -- projection pass into a hard failure. The relabel is a Beads operation,
     -- not SQL, and is recorded in the bead for this change.
+    -- Matching either name, so a second run is a no-op rather than a failure.
+    -- Keyed on 'poc' alone, the re-run found nothing and raised on its own
+    -- previous success.
     UPDATE projects
        SET slug = 'bizdev',
            name = 'BizDev',
            portfolio_id = internal,
            objective = 'Prospect and pre-client work: proofs of concept, evidence and outreach, '
                        'before an engagement becomes a client project with its own portfolio entry.'
-     WHERE organisation_id = org AND slug = 'poc'
+     WHERE organisation_id = org AND slug IN ('poc', 'bizdev')
     RETURNING id INTO v_bizdev;
 
     IF v_bizdev IS NULL THEN
-        RAISE EXCEPTION 'the poc project was not found, so nothing was renamed';
+        RAISE EXCEPTION 'neither poc nor bizdev exists, so there is nothing to rename';
     END IF;
 
     -- One repository for all prospect work, which already exists and is
@@ -125,7 +161,11 @@ BEGIN
     VALUES (org, internal, 'workgraph', 'Workgraph platform',
             'The platform''s own repositories and the agent rig it runs them in.',
             'internal', anuar, backup, oss_cell)
-    ON CONFLICT (organisation_id, slug) DO UPDATE SET name = EXCLUDED.name
+    ON CONFLICT (organisation_id, slug) DO UPDATE
+       SET name = EXCLUDED.name,
+           portfolio_id = EXCLUDED.portfolio_id,
+           primary_owner_id = EXCLUDED.primary_owner_id,
+           backup_owner_id = EXCLUDED.backup_owner_id
     RETURNING id INTO v_wg;
 
     INSERT INTO project_memberships (project_id, user_id, role_name)
@@ -172,13 +212,28 @@ BEGIN
        'WayIntoAI.', 'internal', oss_owner, backup, oss_cell),
       (org, oss_pf, 'flowershow', 'Flowershow',
        'Flowershow.', 'internal', oss_owner, backup, oss_cell),
+      -- BOTH owners from the product project, not the house convention.
+      -- Every other project here has osahon as backup, and defaulting to that
+      -- would have quietly overwritten a recorded decision: wg-8yv.37 named
+      -- aleksandra and ANUAR for datopian-products, and the work these two now
+      -- hold is the work that decision was about. A reorganisation moves work
+      -- between containers; it does not reassign who is accountable for it.
       (org, product_pf, 'datahub', 'DataHub.io',
        'DataHub.io and the data it publishes.',
-       'internal', prod_owner, backup, oss_cell),
+       'internal', prod_owner, prod_backup, oss_cell),
       (org, product_pf, 'sre',     'SRE',
        'The site-reliability agent.',
-       'internal', prod_owner, backup, oss_cell)
-    ON CONFLICT (organisation_id, slug) DO UPDATE SET name = EXCLUDED.name;
+       'internal', prod_owner, prod_backup, oss_cell)
+    -- Converging, not just naming. A re-run must correct an owner or a
+    -- portfolio rather than silently leaving the first run's value, which is
+    -- the same rule 0078 had to learn the hard way.
+    ON CONFLICT (organisation_id, slug) DO UPDATE
+       SET name = EXCLUDED.name,
+           portfolio_id = EXCLUDED.portfolio_id,
+           objective = EXCLUDED.objective,
+           primary_owner_id = EXCLUDED.primary_owner_id,
+           backup_owner_id = EXCLUDED.backup_owner_id,
+           execution_cell_id = EXCLUDED.execution_cell_id;
 
     -- Both owners as members of each, which is the invariant from wg-1dm: a
     -- project whose owners are not members is invisible to them unless they
