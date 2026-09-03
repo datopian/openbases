@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -113,5 +114,20 @@ func TestTakeProjectWithNoValueIsEmpty(t *testing.T) {
 	}
 	if strings.Join(rest, " ") != "a brief" {
 		t.Fatalf("brief = %v", rest)
+	}
+}
+
+// A missing credential and a rejected one both exit 3.
+//
+// They mean the same thing to a caller -- run `wg login` -- and the skill tells
+// agents to branch on the exit code, never on message text. A missing
+// credential used to exit 1, so the case a fresh machine always hits was the
+// one the documented table got wrong.
+func TestNoCredentialExitsUnauthenticated(t *testing.T) {
+	if got := exitFor(errNoCredential); got != exitUnauthenticated {
+		t.Fatalf("no credential exits %d, want %d", got, exitUnauthenticated)
+	}
+	if got := exitFor(errors.New("connection refused")); got != exitError {
+		t.Fatalf("an unrelated failure exits %d, want %d", got, exitError)
 	}
 }
