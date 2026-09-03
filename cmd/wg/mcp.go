@@ -82,6 +82,10 @@ var tools = []tool{
 			"The brief needs a checkable outcome, not 'make it better'.",
 		InputSchema: obj(map[string]any{
 			"brief": str("One paragraph describing the outcome, with acceptance criteria."),
+			"project": str("Project slug to file the beads into, from workgraph_project_list. " +
+				"Omit ONLY for company-wide work: a brief filed with no project produces " +
+				"beads every colleague who can log in may read. Anything client-shaped " +
+				"needs one, and the server refuses a project you are not a member of."),
 		}, "brief"),
 	},
 	{
@@ -204,7 +208,11 @@ func callTool(params json.RawMessage) map[string]any {
 		if strings.TrimSpace(brief) == "" {
 			return errorContent("a brief is required, and it needs a checkable outcome")
 		}
-		status, body, err = do(http.MethodPost, "/v1/work/plan", map[string]any{"brief": brief})
+		planBody := map[string]any{"brief": brief}
+		if project, _ := p.Arguments["project"].(string); strings.TrimSpace(project) != "" {
+			planBody["project"] = strings.TrimSpace(project)
+		}
+		status, body, err = do(http.MethodPost, "/v1/work/plan", planBody)
 	case "workgraph_dispatch":
 		bead, _ := p.Arguments["bead"].(string)
 		if strings.TrimSpace(bead) == "" {

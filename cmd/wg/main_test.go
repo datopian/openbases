@@ -74,3 +74,44 @@ func TestLoginRefusesAnEmptyToken(t *testing.T) {
 		t.Fatal("an empty token was accepted")
 	}
 }
+
+func TestTakeProjectPullsATrailingFlag(t *testing.T) {
+	rest, project := takeProject([]string{"stand", "up", "a", "portal", "--project", "poc"})
+	if project != "poc" {
+		t.Fatalf("project = %q", project)
+	}
+	if got := strings.Join(rest, " "); got != "stand up a portal" {
+		t.Fatalf("brief = %q", got)
+	}
+}
+
+func TestTakeProjectAcceptsEqualsForm(t *testing.T) {
+	rest, project := takeProject([]string{"a", "brief", "--project=roseville-poc"})
+	if project != "roseville-poc" || strings.Join(rest, " ") != "a brief" {
+		t.Fatalf("rest=%v project=%q", rest, project)
+	}
+}
+
+// No project is a real case -- company-wide work -- and must not become the
+// literal string "--project" in the brief.
+func TestTakeProjectWithNoFlagLeavesTheBriefAlone(t *testing.T) {
+	rest, project := takeProject([]string{"a", "company", "brief"})
+	if project != "" {
+		t.Fatalf("invented a project: %q", project)
+	}
+	if strings.Join(rest, " ") != "a company brief" {
+		t.Fatalf("brief = %v", rest)
+	}
+}
+
+// A dangling --project must not silently swallow the last word of the brief as
+// a project name, nor leave "--project" in the text.
+func TestTakeProjectWithNoValueIsEmpty(t *testing.T) {
+	rest, project := takeProject([]string{"a", "brief", "--project"})
+	if project != "" {
+		t.Fatalf("project = %q from a dangling flag", project)
+	}
+	if strings.Join(rest, " ") != "a brief" {
+		t.Fatalf("brief = %v", rest)
+	}
+}
