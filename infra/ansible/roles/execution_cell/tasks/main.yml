@@ -297,6 +297,7 @@
     group: root
     mode: "0755"
   when: runner_local_binary | length > 0
+  tags: [binaries, code]
 
 # Only cells that actually have a town. A cell without one has no graph to
 # serve, and starting a server there fails on every boot for a reason that has
@@ -367,6 +368,7 @@
     group: root
     mode: "0755"
   when: dispatcher_local_binary | length > 0
+  tags: [binaries, code]
 
 - name: Install the dispatcher unit for each cell with a town
   ansible.builtin.template:
@@ -500,6 +502,7 @@
     mode: "0755"
   when: witness_local_binary | length > 0
   notify: Restart the witness
+  tags: [binaries, code]
 
 - name: Install the witness unit
   ansible.builtin.copy:

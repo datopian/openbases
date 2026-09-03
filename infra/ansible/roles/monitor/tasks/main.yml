@@ -20,6 +20,7 @@
     mode: "0755"
   when: monitor_local_binary | length > 0
   notify: Restart the monitor timer
+  tags: [binaries, code]
 
 - name: Install the monitor unit
   ansible.builtin.template:

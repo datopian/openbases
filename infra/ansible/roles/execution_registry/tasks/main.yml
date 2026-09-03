@@ -23,6 +23,7 @@
     group: root
     mode: "0755"
   when: registry_local_binary | length > 0
+  tags: [binaries, code]
 
 - name: Check whether the registry binary is present
   ansible.builtin.stat:

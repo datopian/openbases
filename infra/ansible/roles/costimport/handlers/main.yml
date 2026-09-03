@@ -2,6 +2,7 @@
 - name: Reload systemd
   ansible.builtin.systemd_service:
     daemon_reload: true
+  tags: [always]
 
 - name: Restart the cost import timer
   ansible.builtin.systemd_service:
@@ -9,3 +10,4 @@
     state: restarted
     daemon_reload: true
   when: costimport_enabled | default(false)
+  tags: [always]

@@ -18,6 +18,7 @@
     mode: "0755"
   when: costimport_local_binary | length > 0
   notify: Restart the cost import timer
+  tags: [binaries, code]
 
 - name: Ensure the credential directory exists
   ansible.builtin.file:

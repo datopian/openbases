@@ -2,11 +2,13 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+  tags: [always]
 
 - name: Reload nftables
   ansible.builtin.systemd:
     name: nftables
     state: reloaded
+  tags: [always]
 
 - name: Restart the witness
   ansible.builtin.systemd_service:
@@ -19,3 +21,4 @@
   loop: "{{ execution_cells }}"
   loop_control:
     label: "{{ item.name }}"
+  tags: [always]

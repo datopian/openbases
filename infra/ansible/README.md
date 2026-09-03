@@ -38,6 +38,31 @@ Idempotence is an acceptance criterion, so run it twice:
 
 That applies, then re-applies with `--check` and fails if the second run reports any change.
 
+### Shipping only code
+
+A full run is 168 tasks and about 3m30s on staging, most of it work that has
+nothing to do with the change in front of you. For a code change:
+
+```bash
+make release && make build-linux
+ansible-playbook -i inventory/staging.yml site.yml --tags code
+```
+
+Measured: 39s against 3m24s, with every binary uploaded and the service
+restarted. The tag covers the binary installs **and the migration run**, which
+is deliberate — see the comment above `Apply database migrations`. Do not
+reach for `--start-at-task` instead: it silently skipped the API binary and
+applied migrations against code two commits old, reporting success.
+
+`--tags binaries` is the same set without the migrations, for the rare case
+where you want exactly that and have thought about it.
+
+`scripts/check_infra.py` fails if a task installs a binary without the tag, so
+a new binary cannot quietly fall out of the code deploy.
+
+Config changes — units, environment files, credentials, timers — are not in the
+tag. Those get a full run.
+
 ## Roles
 
 | Role | What it does |

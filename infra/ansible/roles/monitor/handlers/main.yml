@@ -2,6 +2,7 @@
 - name: Reload systemd
   ansible.builtin.systemd_service:
     daemon_reload: true
+  tags: [always]
 
 # The timer, not the service. Restarting a oneshot service runs a monitor pass
 # immediately, which would write to inboxes during a deployment; restarting the
@@ -12,3 +13,4 @@
     state: restarted
     daemon_reload: true
   when: monitor_binary_stat.stat.exists | default(false)
+  tags: [always]

@@ -2,11 +2,13 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+  tags: [always]
 
 - name: Restart control-api
   ansible.builtin.systemd:
     name: control-api
     state: restarted
+  tags: [always]
 
 - name: Restart the worker
   ansible.builtin.systemd_service:
@@ -14,3 +16,4 @@
     state: restarted
     daemon_reload: true
   when: control_api_worker_stat.stat.exists | default(false)
+  tags: [always]

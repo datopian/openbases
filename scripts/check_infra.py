@@ -417,6 +417,42 @@ def check_service_required_vars_are_not_env_lookups() -> None:
             problems.append(f"{name} is set to an empty value, which is how wg-bil happened")
 
 
+def check_every_binary_install_carries_the_code_tag() -> None:
+    """A task that installs a node binary must be selectable by --tags code.
+
+    The tag exists so a code-only deploy touches about a dozen tasks instead of
+    168. That is only safe while the tag is complete: a new binary added without
+    it would be silently skipped by exactly the deploy meant to ship it, and the
+    run would report success while the old process kept serving. The failure is
+    invisible, which is why it is a check rather than a note in the README.
+
+    Recognising a binary task by a `*_local*binary` variable used as the copy
+    `src:`, rather than by task name, because names get rewritten and this should
+    still hold afterwards. It has to be the src specifically: several unit-file
+    templates mention the same variable in a `when:` guard, and those are
+    configuration rather than code — a changed unit belongs to a full run.
+    """
+    roles = ROOT / "infra" / "ansible" / "roles"
+    if not roles.is_dir():
+        problems.append(f"{roles} is missing, so the deploy tags cannot be checked")
+        return
+    for tasks in sorted(roles.glob("*/tasks/main.yml")):
+        text = tasks.read_text()
+        # Split on task boundaries: a line beginning "- " at column zero.
+        blocks = re.split(r"(?m)^(?=-\s)", text)
+        for b in blocks:
+            if not re.search(r"(?m)^\s+src:\s*[\"']?\{\{\s*\w*_local\w*binary", b):
+                continue
+            name = re.match(r"-\s+name:\s*(.+)", b)
+            label = name.group(1).strip() if name else b.splitlines()[0][:60]
+            if not re.search(r"(?m)^\s+tags:.*\bbinaries\b", b):
+                problems.append(
+                    f"{tasks.parent.parent.name}: task '{label}' installs a binary but "
+                    f"carries no `binaries` tag, so --tags code would skip it and "
+                    f"deploy stale code while reporting success"
+                )
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -429,6 +465,7 @@ def main() -> int:
         check_account_level_settings,
         check_spend_limit_not_in_terraform,
         check_service_required_vars_are_not_env_lookups,
+        check_every_binary_install_carries_the_code_tag,
     ):
         check()
 
