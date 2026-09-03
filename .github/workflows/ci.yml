@@ -304,6 +304,14 @@ jobs:
       - name: api tokens are scoped, revocable, and constrained
         run: psql -v ON_ERROR_STOP=1 -f test/integration/api_tokens.sql
 
+      # The device authorization grant. Minting needs an interactive session,
+      # which is right and which left a sandboxed agent nowhere to go. The
+      # refusals are the interesting half: one approval, one redemption, an
+      # unknown code that answers invalid_grant rather than leaking, and an
+      # ungrantable scope refused before anybody is asked to approve it.
+      - name: a device grant is approved once, redeemed once, and refuses the rest
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/device_authorization.sql
+
       # The cost importer, end to end against a stub gateway: paging, the
       # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
       # the real binary rather than SQL alone, because the decisions being

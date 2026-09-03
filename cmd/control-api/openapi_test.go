@@ -146,9 +146,11 @@ func TestEveryOperationIsDescribedAndCanFail(t *testing.T) {
 			if op.OperationID == "" {
 				t.Errorf("%s has no operationId; generators need one", where)
 			}
-			for _, code := range []string{"401", "403"} {
-				if _, ok := op.Responses[code]; !ok {
-					t.Errorf("%s documents no %s response; every endpoint behind the chain can return one", where, code)
+			if _, public := unauthenticated[where]; !public {
+				for _, code := range []string{"401", "403"} {
+					if _, ok := op.Responses[code]; !ok {
+						t.Errorf("%s documents no %s response; every endpoint behind the chain can return one", where, code)
+					}
 				}
 			}
 			ok2xx := false
@@ -164,8 +166,52 @@ func TestEveryOperationIsDescribedAndCanFail(t *testing.T) {
 	}
 }
 
-// Writes are the ones a program retries, so they must document the retry
-// contract rather than leaving a client to discover 409 in production.
+// Writes that a program retries must document the retry contract rather than
+// leaving a client to discover 409 in production.
+//
+// notIdempotent lists the writes where that contract does not apply, each with
+// the reason. An exemption is a claim about the endpoint's nature, so it needs
+// one -- and the alternative was documenting a header the handler ignores,
+// which is worse than an undocumented one: a client would set it and believe
+// something.
+// unauthenticated lists the routes registered on the plain mux rather than
+// behind the auth chain, each with the reason it has to be reachable without a
+// credential.
+//
+// This guard assumed every documented route was authenticated, which was true
+// until the device flow. Documenting 401 and 403 on a route that cannot return
+// them would be as wrong as omitting them from one that can -- and the list
+// itself is the useful part: a route appearing here is a claim that deserves
+// reading, because it is a way in without a credential.
+var unauthenticated = map[string]string{
+	"POST /v1/device/code":  "RFC 8628: the caller has no credential yet, which is the point of the flow",
+	"POST /v1/device/token": "RFC 8628: polled with the device code, which is itself the secret",
+	// Both pre-existing, and both invisible until the guard was widened to the
+	// plain mux. Neither was documented at all.
+	"GET /v1/openapi.json":                 "the contract itself, discoverable before a client has a credential",
+	"POST /v1/integrations/github/webhook": "called by GitHub, authenticated by HMAC rather than by Access",
+}
+
+var notIdempotent = map[string]string{
+	// The device flow (RFC 8628, wg-8la).
+	//
+	// /device/token is DESIGNED to be polled: it answers authorization_pending
+	// repeatedly and then, once, a token. An idempotency key would cache the
+	// first answer and the flow would never complete -- the cache would be
+	// working exactly as intended and the feature would be broken.
+	"POST /v1/device/token": "polled by contract; caching the first answer would break the flow",
+	// The grant is single-use in the database, so a repeated approval is
+	// already refused by the same UPDATE that consumes it. A key would add a
+	// second, weaker guard in front of a correct one.
+	"POST /v1/device/approve": "single-use in the schema; a key would duplicate a stronger guard",
+	// No credential exists yet, so there is nobody to scope a key to, and the
+	// grant it creates is worthless without the device code it returns once.
+	"POST /v1/device/code": "unauthenticated, and each call creates a distinct grant",
+	// GitHub decides its own retries and sends its own delivery id; an
+	// Idempotency-Key header is not something it can be asked to set.
+	"POST /v1/integrations/github/webhook": "the caller is GitHub, which sets its own delivery id",
+}
+
 func TestWritesDocumentIdempotencyAndRateLimiting(t *testing.T) {
 	spec := loadSpec(t)
 	for path, ops := range spec.Paths {
@@ -174,6 +220,9 @@ func TestWritesDocumentIdempotencyAndRateLimiting(t *testing.T) {
 				continue
 			}
 			where := strings.ToUpper(method) + " " + path
+			if _, exempt := notIdempotent[where]; exempt {
+				continue
+			}
 
 			hasKey := false
 			for _, p := range op.Parameters {

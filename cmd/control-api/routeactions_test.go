@@ -19,19 +19,24 @@ import (
 // scripts/check_rls_tests.py and scripts/check_infra.py already use for the
 // same reason: the guard has to see the whole set, and the whole set only
 // exists in the source.
-func registered(t *testing.T) []string {
+// registeredAuthed returns only the routes behind the auth chain.
+//
+// routeActions maps an authenticated route to the action it authorises, so a
+// public route has no entry to make -- and demanding one would be asking what
+// action an unauthenticated caller is exercising, which is not a question with
+// an answer.
+func registeredAuthed(t *testing.T) []string {
 	t.Helper()
-	// Every .go file in the package, not just main.go.
-	//
-	// This scanned main.go alone and reported a stale entry the moment
-	// wg-p4h.4 registered routes from writes.go — the test failing for the
-	// right reason and the wrong cause. A guard that only looks where routes
-	// used to live stops guarding the moment somebody adds a file.
+	return scanRoutes(t, regexp.MustCompile(`authed\.HandleFunc\("((?:GET|POST|PATCH|PUT|DELETE) [^"]+)"`))
+}
+
+// scanRoutes returns the /v1/ routes matching a registration pattern.
+func scanRoutes(t *testing.T, re *regexp.Regexp) []string {
+	t.Helper()
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("reading the package directory: %v", err)
 	}
-	re := regexp.MustCompile(`authed\.HandleFunc\("((?:GET|POST|PATCH|PUT|DELETE) [^"]+)"`)
 	var out []string
 	for _, e := range entries {
 		name := e.Name()
@@ -43,10 +48,26 @@ func registered(t *testing.T) []string {
 			t.Fatalf("reading %s: %v", name, err)
 		}
 		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+			if !strings.Contains(m[1], " /v1/") {
+				continue
+			}
 			out = append(out, m[1])
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// registered returns EVERY served /v1/ route, on either mux.
+//
+// This matched authed.HandleFunc alone, so a public /v1/ endpoint could exist
+// undocumented and no guard would say so. The device flow (wg-8la) is the
+// first feature to add public /v1/ routes deliberately, which is how the gap
+// surfaced -- and widening it immediately found GET /v1/openapi.json and
+// POST /v1/integrations/github/webhook, neither of which the spec described.
+func registered(t *testing.T) []string {
+	t.Helper()
+	out := scanRoutes(t, regexp.MustCompile(`(?:authed|mux)\.HandleFunc\("((?:GET|POST|PATCH|PUT|DELETE) [^"]+)"`))
 	if len(out) == 0 {
 		t.Fatal("found no routes in the package; the pattern this test scans for has changed")
 	}
@@ -68,7 +89,9 @@ func TestEveryRouteNamesAnAction(t *testing.T) {
 
 	var undeclared []string
 	live := map[string]bool{}
-	for _, p := range registered(t) {
+	// Authenticated routes only: routeActions maps a route to the action it
+	// authorises, and a public route has no such action to name.
+	for _, p := range registeredAuthed(t) {
 		live[p] = true
 		if !declared[p] {
 			undeclared = append(undeclared, p)

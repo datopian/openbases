@@ -113,3 +113,13 @@ control_api_ai_gateway_token: "{{ ai_gateway_token | default('') }}"
 # caught by anybody holding the credentials rather than by a 404 an hour later.
 control_api_knowledge_repo: "datopian/company-workgraph"
 control_api_knowledge_base: main
+
+# Where a browser reaches the interface, used for the device flow's
+# verification URI (wg-8la).
+#
+# Declared here rather than derived from a request: the API answers on a
+# different hostname from the interface, and a URI built from the Host header
+# would let a client choose the address a human is told to trust. Empty means
+# the device flow refuses to start, which is the correct failure -- a grant
+# nobody can approve is worse than no grant.
+control_api_app_base_url: ""
