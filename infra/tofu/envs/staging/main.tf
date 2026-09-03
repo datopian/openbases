@@ -23,6 +23,35 @@ module "environment" {
 
   access_allowed_emails = var.access_allowed_emails
 
+  # The hosted Claude clients' OAuth callback (wg-p4h.11, ADR-0028).
+  #
+  # Claude connects to a custom connector from Anthropic's cloud rather than
+  # from the device, so ONE redirect URI serves claude.ai, the desktop app,
+  # Cowork and the phones. The command-line clients need nothing here:
+  # allow_any_on_localhost and allow_any_on_loopback in the module cover them,
+  # and Claude Code declares http://localhost/callback and
+  # http://127.0.0.1/callback with only the port configurable.
+  #
+  # Left EMPTY at first, on the grounds that a guess would either silently do
+  # nothing or silently permit a redirect we did not mean. It is not a guess any
+  # more, but it is not from Anthropic's own documentation either -- their help
+  # article 404s at the URL the search index has -- so it is corroborated
+  # instead by the registration endpoint's behaviour, which is testable:
+  #
+  #   $ curl -X POST https://datopian.cloudflareaccess.com/cdn-cgi/access/oauth/registration   #       -d '{"redirect_uris":["https://example.invalid/never-allowed"],...}'
+  #   {"error":"invalid_client_metadata",
+  #    "error_description":"redirect_uri is not allowed by the account configuration"}
+  #
+  # So the allow-list IS enforced, and a hosted client is refused at
+  # REGISTRATION until its URI is here -- which is why claude.ai could not have
+  # connected before this line existed, and why the failure would have looked
+  # like a client bug rather than a configuration gap.
+  #
+  # If a real connection still fails after applying this, read the redirect_uri
+  # the registration actually asked for from Zero Trust -> Logs -> Access and
+  # replace this value with it. docs/runbooks/connect-a-client.md says how.
+  access_oauth_allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+
   ai_monthly_budget = var.ai_monthly_budget
   ai_budget_shares  = var.ai_budget_shares
   admin_ssh_key_ids = var.admin_ssh_key_ids
