@@ -318,6 +318,12 @@ jobs:
       - name: a created project is visible to both its owners and to nobody else
         run: psql -v ON_ERROR_STOP=1 -f test/integration/project_creation_visibility.sql
 
+      # Attribution comes from the bead, not the cell. Creating two PoC projects
+      # on the shared oss cell silently unattributed eighty beads, the Jackson
+      # demo epic among them, and the only symptom was an empty column.
+      - name: a bead is attributed by its label, and a shared cell abstains
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/bead_attribution.sql
+
       # The cost importer, end to end against a stub gateway: paging, the
       # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
       # the real binary rather than SQL alone, because the decisions being

@@ -133,9 +133,24 @@ func syncHQ(ctx context.Context, db *sql.DB) {
 			kind, _ = r["type"].(string)
 		}
 		status, _ := r["status"].(string)
+		// The bead's own labels, which is where attribution comes from now.
+		//
+		// bd omits the field entirely on a bead with no labels rather than
+		// emitting an empty list, so this has to tolerate absence -- and a
+		// bead with no labels is the common case, including all sixteen of the
+		// ones that went missing.
+		var labels []string
+		if raw, ok := r["labels"].([]any); ok {
+			for _, l := range raw {
+				if s, ok := l.(string); ok && strings.TrimSpace(s) != "" {
+					labels = append(labels, s)
+				}
+			}
+		}
 		var ok bool
 		if err := db.QueryRowContext(ctx,
-			`SELECT system_project_bead($1,$2,$3,$4,$5)`, cell, id, title, kind, status).
+			`SELECT system_project_bead($1,$2,$3,$4,$5,$6)`,
+			cell, id, title, kind, status, textArray(labels)).
 			Scan(&ok); err != nil {
 			fail(err)
 		}
@@ -329,4 +344,28 @@ Planning and dispatch are QUEUED, not run. The control plane cannot reach an
 execution node — nodes have no inbound port — so the node claims the job on its
 next pass. Watch it move with: wg-work queue
 `, "\n"))
+}
+
+// textArray renders a []string in PostgreSQL's text[] literal form.
+//
+// NULL rather than '{}' for an empty list, because system_project_bead
+// distinguishes them: NULL means "this caller does not report labels", and an
+// empty array means "this bead has none". Both fall through to the cell rule,
+// but only the first would also be true of an older caller.
+func textArray(vs []string) any {
+	if len(vs) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, v := range vs {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('"')
+		b.WriteString(strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v))
+		b.WriteByte('"')
+	}
+	b.WriteByte('}')
+	return b.String()
 }

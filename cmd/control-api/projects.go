@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/datopian/workgraph/internal/authn"
 	"github.com/datopian/workgraph/internal/domain"
@@ -138,4 +139,31 @@ func registerProjectWrites(
 				}
 				writeJSON(w, http.StatusOK, map[string]any{"status": "detached"})
 			}))
+}
+
+// beadLabels renders a bead's labels as a PostgreSQL text[] literal.
+//
+// NULL rather than '{}' for an empty list, because system_project_bead
+// distinguishes the two: NULL means this caller does not report labels at all,
+// which is what an older dispatcher looks like, and an empty array means the
+// bead genuinely has none. Both fall through to the cell rule, so the
+// distinction changes no behaviour today — it exists so that adding a rule for
+// "labelled with nothing" later does not silently also apply to callers that
+// never spoke about labels.
+func beadLabels(vs []string) any {
+	if len(vs) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, v := range vs {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('"')
+		b.WriteString(strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v))
+		b.WriteByte('"')
+	}
+	b.WriteByte('}')
+	return b.String()
 }
