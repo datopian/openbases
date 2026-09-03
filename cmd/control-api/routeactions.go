@@ -59,7 +59,13 @@ var routeActions = map[string]routeAction{
 	// wg-m6p). ProjectManage rather than ProjectRead: attaching a repository
 	// changes who can see its pull requests, which is a management decision
 	// and not a read.
-	"POST /v1/projects":                                      {Action: authz.ProjectManage},
+	"POST /v1/projects": {Action: authz.ProjectManage},
+
+	// Platform state (wg-7bh). OrganisationRead is the token scope; the
+	// company-management gate lives in system_platform_state, because the
+	// answer is about the platform rather than about any one project and
+	// there is no per-row rule that would express it.
+	"GET /v1/platform":                                       {Action: authz.OrganisationRead},
 	"GET /v1/projects/{slug}/repositories":                   {Action: authz.ProjectRead},
 	"POST /v1/projects/{slug}/repositories":                  {Action: authz.ProjectManage},
 	"DELETE /v1/projects/{slug}/repositories/{owner}/{name}": {Action: authz.ProjectManage},

@@ -2338,6 +2338,45 @@
           }
         }
       }
+    },
+    "/v1/platform": {
+      "get": {
+        "summary": "What the platform is doing: cells, agents, queue, graphs and open alerts",
+        "operationId": "get_v1_platform",
+        "description": "One document rather than six endpoints: the caller is a page that draws all of it at once, and six round trips would show a half-consistent picture assembled from six moments. Company management only - organisation_admin or executive, granted organisation-wide - because the answer is about the platform rather than about any one project, so there is no per-row rule that would express it. Includes the count of beads attributed to no project, which is the failure that stayed invisible longest.",
+        "responses": {
+          "200": {
+            "description": "Platform state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but not company management",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

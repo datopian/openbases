@@ -42,6 +42,8 @@ func main() {
 		streams    = flag.String("backup-streams", getenv("WG_MONITOR_BACKUP_STREAMS", "beads:24h"), "comma-separated name:max-age backup obligations")
 		services   = flag.String("services", getenv("WG_MONITOR_SERVICES", ""), "comma-separated systemd units that must be running")
 		gateways   = flag.String("gateways", getenv("WG_MONITOR_GATEWAYS", ""), "comma-separated AI Gateways whose import must be fresh")
+		graphs     = flag.String("graphs", getenv("WG_MONITOR_GRAPHS", ""), "comma-separated name=/path work graphs that must be readable")
+		graphUser  = flag.String("graph-user", getenv("WG_MONITOR_GRAPH_USER", ""), "the service account the graphs must be readable by")
 		cells      = flag.Int("expect-cells", getenvInt("WG_MONITOR_EXPECT_CELLS", 0), "how many execution cells should be reporting agent health")
 		dryRun     = flag.Bool("dry-run", false, "evaluate and print, raising nothing")
 		// Thresholds are flags, not constants. The right value differs between
@@ -63,6 +65,12 @@ func main() {
 	parsedStreams, err := parseStreams(*streams)
 	if err != nil {
 		log.Error("the backup declaration could not be parsed", "error", err)
+		os.Exit(2)
+	}
+
+	parsedGraphs, err := parseGraphs(*graphs)
+	if err != nil {
+		log.Error("the work graph declaration could not be parsed", "error", err)
 		os.Exit(2)
 	}
 
@@ -91,6 +99,8 @@ func main() {
 	c := monitor.Collector{
 		Services:    splitList(*services),
 		Gateways:    splitList(*gateways),
+		Graphs:      parsedGraphs,
+		GraphUser:   strings.TrimSpace(*graphUser),
 		DB:          db,
 		HTTP:        &http.Client{Timeout: 10 * time.Second},
 		HealthURL:   *healthURL,
@@ -250,4 +260,33 @@ func getenvInt(k string, def int) int {
 		}
 	}
 	return def
+}
+
+// parseGraphs reads "name=/path" pairs, e.g. "company-hq=/srv/graphs/company-hq".
+//
+// Declared rather than discovered, like the backup streams and for the same
+// reason: a discovered check reports on the graphs that are present, so a graph
+// that has vanished reads as "nothing to report", and a vanished work graph is
+// the worst outcome in the set.
+func parseGraphs(s string) ([]monitor.Graph, error) {
+	var out []monitor.Graph
+	for _, part := range splitNonEmpty(s) {
+		name, path, ok := strings.Cut(part, "=")
+		if !ok {
+			return nil, fmt.Errorf("%q is not name=/path", part)
+		}
+		name = strings.TrimSpace(name)
+		path = strings.TrimSpace(path)
+		if name == "" || path == "" {
+			return nil, fmt.Errorf("%q is not name=/path", part)
+		}
+		if !strings.HasPrefix(path, "/") {
+			// A relative path would be resolved against whatever directory
+			// systemd happened to start the timer in, which is not a thing to
+			// leave to chance for a readability check.
+			return nil, fmt.Errorf("the path for %q must be absolute, got %q", name, path)
+		}
+		out = append(out, monitor.Graph{Name: name, Path: path})
+	}
+	return out, nil
 }

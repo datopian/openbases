@@ -122,6 +122,55 @@ export interface ProjectDetail extends ProjectSummary {
   work?: ProjectWorkItem[] | null;
 }
 
+/** What the platform is doing (wg-7bh). */
+export interface PlatformState {
+  observed_at: string;
+  cells: PlatformCell[] | null;
+  queue: Record<string, number> | null;
+  graphs: PlatformGraph[] | null;
+  unattributed: PlatformUnattributed[] | null;
+  alerts: PlatformAlert[] | null;
+  projects: number;
+  repositories: number;
+  beads: number;
+}
+
+export interface PlatformCell {
+  cell: string;
+  trust_domain: string;
+  max_concurrent_agents: number;
+  cpu_quota_percent: number | null;
+  memory_limit_mb: number | null;
+  projects: number;
+  agents_live: number;
+  agents_ever: number;
+  rigs: string[] | null;
+  last_report: string | null;
+  escalations_last_hour: number;
+}
+
+export interface PlatformGraph {
+  name: string;
+  scope: string;
+  project: string | null;
+  cell: string | null;
+  beads: number;
+  last_seen: string | null;
+}
+
+export interface PlatformUnattributed {
+  cell: string;
+  graph: string | null;
+  projects_on_cell: number;
+  beads: number;
+}
+
+export interface PlatformAlert {
+  rule: string;
+  count: number;
+  newest: string | null;
+}
+
 export interface AttentionItem {
   id: string;
   rule: string;
@@ -359,6 +408,8 @@ export const api = {
 
   projects: async () =>
     asList(await get<ProjectSummary[] | null>("/v1/projects")),
+  platform: () => get<PlatformState>("/v1/platform"),
+
   projectDetail: (slug: string) =>
     get<ProjectDetail & { repositories: RepositoryStatus[] }>(
       `/v1/projects/${encodeURIComponent(slug)}/detail`,

@@ -535,3 +535,69 @@ func firstLine(s string) string {
 	}
 	return strings.TrimSpace(s)
 }
+
+// Graph is one work graph, as observed on disk.
+type Graph struct {
+	// Name is how the report refers to it, e.g. "company-hq".
+	Name string
+	// Path is the graph directory.
+	Path string
+	// Readable is whether the SERVICE USER can read the graph, not whether
+	// root can. That distinction is the entire check: on 3 September the files
+	// were present, intact, and root-owned, so every check performed as root
+	// would have reported a healthy graph while the service could not open it.
+	Readable bool
+	// Reason is why not, when Readable is false.
+	Reason string
+	// Missing is true when the graph directory does not exist at all, which is
+	// different from present-and-unreadable and has a different fix.
+	Missing bool
+}
+
+// EvaluateGraphs judges whether the work graphs can be read by the service.
+//
+// Graphs are DECLARED rather than discovered, for the same reason backup
+// streams are: a discovered check reports on the graphs that are present, so a
+// graph that has vanished reads as "nothing to report" — and a vanished work
+// graph is the worst outcome of the set.
+func EvaluateGraphs(graphs []Graph) Finding {
+	f := Finding{Class: ClassGraph, Observed: map[string]any{}}
+
+	if len(graphs) == 0 {
+		// Not a pass. Declaring no graph means the check is switched off, and
+		// "switched off" must not look like "healthy" — that is the same
+		// collapse the backup check refuses to make.
+		f.Failing = true
+		f.Summary = "no work graph is declared, so nothing checks that the graph can be read"
+		f.Observed["graphs"] = []any{}
+		return f
+	}
+
+	entries := make([]map[string]any, 0, len(graphs))
+	var broken []string
+	for _, g := range graphs {
+		entry := map[string]any{"name": g.Name, "path": g.Path}
+		switch {
+		case g.Missing:
+			entry["state"] = "missing"
+			broken = append(broken, fmt.Sprintf("%s is not on disk at %s", g.Name, g.Path))
+		case !g.Readable:
+			entry["state"] = "unreadable"
+			entry["reason"] = g.Reason
+			broken = append(broken, fmt.Sprintf("%s cannot be read by the service user: %s",
+				g.Name, g.Reason))
+		default:
+			entry["state"] = "readable"
+		}
+		entries = append(entries, entry)
+	}
+	f.Observed["graphs"] = entries
+
+	if len(broken) > 0 {
+		f.Failing = true
+		f.Summary = strings.Join(broken, "; ")
+		return f
+	}
+	f.Summary = fmt.Sprintf("%d work graph(s) readable by the service user", len(graphs))
+	return f
+}
