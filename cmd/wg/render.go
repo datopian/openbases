@@ -173,7 +173,9 @@ func usage() {
   wg inbox                    what needs me
   wg ask ["question"]         ask the chief of staff; no question lists what it answers
   wg work list|queue          what work exists, and what it cost
-  wg work plan "a brief"      queue a planning job
+  wg work plan "a brief" [--project <slug>]
+                              queue a planning job; without a project the beads
+                              are company-wide and everyone can read them
   wg work dispatch <bead>     run one bead
   wg project list|show <slug>
   wg tokens list              this credential's siblings
