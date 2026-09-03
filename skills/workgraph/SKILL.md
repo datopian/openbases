@@ -9,6 +9,94 @@ Workgraph is Datopian's work graph: projects, beads (work items), agents that ru
 them, and the attention inbox that says what needs a person. This skill reaches it
 over HTTP with a personal API token, so you never need the browser.
 
+## Step 0: get a working credential, in this order
+
+**Do these in order and stop at the first one that works. Do not improvise.**
+
+### 1. Is there already a token in the environment?
+
+```bash
+[ -n "$WG_TOKEN" ] && echo "token present"
+```
+
+If yes, you are done — `WG_TOKEN` is all any of this needs. Skip to step 4.
+
+### 2. Is `wg` on PATH?
+
+```bash
+command -v wg
+```
+
+If yes, go to step 3. **If not, do NOT try to install it.** The install needs
+Go *and* GitHub access to a private module, and in a sandbox you almost
+certainly have neither — and even where it works, an ephemeral container throws
+it away between tasks. Installing is the wrong instinct here. Go to
+**"Working over HTTP"** below, which needs nothing but `curl` and the token.
+
+Install only where a person will use the machine again:
+
+```bash
+GOPRIVATE=github.com/datopian go install github.com/datopian/workgraph/cmd/wg@latest
+```
+
+### 3. Store the token
+
+```bash
+wg login                      # reads WG_TOKEN, or a token piped on stdin
+```
+
+`wg login` does **not** open a browser and does not talk to an identity
+provider. It reads a token and writes it to a config file, nothing more. If you
+expected a browser flow, you are thinking of how the token is *created*, which
+is step 4 and is not yours to do.
+
+### 4. Where the token comes from — and never ask for it in chat
+
+A token is created by a person, in the web interface, under Tokens. It requires
+an interactive Cloudflare Access session, deliberately: a token that could mint
+its own successor would make revocation meaningless.
+
+**Never ask the user to paste a token into the conversation.** A pasted token is
+a live 90-day bearer credential sitting in a transcript, and transcripts get
+stored, synced and read. Ask them to put it in the environment as `WG_TOKEN`
+instead — that is the whole reason the variable is read first.
+
+If a token does end up in a conversation, say so plainly and tell them to
+revoke it: the web interface, Tokens, or `DELETE /v1/tokens/{id}`. Do not
+quietly keep using it.
+
+Useful scopes for this skill: `project.read`, `work.create`, `agent.dispatch`,
+`organisation.read`, `audit.read`. Eight actions can never be granted to a
+token at all — approvals and knowledge review among them — so those stay in the
+browser however good your credential is.
+
+## Working over HTTP, with no binary
+
+`wg` is a convenience. The API is the contract, it answers `curl` directly, and
+it needs no Access session, no browser and no Go toolchain — only the token.
+**This is the right path in any sandbox**, and the only one in a container that
+resets.
+
+```bash
+API="${WG_API:-https://api-staging.openbases.com}"
+AUTH="Authorization: Bearer $WG_TOKEN"
+
+curl -sS -H "$AUTH" "$API/v1/me"                    # who this credential is
+curl -sS -H "$AUTH" "$API/v1/inbox"                 # what needs me
+curl -sS -H "$AUTH" "$API/v1/projects"              # what you may file into
+curl -sS -H "$AUTH" "$API/v1/work"                  # beads, queue state, spend
+curl -sS "$API/v1/openapi.json"                     # the contract; needs no token
+
+curl -sS -H "$AUTH" -H 'Content-Type: application/json' \
+  -X POST "$API/v1/work/plan" \
+  -d '{"brief":"...","project":"poc"}'              # spends money
+```
+
+Branch on the HTTP status, which carries the same meanings as the exit codes
+below: 401 unauthenticated, 403 forbidden or refused by policy, 409 conflict,
+429 rate limited. Everything the CLI does is one of these calls; read
+`/v1/openapi.json` rather than guessing a URL.
+
 ## Before anything else
 
 ```bash
@@ -16,34 +104,12 @@ wg whoami
 ```
 
 Exit 3 means no usable credential — either none is stored or the stored one was
-rejected. Both mean the same thing: tell the user to run `wg login`. **Do not
-try to mint a token yourself.** Minting requires an interactive Cloudflare
-Access session, deliberately: a token that can mint its own successor makes
-revocation meaningless. You cannot do it and should not try.
+rejected. Both mean the same thing: get one, per step 0. **Do not try to mint a
+token yourself.** It requires an interactive session, deliberately.
 
-If `wg` is not on PATH at all, install it — it is one command and needs only Go
-and the user's normal GitHub access:
-
-```bash
-GOPRIVATE=github.com/datopian go install github.com/datopian/workgraph/cmd/wg@latest
-```
-
-`workgraph` is a private module, which is what `GOPRIVATE` is for: without it Go
-tries the public proxy, gets a 404 and reports the module as non-existent rather
-than as private. The binary lands in `$(go env GOPATH)/bin`, so add that to PATH
-if it is not there. There is no released binary to download.
-
-Then, once per machine:
-
-```bash
-wg login                    # paste a token on stdin, or set WG_TOKEN
-```
-
-The token comes from the web interface — Tokens, then a new token. Ask the
-person to create one; the scopes worth having for this skill are
-`project.read`, `work.create`, `agent.dispatch`, `organisation.read` and
-`audit.read`. Eight actions can never be granted to a token at all, including
-deciding an approval and reviewing a knowledge candidate; those need a browser.
+Exit 127 or "command not found" is not an authentication problem at all: `wg`
+is not installed. Do not read it as a credential failure, and do not install
+your way out of it in a sandbox — use HTTP.
 
 ## The four things people actually ask for
 
@@ -111,6 +177,7 @@ Branch on exit codes, never on message text:
 |---|---|---|
 | 0 | ok | continue |
 | 2 | usage | fix the command |
+| 127 | `wg` is not installed | not a credential problem; use HTTP instead |
 | 3 | unauthenticated | ask the user to `wg login` |
 | 4 | forbidden — this credential or role may not | **do not retry**; report it |
 | 5 | refused by policy | **do not retry**; a human must decide |
