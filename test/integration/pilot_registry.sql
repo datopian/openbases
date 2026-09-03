@@ -43,7 +43,7 @@ BEGIN
   -- from Roseville's public Socrata catalogue.
   SELECT count(*) INTO n FROM projects
    WHERE slug NOT IN ('portaljs-oss', 'datopian-products', 'nged', 'cdt',
-                      'roseville-poc');
+                      'roseville-poc', 'poc');
   IF n <> 0 THEN
     RAISE EXCEPTION 'undeclared project(s): %',
       (SELECT string_agg(slug, ', ') FROM projects
