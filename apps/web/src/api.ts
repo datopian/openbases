@@ -33,6 +33,40 @@ export interface ProjectSummary {
   repositories: number;
 }
 
+/** A repository attached to a project, as the registry holds it. */
+export interface Repository {
+  owner: string;
+  name: string;
+  full_name: string;
+  provider: string;
+  default_branch: string;
+}
+
+/**
+ * What happened to one repository in an attach request.
+ *
+ * Per repository rather than per request, because attaching six at once is the
+ * point: one already held by another project must not discard the other five,
+ * and the reader has to be told which one it was.
+ */
+export interface AttachResult {
+  full_name: string;
+  status: "attached" | "already_attached" | "taken";
+  taken_by?: string;
+}
+
+/** What creating a project needs. The primary owner defaults to the caller. */
+export interface NewProject {
+  slug: string;
+  name: string;
+  backup_owner: string;
+  portfolio?: string;
+  objective?: string;
+  visibility?: string;
+  primary_owner?: string;
+  cell?: string;
+}
+
 export interface PullRequestView {
   number: number;
   title: string;
@@ -151,7 +185,6 @@ export function asList<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
 
-
 export interface WorkItem {
   bead: string;
   title: string;
@@ -200,6 +233,23 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return parsed as T;
 }
 
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(path, {
+    method: "DELETE",
+    headers: { Accept: "application/json" },
+    credentials: "same-origin",
+  });
+  const parsed: unknown = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      parsed && typeof parsed === "object" && "error" in parsed
+        ? String((parsed as { error: unknown }).error)
+        : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return parsed as T;
+}
+
 export const api = {
   version: () => get<VersionInfo>("/version"),
   me: () => get<Identity>("/v1/me"),
@@ -209,7 +259,10 @@ export const api = {
   inbox: async () =>
     asList((await get<{ items: AttentionItem[] | null }>("/v1/inbox"))?.items),
   branches: async () =>
-    asList((await get<{ branches: Branch[] | null }>("/v1/inbox/branches"))?.branches),
+    asList(
+      (await get<{ branches: Branch[] | null }>("/v1/inbox/branches"))
+        ?.branches,
+    ),
 
   work: async () =>
     asList((await get<{ work: WorkItem[] | null }>("/v1/work"))?.work),
@@ -221,18 +274,32 @@ export const api = {
   // would be a request to file into a project called empty string, so it is
   // left out instead.
   plan: async (brief: string, project?: string) =>
-    post<{ job: string }>("/v1/work/plan", project ? { brief, project } : { brief }),
+    post<{ job: string }>(
+      "/v1/work/plan",
+      project ? { brief, project } : { brief },
+    ),
 
   // A budget refusal arrives as 402 with the reason in the body. Surfaced as
   // the error message rather than swallowed into "request failed", because the
   // reason is the single most useful thing this call can return.
   dispatch: async (bead: string) =>
-    post<{ job: string; bead: string }>(`/v1/work/${encodeURIComponent(bead)}/dispatch`, {}),
+    post<{ job: string; bead: string }>(
+      `/v1/work/${encodeURIComponent(bead)}/dispatch`,
+      {},
+    ),
 
-  decide: async (id: string, approve: boolean, reason: string, seenDigest: string) => {
+  decide: async (
+    id: string,
+    approve: boolean,
+    reason: string,
+    seenDigest: string,
+  ) => {
     const res = await fetch(`/v1/approvals/${encodeURIComponent(id)}/decide`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
       credentials: "same-origin",
       body: JSON.stringify({ approve, reason, seen_digest: seenDigest }),
     });
@@ -240,7 +307,9 @@ export const api = {
     if (!res.ok) {
       // A refusal is data, not a failure to display. It names the policy and
       // what to do, and the interface must show that rather than "forbidden".
-      throw Object.assign(new ApiError(res.status, "refused"), { refusal: body as Refusal });
+      throw Object.assign(new ApiError(res.status, "refused"), {
+        refusal: body as Refusal,
+      });
     }
     return body;
   },
@@ -248,9 +317,12 @@ export const api = {
   // The unwrapped response, so a caller can report what actually arrived.
   // The device authorization flow's approval page (wg-8la).
   deviceRequest: (code: string) =>
-    get<{ client_label: string; scopes: string[]; expires_at: string; approved: boolean }>(
-      `/v1/device/request?code=${encodeURIComponent(code)}`,
-    ),
+    get<{
+      client_label: string;
+      scopes: string[];
+      expires_at: string;
+      approved: boolean;
+    }>(`/v1/device/request?code=${encodeURIComponent(code)}`),
   deviceApprove: (code: string) =>
     post<{ approved: boolean }>("/v1/device/approve", { user_code: code }),
 
@@ -260,10 +332,39 @@ export const api = {
     asList((await get<{ questions: string[] | null }>("/v1/ask"))?.questions),
   ask: (q: string) => get<Answer>(`/v1/ask?q=${encodeURIComponent(q)}`),
 
-  projects: async () => asList(await get<ProjectSummary[] | null>("/v1/projects")),
+  projects: async () =>
+    asList(await get<ProjectSummary[] | null>("/v1/projects")),
   projectDetail: (slug: string) =>
     get<ProjectDetail & { repositories: RepositoryStatus[] }>(
       `/v1/projects/${encodeURIComponent(slug)}/detail`,
+    ),
+
+  createProject: async (n: NewProject) =>
+    (await post<{ project: ProjectSummary }>("/v1/projects", n)).project,
+
+  repositories: async (slug: string) =>
+    asList(
+      (
+        await get<{ repositories: Repository[] | null }>(
+          `/v1/projects/${encodeURIComponent(slug)}/repositories`,
+        )
+      )?.repositories,
+    ),
+
+  attachRepositories: async (slug: string, repositories: string[]) =>
+    asList(
+      (
+        await post<{ results: AttachResult[] | null }>(
+          `/v1/projects/${encodeURIComponent(slug)}/repositories`,
+          { repositories },
+        )
+      )?.results,
+    ),
+
+  detachRepository: (slug: string, owner: string, name: string) =>
+    del<{ status: string }>(
+      `/v1/projects/${encodeURIComponent(slug)}/repositories/` +
+        `${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
     ),
 };
 
@@ -294,4 +395,3 @@ export function isStale(iso: string | null, hours = 24): boolean {
   const then = new Date(iso).getTime();
   return Number.isNaN(then) || Date.now() - then > hours * 3600_000;
 }
-

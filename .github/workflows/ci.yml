@@ -312,6 +312,12 @@ jobs:
       - name: a device grant is approved once, redeemed once, and refuses the rest
         run: psql -v ON_ERROR_STOP=1 -f test/integration/device_authorization.sql
 
+      # The invariant behind "I created a project and could not see it": both
+      # owners are members, so the project is visible to the people responsible
+      # for it and not only to the four administrators who see everything.
+      - name: a created project is visible to both its owners and to nobody else
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/project_creation_visibility.sql
+
       # The cost importer, end to end against a stub gateway: paging, the
       # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
       # the real binary rather than SQL alone, because the decisions being
