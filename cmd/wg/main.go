@@ -183,8 +183,24 @@ type credentials struct {
 // installation token.
 func login(args []string) (int, error) {
 	base := "https://api-staging.openbases.com"
-	if len(args) > 0 {
-		base = strings.TrimRight(args[0], "/")
+	device := false
+	var rest []string
+	for _, a := range args {
+		if a == "--device" {
+			device = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	if len(rest) > 0 {
+		base = strings.TrimRight(rest[0], "/")
+	}
+
+	// The device flow, for a caller that cannot be handed a secret: a sandbox
+	// with no environment variables, a container that resets between tasks, an
+	// agent that must not be given a credential through a conversation.
+	if device {
+		return loginDevice(base)
 	}
 
 	token := os.Getenv("WG_TOKEN")
@@ -216,20 +232,10 @@ func login(args []string) (int, error) {
 		return exitUsage, errors.New(`that does not look like a Workgraph token (they start with "wgp_")`)
 	}
 
-	path, err := configPath()
-	if err != nil {
+	if err := storeCredentials(base, token); err != nil {
 		return exitError, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return exitError, err
-	}
-	body, err := json.Marshal(credentials{BaseURL: base, Token: token})
-	if err != nil {
-		return exitError, err
-	}
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		return exitError, err
-	}
+	path, _ := configPath()
 	fmt.Printf("stored for %s in %s\n", base, path)
 	return exitOK, nil
 }
@@ -424,4 +430,32 @@ func takeProject(words []string) (rest []string, project string) {
 		}
 	}
 	return rest, project
+}
+
+// storeCredentials writes the credential file, 0600, creating its directory.
+//
+// Shared with the device flow rather than duplicated: two places that write a
+// credential are two places to get the permissions wrong.
+func storeCredentials(base, token string) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	body, err := json.Marshal(credentials{BaseURL: base, Token: token})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o600)
+}
+
+// readAllLimited reads a response body with a ceiling.
+//
+// A megabyte is far more than any of these endpoints returns, and the ceiling
+// is there so a misconfigured base URL pointing at something enormous fails
+// rather than exhausting memory.
+func readAllLimited(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, 1<<20))
 }

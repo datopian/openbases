@@ -19,7 +19,7 @@ over HTTP with a personal API token, so you never need the browser.
 [ -n "$WG_TOKEN" ] && echo "token present"
 ```
 
-If yes, you are done — `WG_TOKEN` is all any of this needs. Skip to step 4.
+If yes, you are done — `WG_TOKEN` is all any of this needs. Skip to step 5.
 
 ### 2. Is `wg` on PATH?
 
@@ -39,7 +39,25 @@ Install only where a person will use the machine again:
 GOPRIVATE=github.com/datopian go install github.com/datopian/workgraph/cmd/wg@latest
 ```
 
-### 3. Store the token
+### 3. No token and no way to be given one? Ask for one.
+
+```bash
+wg login --device
+```
+
+This is the answer for a sandbox: it prints a URL and a short code, waits while
+a person opens the URL and approves, then stores the token itself. Nothing is
+pasted into the conversation and no environment variable is needed.
+
+**Tell the person the URL and the code, then wait.** The command blocks for up
+to ten minutes and polls; that is the flow working, not hanging. It needs `wg`
+on PATH — if you have no binary, use HTTP below and ask the person for a token
+through the interface instead.
+
+The token it gets lasts eight hours and carries only what an agent needs.
+A person approving an agent session is not agreeing to ninety days.
+
+### 4. Store a token you were given
 
 ```bash
 wg login                      # reads WG_TOKEN, or a token piped on stdin
@@ -50,11 +68,12 @@ provider. It reads a token and writes it to a config file, nothing more. If you
 expected a browser flow, you are thinking of how the token is *created*, which
 is step 4 and is not yours to do.
 
-### 4. Where the token comes from — and never ask for it in chat
+### 5. Where a token comes from — and never ask for it in chat
 
 A token is created by a person, in the web interface, under Tokens. It requires
 an interactive Cloudflare Access session, deliberately: a token that could mint
-its own successor would make revocation meaningless.
+its own successor would make revocation meaningless. `wg login --device` is the
+same rule with the typing moved — a person still approves, in a browser.
 
 **Never ask the user to paste a token into the conversation.** A pasted token is
 a live 90-day bearer credential sitting in a transcript, and transcripts get

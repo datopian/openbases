@@ -1018,6 +1018,145 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		return id, true
 	}
 
+	// ---------------------------------------------------------------------
+	// The device authorization grant (wg-8la, RFC 8628)
+	// ---------------------------------------------------------------------
+	//
+	// Minting needs an interactive session, which is right and which left a
+	// sandboxed agent nowhere to go: it cannot be given an environment
+	// variable, cannot open a browser, and must not be handed a credential
+	// through a chat transcript. This adds a path without weakening the rule.
+	// The agent asks, a PERSON approves in a browser, the agent collects.
+	//
+	// Start and poll are on `mux`, not `authed`: a client with no credential
+	// is exactly who calls them, so requiring one would defeat the purpose.
+	// Approval is on `authed` behind the same tokenMinter guard as minting,
+	// because approving IS minting with an extra step.
+
+	mux.HandleFunc("POST /v1/device/code", func(w http.ResponseWriter, r *http.Request) {
+		if apiTokens == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "tokens are not configured"})
+			return
+		}
+		var body struct {
+			ClientLabel string   `json:"client_label"`
+			Scopes      []string `json:"scopes"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed body"})
+			return
+		}
+		if cfg.AppBaseURL == "" {
+			// Refused rather than guessed. The verification URI is what a
+			// person is asked to open and trust, so an unconfigured one is a
+			// missing prerequisite and not a default to invent.
+			log.Error("a device grant was requested but WG_APP_BASE_URL is not set")
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error": "the device flow is not configured on this deployment",
+				"hint":  "set WG_APP_BASE_URL to the interface's base URL"})
+			return
+		}
+		grant, err := apiTokens.StartDevice(r.Context(), body.ClientLabel, body.Scopes, cfg.AppBaseURL)
+		if err != nil {
+			// A refused scope is the caller's mistake and safe to name: they
+			// asked for it, so telling them it is ungrantable reveals nothing.
+			if errors.Is(err, tokens.ErrProtectedScope) || strings.Contains(err.Error(), "cannot hold that action") {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": err.Error(), "code": "scope_refused"})
+				return
+			}
+			log.Error("starting a device grant", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		log.Info("device grant started", "client", body.ClientLabel, "user_code", grant.UserCode)
+		writeJSON(w, http.StatusOK, grant)
+	})
+
+	mux.HandleFunc("POST /v1/device/token", func(w http.ResponseWriter, r *http.Request) {
+		if apiTokens == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "tokens are not configured"})
+			return
+		}
+		var body struct {
+			DeviceCode string `json:"device_code"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed body"})
+			return
+		}
+
+		secret, t, err := apiTokens.RedeemDevice(r.Context(), body.DeviceCode)
+		switch {
+		case errors.Is(err, tokens.ErrDevicePending):
+			// 400 with a code, per RFC 8628, rather than an error status a
+			// client would give up on. Pending is the NORMAL answer for most
+			// of this flow's life.
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": tokens.DevicePending})
+			return
+		case errors.Is(err, tokens.ErrDeviceExpired):
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": tokens.DeviceExpired})
+			return
+		case errors.Is(err, tokens.ErrDeviceInvalid):
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": tokens.DeviceInvalid})
+			return
+		case err != nil:
+			log.Error("redeeming a device grant", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+
+		log.Info("device grant redeemed", "token", t.ID, "user", t.UserID, "expires", t.ExpiresAt)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"access_token": secret,
+			"token_type":   "Bearer",
+			"expires_in":   int(time.Until(t.ExpiresAt).Seconds()),
+			"scope":        strings.Join(t.Scopes, " "),
+		})
+	})
+
+	// What the approval page shows. Behind the session guard, because the page
+	// is only ever reached by a person who has already logged in.
+	authed.HandleFunc("GET /v1/device/request", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := tokenMinter(w, r); !ok {
+			return
+		}
+		req, err := apiTokens.LookupDevice(r.Context(), r.URL.Query().Get("code"))
+		if err != nil {
+			// One answer for "no such code", "expired" and "already used", so
+			// a mistyped code teaches nobody which codes exist.
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "that code is not valid"})
+			return
+		}
+		writeJSON(w, http.StatusOK, req)
+	})
+
+	authed.HandleFunc("POST /v1/device/approve", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := tokenMinter(w, r)
+		if !ok {
+			return
+		}
+		var body struct {
+			UserCode string `json:"user_code"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed body"})
+			return
+		}
+		approved, err := apiTokens.ApproveDevice(r.Context(), body.UserCode, id.UserID)
+		if err != nil {
+			log.Error("approving a device grant", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		if !approved {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "that code is not valid"})
+			return
+		}
+		log.Info("device grant approved", "by", id.UserID)
+		writeJSON(w, http.StatusOK, map[string]any{"approved": true})
+	})
+
 	authed.HandleFunc("POST /v1/tokens", func(w http.ResponseWriter, r *http.Request) {
 		id, ok := tokenMinter(w, r)
 		if !ok {

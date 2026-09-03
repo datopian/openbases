@@ -169,6 +169,9 @@ func usage() {
 	fmt.Fprint(os.Stderr, `wg — Workgraph over HTTP
 
   wg login [base-url]         store a token (WG_TOKEN, or piped on stdin)
+  wg login --device           ask, wait for a person to approve in a browser,
+                              and store the token; for a machine that cannot
+                              be handed a secret
   wg whoami                   who this credential is
   wg inbox                    what needs me
   wg ask ["question"]         ask the chief of staff; no question lists what it answers

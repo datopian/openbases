@@ -99,9 +99,22 @@ var routeActions = map[string]routeAction{
 	// Managing tokens. Guarded additionally by ViaToken(): a token may not mint
 	// or revoke tokens whatever its scopes say, because a leaked credential
 	// that can produce its own successor makes revocation meaningless.
-	"POST /v1/tokens":        {Public: true, Why: "session-only, enforced by ViaToken() rather than a scope"},
-	"GET /v1/tokens":         {Public: true, Why: "session-only, enforced by ViaToken() rather than a scope"},
-	"DELETE /v1/tokens/{id}": {Public: true, Why: "session-only, enforced by ViaToken() rather than a scope"},
+	// The device authorization grant (wg-8la, RFC 8628).
+	//
+	// Only the two a PERSON uses appear here. Start and poll are registered on
+	// the unauthenticated mux -- a client with no credential is exactly who
+	// calls them -- and this map covers the authenticated routes, so listing
+	// them would be a stale entry claiming coverage for a route this mux does
+	// not serve.
+	//
+	// The two that a person uses are session-only for the same reason minting
+	// is, enforced by ViaToken(): approving a grant IS minting a token, one
+	// step removed, so a token must not be able to approve one.
+	"GET /v1/device/request":  {Public: true, Why: "session-only, enforced by ViaToken() rather than a scope"},
+	"POST /v1/device/approve": {Public: true, Why: "session-only, enforced by ViaToken() rather than a scope"},
+	"POST /v1/tokens":         {Public: true, Why: "session-only, enforced by ViaToken() rather than a scope"},
+	"GET /v1/tokens":          {Public: true, Why: "session-only, enforced by ViaToken() rather than a scope"},
+	"DELETE /v1/tokens/{id}":  {Public: true, Why: "session-only, enforced by ViaToken() rather than a scope"},
 
 	// The execution node's own path. These are authorised by per-path Access
 	// applications bound to the cells service token, and a service token has no

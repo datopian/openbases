@@ -48,6 +48,17 @@ type ControlAPI struct {
 	AccessTeamDomain string
 	AccessAudience   string
 
+	// AppBaseURL is where a person's browser reaches the interface, used to
+	// build the verification URI a device grant asks somebody to open.
+	//
+	// Configured, never derived from the request. The API is reached at a
+	// different hostname from the interface, so a request-derived URL would be
+	// wrong -- and deriving it from the Host header would be worse than wrong:
+	// the verification URI is the one thing a human is asked to trust, and a
+	// client that could set it would have a phishing primitive rather than a
+	// login flow.
+	AppBaseURL string
+
 	// AuthzEnforce switches the role-to-action check from reporting to
 	// refusing. It defaults to FALSE, and the default is the point.
 	//
@@ -143,6 +154,7 @@ func LoadControlAPI() (ControlAPI, error) {
 
 		AccessTeamDomain: os.Getenv("WG_ACCESS_TEAM_DOMAIN"),
 		AccessAudience:   os.Getenv("WG_ACCESS_AUD"),
+		AppBaseURL:       os.Getenv("WG_APP_BASE_URL"),
 		// Anything other than "true" leaves it reporting rather than refusing.
 		// Defaulting a permission gate to ON before its data is verified is how
 		// a safety feature becomes an outage.

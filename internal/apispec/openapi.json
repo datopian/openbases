@@ -60,17 +60,18 @@
           "invalid_expiry",
           "scope_or_lifetime_refused",
           "invalid_until",
-          "invalid_cursor"
+          "invalid_cursor",
+          "scope_refused"
         ],
         "description": "Stable codes. token_scope_insufficient and role_grant_missing are deliberately distinct: one means this credential may not, the other means you may not, and they have different fixes."
       }
     }
   },
   "paths": {
-    "/v1/tokens/{id}": {
-      "delete": {
-        "summary": "Revoke a token",
-        "operationId": "delete_v1_tokens_id",
+    "/v1/agent-health": {
+      "post": {
+        "summary": "Report agent health",
+        "operationId": "post_v1_agent_health",
         "responses": {
           "200": {
             "description": "Success",
@@ -123,7 +124,78 @@
             }
           }
         },
-        "description": "Effective on the next request; there is no cache in front of the lookup.",
+        "description": "Execution-node path (ADR-0019).",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/approvals/{id}/decide": {
+      "post": {
+        "summary": "Decide an approval",
+        "operationId": "post_v1_approvals_id_decide",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Never reachable with an API token, at three layers: the scope cannot be stored, cannot be minted, and the route requires an action no token's scope set contains (ADR-0009, ADR-0025).",
         "parameters": [
           {
             "name": "id",
@@ -183,6 +255,242 @@
           }
         },
         "description": "Answers exactly four questions. Called with no q, it returns the supported set rather than guessing \u2014 which is the discoverability this endpoint would otherwise lack."
+      }
+    },
+    "/v1/attention/{id}/delegate": {
+      "post": {
+        "summary": "Hand an item to someone else",
+        "operationId": "post_v1_attention_id_delegate",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "The item MOVES rather than being copied: two people each believing the other is handling it is the failure delegation exists to remove.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/attention/{id}/resolve": {
+      "post": {
+        "summary": "Close an attention item",
+        "operationId": "post_v1_attention_id_resolve",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/attention/{id}/snooze": {
+      "post": {
+        "summary": "Snooze an attention item",
+        "operationId": "post_v1_attention_id_snooze",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Until a time the caller names. A snooze ending in the past is refused.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
       }
     },
     "/v1/budget/check": {
@@ -300,6 +608,251 @@
           }
         },
         "description": "Recently reviewed candidates with their destination: the durable record, or the bead and the graph it went into. An accepted candidate with no bead is shown as accepted with no bead \u2014 publication runs on a timer outside the request, so \"queued\" is a real state and hiding it would make an unpublished decision look complete."
+      }
+    },
+    "/v1/candidates/{id}/review": {
+      "post": {
+        "summary": "Decide on one candidate",
+        "operationId": "post_v1_candidates_id_review",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "accept, edit_and_accept, reject or defer. A rejection requires a reason and an edit requires the corrected statement, because both are the evaluation data the improvement loop reads. Answers 409 if somebody has already decided. Personal API tokens may not carry knowledge.review: a reviewer is always a named human.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/device/approve": {
+      "post": {
+        "summary": "Approve a device grant",
+        "operationId": "post_v1_device_approve",
+        "description": "The human act. Records the approver from the authenticated session, never from the request, so the token the client collects is attributed to a named person. Session-only, enforced the same way minting is: approving a grant is minting a token one step removed. A grant can be approved once.",
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A token cannot manage tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "That code is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/device/code": {
+      "post": {
+        "summary": "Start a device authorization grant",
+        "operationId": "post_v1_device_code",
+        "description": "RFC 8628. Called by a client that has no credential and cannot open a browser \u2014 which is why it needs none. Returns a device_code (the client's secret, shown once), a short user_code for a person to type, and the verification URI to send them to. Poll /v1/device/token until it stops answering authorization_pending. Requesting an action a token may never hold is refused here rather than after somebody has approved it.",
+        "responses": {
+          "200": {
+            "description": "The grant to poll on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A refused scope, or a malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The device flow is not configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/device/request": {
+      "get": {
+        "summary": "What a device grant is asking for",
+        "operationId": "get_v1_device_request",
+        "description": "Shows the approval page what is being asked \u2014 which client, which actions \u2014 so a person approves a described grant rather than an opaque code. Session-only: a token cannot read this, for the same reason it cannot mint one. Answers 404 identically for an unknown, expired or already-used code, so a mistyped code teaches nobody which codes exist.",
+        "responses": {
+          "200": {
+            "description": "The pending request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A token cannot manage tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "That code is not valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/device/token": {
+      "post": {
+        "summary": "Exchange an approved device code for a token",
+        "operationId": "post_v1_device_token",
+        "description": "RFC 8628. Answers 400 with authorization_pending until a person approves, which is the normal answer for most of the flow's life; then expired_token or invalid_grant, or 200 with the token. Single use: a grant that has produced a token answers invalid_grant. The token is minted in the approver's name with the scopes they saw, and lives eight hours \u2014 a person approving an agent session is not agreeing to ninety days.",
+        "responses": {
+          "200": {
+            "description": "The access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "authorization_pending, expired_token or invalid_grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/events": {
@@ -456,6 +1009,106 @@
         }
       }
     },
+    "/v1/integrations/github/installation-token": {
+      "post": {
+        "summary": "Mint a repository-scoped git credential",
+        "operationId": "post_v1_integrations_github_installation_token",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Execution-node path. Short-lived by construction (plan section 9.2).",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/integrations/github/webhook": {
+      "post": {
+        "summary": "GitHub webhook delivery",
+        "operationId": "post_v1_integrations_github_webhook",
+        "description": "Called by GitHub, not by a client. Unauthenticated in the Access sense and authenticated by the webhook's HMAC signature instead, which is the only credential GitHub can present. Deliveries are stored and projected asynchronously, so a 2xx means accepted rather than processed.",
+        "responses": {
+          "200": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed or unsigned delivery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/me": {
       "get": {
         "summary": "Who the caller is",
@@ -493,6 +1146,246 @@
           }
         },
         "description": "Identity of the already-authenticated caller. Discloses nothing they do not already hold, and is the cheapest way for a client to check a credential works."
+      }
+    },
+    "/v1/node/work/claim": {
+      "post": {
+        "summary": "Claim a queued job",
+        "operationId": "post_v1_node_work_claim",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Execution-node path.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/node/work/project": {
+      "post": {
+        "summary": "Project work into the graph",
+        "operationId": "post_v1_node_work_project",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Execution-node path.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/node/work/{id}/result": {
+      "post": {
+        "summary": "Report a job result",
+        "operationId": "post_v1_node_work_id_result",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Execution-node path.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "summary": "This document",
+        "operationId": "get_v1_openapi_json",
+        "description": "The contract, served unauthenticated so a client can discover the API before it has a credential. A test keeps it honest against the routes the server actually registers, in both directions.",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/projects": {
@@ -787,6 +1680,85 @@
         ]
       }
     },
+    "/v1/tokens/{id}": {
+      "delete": {
+        "summary": "Revoke a token",
+        "operationId": "delete_v1_tokens_id",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Effective on the next request; there is no cache in front of the lookup.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
     "/v1/work": {
       "get": {
         "summary": "Work items, with what each has cost",
@@ -824,802 +1796,6 @@
           }
         },
         "description": "Scoped by row-level security to what the caller may see."
-      }
-    },
-    "/v1/work/queue": {
-      "get": {
-        "summary": "The queue, including plan jobs",
-        "operationId": "get_v1_work_queue",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Plan jobs have no bead until they produce some, so they appear here and not in /v1/work."
-      }
-    },
-    "/v1/agent-health": {
-      "post": {
-        "summary": "Report agent health",
-        "operationId": "post_v1_agent_health",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Execution-node path (ADR-0019).",
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/approvals/{id}/decide": {
-      "post": {
-        "summary": "Decide an approval",
-        "operationId": "post_v1_approvals_id_decide",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Never reachable with an API token, at three layers: the scope cannot be stored, cannot be minted, and the route requires an action no token's scope set contains (ADR-0009, ADR-0025).",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/attention/{id}/delegate": {
-      "post": {
-        "summary": "Hand an item to someone else",
-        "operationId": "post_v1_attention_id_delegate",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "The item MOVES rather than being copied: two people each believing the other is handling it is the failure delegation exists to remove.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/attention/{id}/resolve": {
-      "post": {
-        "summary": "Close an attention item",
-        "operationId": "post_v1_attention_id_resolve",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/attention/{id}/snooze": {
-      "post": {
-        "summary": "Snooze an attention item",
-        "operationId": "post_v1_attention_id_snooze",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Until a time the caller names. A snooze ending in the past is refused.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/candidates/{id}/review": {
-      "post": {
-        "summary": "Decide on one candidate",
-        "operationId": "post_v1_candidates_id_review",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "accept, edit_and_accept, reject or defer. A rejection requires a reason and an edit requires the corrected statement, because both are the evaluation data the improvement loop reads. Answers 409 if somebody has already decided. Personal API tokens may not carry knowledge.review: a reviewer is always a named human.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/integrations/github/installation-token": {
-      "post": {
-        "summary": "Mint a repository-scoped git credential",
-        "operationId": "post_v1_integrations_github_installation_token",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Execution-node path. Short-lived by construction (plan section 9.2).",
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/node/work/claim": {
-      "post": {
-        "summary": "Claim a queued job",
-        "operationId": "post_v1_node_work_claim",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Execution-node path.",
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/node/work/project": {
-      "post": {
-        "summary": "Project work into the graph",
-        "operationId": "post_v1_node_work_project",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Execution-node path.",
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/node/work/{id}/result": {
-      "post": {
-        "summary": "Report a job result",
-        "operationId": "post_v1_node_work_id_result",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Execution-node path.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
       }
     },
     "/v1/work/plan": {
@@ -1691,6 +1867,45 @@
             "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
           }
         ]
+      }
+    },
+    "/v1/work/queue": {
+      "get": {
+        "summary": "The queue, including plan jobs",
+        "operationId": "get_v1_work_queue",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Plan jobs have no bead until they produce some, so they appear here and not in /v1/work."
       }
     },
     "/v1/work/{bead}/dispatch": {
