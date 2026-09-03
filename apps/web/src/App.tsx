@@ -3,6 +3,7 @@ import { Ask } from "./Ask";
 import { Inbox } from "./Inbox";
 import { Work } from "./Work";
 import { Device, deviceCodeFromHash } from "./Device";
+import { Platform } from "./Platform";
 import { CreateProject, ManageRepositories } from "./ProjectAdmin";
 import {
   age,
@@ -463,6 +464,10 @@ function onWork(): boolean {
   return window.location.hash === "#/work";
 }
 
+function onPlatform(): boolean {
+  return window.location.hash === "#/platform";
+}
+
 /**
  * A visible build stamp.
  *
@@ -504,6 +509,7 @@ export function App() {
   const [device, setDevice] = useState<string | null>(() =>
     deviceCodeFromHash(),
   );
+  const [platform, setPlatform] = useState<boolean>(() => onPlatform());
 
   useEffect(() => {
     api
@@ -522,6 +528,7 @@ export function App() {
       setInbox(onInbox());
       setAsk(onAsk());
       setWork(onWork());
+      setPlatform(onPlatform());
       setDevice(deviceCodeFromHash());
     };
     window.addEventListener("hashchange", onHash);
@@ -538,6 +545,7 @@ export function App() {
     setInbox(false);
     setAsk(false);
     setWork(false);
+    setPlatform(false);
   };
 
   return (
@@ -571,6 +579,7 @@ export function App() {
               setWork(true);
               setInbox(false);
               setAsk(false);
+              setPlatform(false);
               setSlug(null);
             }}
           >
@@ -585,6 +594,7 @@ export function App() {
               setInbox(true);
               setAsk(false);
               setWork(false);
+              setPlatform(false);
               setSlug(null);
             }}
           >
@@ -599,10 +609,26 @@ export function App() {
               setAsk(true);
               setInbox(false);
               setWork(false);
+              setPlatform(false);
               setSlug(null);
             }}
           >
             Ask
+          </a>
+          <a
+            href="#/platform"
+            style={{ ...css.link, marginRight: "1rem" }}
+            onClick={(e) => {
+              e.preventDefault();
+              window.location.hash = "#/platform";
+              setPlatform(true);
+              setAsk(false);
+              setInbox(false);
+              setWork(false);
+              setSlug(null);
+            }}
+          >
+            Platform
           </a>
           <span style={css.muted}>
             {me ? me.email || me.subject : "not signed in"}
@@ -612,6 +638,8 @@ export function App() {
 
       {device !== null ? (
         <Device code={device} />
+      ) : platform ? (
+        <Platform />
       ) : work ? (
         <Work />
       ) : ask ? (

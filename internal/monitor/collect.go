@@ -32,6 +32,13 @@ type Collector struct {
 	Services []string
 	// Gateways are the AI Gateways whose import must be fresh (wg-7jz).
 	Gateways []string
+	// Graphs are the work graph directories that must be readable, declared as
+	// "name=/path" pairs (wg-7bh).
+	Graphs []Graph
+	// GraphUser is the account the graphs must be readable BY. Empty means the
+	// process's own user, which is only the right answer when the monitor runs
+	// as the service user.
+	GraphUser string
 }
 
 // ProbeAPI asks the control API whether it can serve traffic.
@@ -254,6 +261,7 @@ func (c Collector) Run(ctx context.Context, now time.Time, t Thresholds) []Findi
 	}
 
 	findings = append(findings, EvaluateBackup(c.ReadBackupReceipts(), now))
+	findings = append(findings, EvaluateGraphs(c.ObserveGraphs(ctx)))
 	return findings
 }
 
@@ -298,7 +306,73 @@ func (c Collector) RunWithoutDatabase(ctx context.Context, now time.Time, t Thre
 	// Backup receipts are files on disk, so this one still works and is worth
 	// having: a database outage during a backup window is exactly when you want
 	// to know the backups are current.
-	return append(findings, EvaluateBackup(c.ReadBackupReceipts(), now))
+	findings = append(findings, EvaluateBackup(c.ReadBackupReceipts(), now))
+	// So is the graph check, and more so: the work graph is a separate database
+	// from PostgreSQL, and "PostgreSQL is down" is no reason to stop asking
+	// whether the work graph can be opened.
+	return append(findings, EvaluateGraphs(c.ObserveGraphs(ctx)))
+}
+
+// ObserveGraphs tests whether each declared graph can be read by the service
+// user.
+//
+// The readability test runs AS THAT USER rather than as the monitor. That is
+// the whole point: on 3 September the graph files were present and intact and
+// root-owned, so any check performed as root would have reported a healthy
+// graph while the service could not open its own database. `sudo -u <user> test
+// -r` asks the question that actually matters.
+func (c Collector) ObserveGraphs(ctx context.Context) []Graph {
+	out := make([]Graph, 0, len(c.Graphs))
+	for _, g := range c.Graphs {
+		// The manifest specifically, not the directory. A directory can be
+		// traversable while the file the database needs is not readable, which
+		// is exactly the shape the 3 September failure took:
+		//   open .../noms/manifest: permission denied
+		manifest := filepath.Join(g.Path, ".beads", "embeddeddolt", "wg", ".dolt", "noms", "manifest")
+		if _, err := os.Stat(g.Path); err != nil {
+			g.Missing = true
+			g.Reason = err.Error()
+			out = append(out, g)
+			continue
+		}
+		if _, err := os.Stat(manifest); err != nil {
+			// Present directory, absent manifest. Not "missing" — the graph is
+			// there and its database is not, which is a different fix.
+			g.Readable = false
+			g.Reason = "the Dolt manifest is not present: " + err.Error()
+			out = append(out, g)
+			continue
+		}
+		if c.GraphUser == "" {
+			// No user declared, so the best available answer is whether THIS
+			// process can read it. Recorded in the reason so the report does
+			// not overclaim.
+			if err := readable(manifest); err != nil {
+				g.Reason = "not readable by the monitor's own user (no service user declared): " + err.Error()
+			} else {
+				g.Readable = true
+			}
+			out = append(out, g)
+			continue
+		}
+		cmd := exec.CommandContext(ctx, "sudo", "-n", "-u", c.GraphUser, "test", "-r", manifest)
+		if err := cmd.Run(); err != nil {
+			g.Reason = fmt.Sprintf("%s cannot read %s", c.GraphUser, manifest)
+		} else {
+			g.Readable = true
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// readable reports whether this process can open a file for reading.
+func readable(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 // ObserveServices asks systemd whether each declared unit is running (wg-95y).

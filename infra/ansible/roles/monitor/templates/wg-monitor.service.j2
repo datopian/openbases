@@ -30,7 +30,9 @@ ExecStart={{ monitor_binary }} \
   -agent-health-silence {{ monitor_agent_health_silence }} \
   -services "{{ monitor_services | replace('\n', '') | replace(' ', '') }}" \
   -gateways "{{ monitor_gateways | replace('\n', '') | replace(' ', '') }}" \
-  -cost-import-max-age {{ monitor_cost_import_max_age }}
+  -cost-import-max-age {{ monitor_cost_import_max_age }} \
+  -graphs "{{ monitor_graphs | replace('\n', '') | replace(' ', '') }}" \
+  -graph-user "{{ monitor_graph_user }}"
 
 # The monitor exits non-zero when an alert reached NOBODY, which is the one
 # failure it cannot report through the inbox. A failed unit in

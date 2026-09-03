@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/datopian/workgraph/internal/authn"
+	"github.com/datopian/workgraph/internal/authz"
 	"github.com/datopian/workgraph/internal/domain"
 	"github.com/datopian/workgraph/internal/idempotency"
 )
@@ -166,4 +168,52 @@ func beadLabels(vs []string) any {
 	}
 	b.WriteByte('}')
 	return b.String()
+}
+
+// registerPlatformState adds the read-only view of what the platform is doing
+// (wg-7bh).
+//
+// Every number here already existed in the database and nothing could reach it:
+// three cells, twenty thousand agent health events, thirteen open alerts and
+// seventy-five unattributed beads, all visible only from a database shell on the
+// control node. An answer reachable only by the person with psql is the same
+// failure as an alert nobody receives.
+func registerPlatformState(authed *http.ServeMux, db *sql.DB, log *slog.Logger) {
+	if db == nil {
+		return
+	}
+	authed.HandleFunc("GET /v1/platform", func(w http.ResponseWriter, r *http.Request) {
+		ident, _ := authn.FromContext(r.Context())
+		if ident.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		// Inside authz.WithUser because system_platform_state is SECURITY
+		// DEFINER and gates on is_company_manager(), which reads
+		// current_app_user(). Querying db directly sets no identity, the gate
+		// sees nobody, and the endpoint would refuse an administrator — which
+		// is exactly how GET /v1/work returned an empty list to everyone for a
+		// day (wg-ue8).
+		var doc []byte
+		err := authz.WithUser(r.Context(), db, ident.UserID, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(r.Context(), `SELECT system_platform_state()`).Scan(&doc)
+		})
+		if err != nil {
+			// The function raises for a caller who is not company management,
+			// which is a 403 rather than a fault. Named as such: the refusal
+			// is about the caller's role, and telling them so is the only way
+			// they can ask somebody for it.
+			if strings.Contains(err.Error(), "company management only") {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": "platform state is company management only",
+					"code":  "role_grant_missing"})
+				return
+			}
+			log.Error("reading platform state", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(doc)
+	})
 }

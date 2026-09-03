@@ -117,6 +117,32 @@ var (
 		Score:   0.8,
 	}
 
+	// ClassGraph is a work graph the service user cannot read.
+	//
+	// Scored above disk and backup, because unlike those this is a present
+	// outage: every bead, every dispatch and every projection goes through the
+	// graph, and a graph the service user cannot open has stopped the work
+	// rather than threatened it.
+	//
+	// It exists because of what happened on 3 September. Three files under
+	// /srv/graphs/company-hq/.beads were left root-owned, the service user
+	// could not read its own graph, and the ONLY thing that noticed was
+	// wg-backup-beads.service failing:
+	//
+	//     Error: failed to open database: embeddeddolt: init schema: failed to
+	//     load database "wg": open .../noms/manifest: permission denied
+	//
+	// A monitor that checks disk, backups, webhooks, services, cost imports and
+	// Workspace sources — but not the database the entire work graph lives in —
+	// has a hole exactly where this system keeps its state. It was found by
+	// reading a backup failure, which is luck rather than observability.
+	ClassGraph = Class{
+		Name:    "graph",
+		Rule:    "platform_graph_unreadable",
+		Runbook: "docs/runbooks/graph-unreadable.md",
+		Score:   0.9,
+	}
+
 	// ClassService is a unit that is supposed to be running and is not.
 	//
 	// Scored just below the API because it covers the API, and because of the
@@ -182,6 +208,7 @@ var (
 var Classes = []Class{
 	ClassAPI, ClassService, ClassWebhook, ClassAgentStall,
 	ClassDisk, ClassBackup, ClassCostImport, ClassWorkspaceSources,
+	ClassGraph,
 }
 
 // Finding is the verdict on one class.

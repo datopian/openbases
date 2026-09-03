@@ -124,3 +124,27 @@ monitor_cost_import_max_age: 3h
 # to mute the channel. Derived from the inventory so that removing a cell updates
 # the expectation instead of leaving a permanently failing check.
 monitor_expect_cells: "{{ groups['execution'] | default([]) | length }}"
+
+# The work graphs that must be readable, and the account they must be readable
+# BY (wg-7bh).
+#
+# Declared rather than discovered, like monitor_services and
+# monitor_backup_streams: a check that reports on the graphs it can find treats
+# a vanished graph as nothing to say, and a vanished work graph is the worst
+# outcome in the set.
+#
+# monitor_graph_user is what makes the check mean anything. On 3 September the
+# graph files were present and intact and root-owned; the service user could not
+# open its own database, and every check performed as root would have called it
+# healthy. The readability test runs as this account.
+# Derived from beads_graphs rather than listed again. group_vars/control.yml is
+# already the one place every graph is declared -- beads_hq provisions them and
+# execution_registry registers them -- and a second list here would be a second
+# list to forget: adding a graph would silently leave it unchecked, which is the
+# state this whole check exists to end.
+monitor_graphs: >-
+  {{ (beads_graphs | default([]))
+     | map(attribute='name')
+     | map('regex_replace', '^(.*)$', '\\1=' ~ (beads_hq_root | default('/srv/graphs')) ~ '/\\1')
+     | join(',') }}
+monitor_graph_user: "{{ beads_hq_user | default('workgraph') }}"
