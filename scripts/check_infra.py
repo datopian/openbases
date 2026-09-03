@@ -378,6 +378,45 @@ def check_spend_limit_not_in_terraform() -> None:
         )
 
 
+def check_service_required_vars_are_not_env_lookups() -> None:
+    """A value a service needs to start must not come from the environment.
+
+    control_api_google_subject was `lookup('env', 'WG_GOOGLE_SUBJECT')`. Nothing
+    set it, so it resolved to the empty string, the unit templated with an empty
+    subject, and workgraph-workspace failed hourly on "no delegation subject"
+    for as long as nobody read the journal (wg-bil). The env lookup is what made
+    that silent: an absent variable and an absent value look identical, and
+    neither shows up in review.
+
+    Ansible has no way to distinguish "not set" from "set to empty" here, so the
+    guard is structural: these variables are literals in Git, where a missing one
+    is a diff. It deliberately does not check the *value* — that would just be
+    the address written twice.
+    """
+    path = ROOT / "infra" / "ansible" / "group_vars" / "all" / "secrets.yml"
+    if not path.exists():
+        problems.append(f"{path} is missing, so its variables cannot be checked")
+        return
+    text = path.read_text()
+    # Not every variable here: a genuine secret SHOULD come from the environment,
+    # which is the whole point of with_secrets.sh. Only the ones the file itself
+    # says are not secrets, and that a unit refuses to start without.
+    for name in ("control_api_google_subject", "control_api_google_topic"):
+        m = re.search(r"^%s:\s*(.+)$" % re.escape(name), text, re.M)
+        if not m:
+            problems.append(f"{name} is not set in {path.name}")
+            continue
+        value = m.group(1).strip()
+        if "lookup(" in value or "env" == value.strip("\"'{} "):
+            problems.append(
+                f"{name} reads from the environment; it is not a secret and a "
+                f"service will not start without it, so it belongs in Git as a "
+                f"literal where an absent value is visible in review"
+            )
+        if value.strip('"' + "'") == "":
+            problems.append(f"{name} is set to an empty value, which is how wg-bil happened")
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -389,6 +428,7 @@ def main() -> int:
         check_tfvars_hold_no_secrets,
         check_account_level_settings,
         check_spend_limit_not_in_terraform,
+        check_service_required_vars_are_not_env_lookups,
     ):
         check()
 
