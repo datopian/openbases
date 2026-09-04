@@ -129,9 +129,10 @@ def normalise(url):
 
 
 def add(cell, rig, url, prefix, dry_run):
-    """Create one rig, as the cell user."""
+    """Create one rig, as the cell user, from inside the town."""
     user = "wgcell_" + cell.replace("-", "_")
     home = os.path.join(CELLS_ROOT, cell)
+    town = os.path.join(home, "town")
     cmd = [
         "sudo", "-u", user,
         # HOME rather than sudo's own environment, because gt reads the town
@@ -146,10 +147,21 @@ def add(cell, rig, url, prefix, dry_run):
     print(f"creating {rig} from {url} (prefix {prefix})")
     # No timeout: a clone of a large repository legitimately takes minutes, and
     # a rig killed halfway leaves a directory `gt rig add` will then refuse.
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    # Measured: datopian/portaljs took 60.6s.
+    #
+    # cwd IS the town, and HOME is not enough. gt locates the workspace from the
+    # working directory and refuses with "not in a Gas Town workspace" from
+    # anywhere else, which is how the first ten rigs failed -- ansible runs a
+    # command from the remote user's home, not from the town.
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=town)
     if r.returncode != 0:
-        out = (r.stderr or r.stdout or "").strip()
-        print(f"FAILED to create {rig}: {out}", file=sys.stderr)
+        # The FIRST line only. gt follows its error with its whole usage text,
+        # forty lines of flags, and the ansible task that reports this printed
+        # all of it -- so the one line that said "not in a Gas Town workspace"
+        # arrived buried in a wall of `--sparse-checkout` documentation.
+        out = (r.stderr or r.stdout or "").strip().splitlines()
+        why = out[0] if out else f"exit status {r.returncode}"
+        print(f"FAILED to create {rig}: {why}", file=sys.stderr)
         return False
     return True
 
