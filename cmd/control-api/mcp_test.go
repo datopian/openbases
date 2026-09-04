@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -278,4 +280,94 @@ func readSource(t *testing.T, name string) string {
 		t.Fatalf("reading %s: %v", name, err)
 	}
 	return string(b)
+}
+
+// A request shaped like the one cloudflared delivers must reach the transport.
+//
+// THIS IS THE BUG THAT MADE THE CONNECTOR SHOW "no tools available", and it is
+// worth the length of this comment because the symptom pointed nowhere near the
+// cause.
+//
+// The OAuth flow completed, Claude connected, and every POST /mcp came back 403
+// with no identity in the log:
+//
+//	{"msg":"request","method":"POST","path":"/mcp","status":403,"bytes":60,
+//	 "subject":"-","user":"-"}
+//
+// Sixty bytes is exactly `Forbidden: invalid Host header
+// "work-staging.openbases.com"` plus a newline, which is the SDK's own DNS
+// rebinding protection. It fires when the SERVER's local address is loopback
+// and the Host header is not:
+//
+//	if util.IsLoopback(localAddr.String()) && !util.IsLoopback(req.Host)
+//
+// control-api binds 127.0.0.1:8080 by design — cloudflared is the only ingress,
+// and nothing else may reach it — and it serves a public hostname. So the
+// condition is permanently true here, and every request through the tunnel was
+// refused.
+//
+// The protection is aimed at a local MCP server on a developer's machine, where
+// a page can resolve a name to 127.0.0.1 and reach a server that trusts its own
+// loopback. That is not this: the only route in is the tunnel, and Access
+// authenticates before we see anything.
+//
+// The FIRST attempt to reproduce this passed, wrongly, because
+// httptest.NewRequest sets RemoteAddr and no LocalAddrContextKey — and the
+// check reads the LOCAL address. A test that cannot fail is worse than none, so
+// the local address is injected here explicitly.
+func TestARequestShapedLikeTheTunnelReachesTheTransport(t *testing.T) {
+	cfg := config.ControlAPI{Environment: config.EnvLocal, AppBaseURL: appBase}
+	h := routes(cfg, nil, &authn.StaticAuthenticator{Identity: authn.Identity{
+		Subject: "sub-1", Email: "a@b.c", UserID: "user-1",
+	}}, nil, quiet())
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":`+
+			`{"protocolVersion":"2025-06-18","capabilities":{},`+
+			`"clientInfo":{"name":"probe","version":"1"}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Host = "work-staging.openbases.com"
+	// What net/http puts there when the listener is bound to loopback, which is
+	// how this process runs in every environment.
+	req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey,
+		&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8080}))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code == http.StatusForbidden {
+		t.Fatalf("a tunnel-shaped request was refused: %d %s",
+			rr.Code, strings.TrimSpace(rr.Body.String()))
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, strings.TrimSpace(rr.Body.String()))
+	}
+	if !strings.Contains(rr.Body.String(), "protocolVersion") {
+		t.Errorf("initialize did not negotiate: %s", rr.Body.String())
+	}
+}
+
+// Disabling the SDK's loopback check must not disable OUR origin check, which
+// is the protection that actually applies to a tunnelled server.
+func TestOurOriginGuardStillRefusesAForeignOriginThroughTheTunnel(t *testing.T) {
+	cfg := config.ControlAPI{Environment: config.EnvLocal, AppBaseURL: appBase}
+	h := routes(cfg, nil, &authn.StaticAuthenticator{Identity: authn.Identity{
+		Subject: "sub-1", Email: "a@b.c", UserID: "user-1",
+	}}, nil, quiet())
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "https://evil.example")
+	req.Host = "work-staging.openbases.com"
+	req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey,
+		&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8080}))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("a foreign origin returned %d, want 403", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "origin_refused") {
+		t.Errorf("refused, but not by our guard: %s", rr.Body.String())
+	}
 }
