@@ -76,9 +76,21 @@ module "environment" {
   # support.anthropic.com now 301s to support.claude.com -- and a callback that
   # moves domain would fail exactly like this.
   #
-  # NARROW IT BACK once the Access log shows which URI a real registration
-  # asks for: Zero Trust -> Logs -> Access, the failed event names it. This is a
-  # widening bought with lack of visibility, not a preference.
+  # DECIDED on 4 September: this stays domain-scoped. It was written as a
+  # temporary widening to be narrowed once the Access log named the exact URI,
+  # and that is no longer the plan -- so the note is here rather than left as an
+  # instruction somebody follows later and breaks the connector with.
+  #
+  # Anthropic is mid-rename (support.anthropic.com 301s to support.claude.com),
+  # so the callback path is the part most likely to move; pinning it buys
+  # exactness in exchange for an outage nobody would attribute to this file.
+  # The security argument does not depend on the path -- PKCE S256 is required
+  # by the authorization server, the client is registered to these two domains
+  # and nowhere else, and any token resolves to a person who completed an
+  # interactive Access login and is enforced against their own policies.
+  #
+  # What is actually given up: if a code were intercepted at another path on
+  # claude.ai or claude.com, this list would not be what stopped it. PKCE would.
   access_oauth_allowed_redirect_uris = [
     "https://claude.ai/*",
     "https://claude.com/*",
