@@ -445,13 +445,19 @@
        | selectattr('item.name', 'equalto', item.item.name)
        | map(attribute='stat.exists') | first | default(false))
   register: rig_provisioning
-  # "0 created" is the steady state, and reporting it as a change would fail the
-  # idempotence check on every second run.
-  changed_when: "'0 created' not in rig_provisioning.stdout"
-  # A repository that cannot be cloned is reported by the script and must not
-  # stop the deploy: the other rigs are still created, and the dispatcher below
-  # still needs to start.
-  failed_when: false
+  # A change is a rig actually created, which means the summary line has to BE
+  # there. Testing only for the absence of "0 created" reported `changed` when
+  # the script never got that far -- which is exactly what happened on the first
+  # run, where Cloudflare's browser-integrity check refused urllib's default
+  # user agent and the deploy passed having provisioned nothing.
+  changed_when:
+    - "'created' in rig_provisioning.stdout"
+    - "'0 created' not in rig_provisioning.stdout"
+  # Exit 2 is "could not read the wanted list", so nothing was attempted and the
+  # deploy has silently done nothing: that fails. Exit 1 is "some rigs could not
+  # be created", which must NOT stop the deploy -- the others were created, and
+  # the dispatcher below still needs to start.
+  failed_when: rig_provisioning.rc == 2
 
 - name: Report any rig that could not be created
   ansible.builtin.debug:

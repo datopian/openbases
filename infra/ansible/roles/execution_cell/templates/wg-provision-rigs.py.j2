@@ -18,10 +18,20 @@ Run by the playbook, and by hand when a repository has just been attached:
     wg-provision-rigs oss            # create what is missing
     wg-provision-rigs oss --dry-run  # say what it would create
 
-Exit status is 0 when the cell has what it should, whether or not this run
-created anything. A rig that cannot be created is reported and the rest are
-still attempted: one unreachable repository must not leave eleven rigs
-unprovisioned.
+Exit status says which kind of failure it was, because the two need different
+responses and the playbook has to tell them apart:
+
+    0   the cell has what it should, whether or not this run created anything
+    1   some rigs could not be created; the others were
+    2   the wanted list could not be read, so NOTHING was attempted
+
+2 is the one that must fail a deploy. The first version of this returned 1 for
+both, and a run that could not reach the control plane reported `changed` while
+creating nothing -- a deploy that passes having done nothing is the failure mode
+this whole change exists to remove.
+
+A rig that cannot be created is reported and the rest are still attempted: one
+unreachable repository must not leave ten rigs unprovisioned.
 """
 
 import json
@@ -62,6 +72,13 @@ def wanted(cell, env):
         # service caller.
         "CF-Access-Client-Id": env["WG_ACCESS_CLIENT_ID"],
         "CF-Access-Client-Secret": env["WG_ACCESS_CLIENT_SECRET"],
+        # A named agent, because the default one is BANNED. Cloudflare's
+        # browser-integrity check answers `Python-urllib/3.11` with 403 and
+        # `error code: 1010` -- "banned based on your browser's signature" --
+        # before the request reaches Access or the control API at all. The same
+        # credential on the same URL from curl returned 200, which is what made
+        # this look like an authorization bug for a while.
+        "User-Agent": "wg-provision-rigs/1",
     })
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r).get("rigs") or []
@@ -153,7 +170,7 @@ def main():
         rigs = wanted(cell, credentials(cell))
     except (OSError, urllib.error.URLError, ValueError) as e:
         print(f"cannot read the wanted rigs for {cell}: {e}", file=sys.stderr)
-        return 1
+        return 2
 
     names, urls = existing(town)
     created, failed = 0, 0
