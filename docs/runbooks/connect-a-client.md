@@ -165,10 +165,25 @@ configurable — and a hosted client is refused at **registration**, before
 anybody sees a login page, unless its URI is in
 `access_oauth_allowed_redirect_uris`.
 
-`https://claude.ai/api/mcp/auth_callback` is configured for staging. If a
-hosted client still fails, read the URI the registration actually asked for
-from Zero Trust → Logs → Access → the failed authentication event, and replace
-it. Add the exact URI, or a path ending in `/*`; never a bare domain wildcard.
+Staging allows `https://claude.ai/*` and `https://claude.com/*`, domain-scoped
+rather than one exact path — and that is a retreat, worth knowing about.
+
+The exact path was tried first: `https://claude.ai/api/mcp/auth_callback`. It is
+a real endpoint (a bare `GET` answers 400, not 404) and it was applied, and a
+hosted client still could not connect. That rules out the value and leaves the
+registration *request*: a client submitting several `redirect_uris` is refused
+outright if any one of them is outside the list, and we cannot see what it
+sends without the Access log.
+
+**A localhost client is no use for a hosted client.** Cowork, claude.ai and the
+phones redirect to claude.ai; there is no port to pin and no `--callback-port`
+to set. Only Claude Code and Codex use loopback. Mixing those two up wastes an
+attempt and produces "invalid redirect url" in the browser, which reads like a
+server fault and is not one.
+
+**Narrow it back when you can.** Zero Trust → Logs → Access, the failed event
+names the URI a real registration asked for. Replacing the wildcards with that
+value is strictly better; the wildcards are bought with lack of visibility.
 
 You can check what the allow-list accepts without opening a browser. The
 registration endpoint answers honestly, and a refused registration creates
