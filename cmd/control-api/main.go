@@ -441,6 +441,46 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, map[string]any{"recorded": ok})
 	})
 
+	// A rig reports which repository it holds (wg-ugb).
+	//
+	// Reported by the node rather than configured centrally, because the node
+	// is where the truth is: a rig is a working tree and its git remote says
+	// what it is a checkout of. Two statements of one fact would drift, and the
+	// one that drifts is the one nobody looks at.
+	authed.HandleFunc("POST /v1/node/rigs", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		var payload struct {
+			Cell     string `json:"cell"`
+			Rig      string `json:"rig"`
+			Provider string `json:"provider"`
+			Owner    string `json:"owner"`
+			Name     string `json:"name"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&payload); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		var ok bool
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT system_register_rig($1,$2,$3,$4,$5)`,
+			payload.Cell, payload.Rig,
+			nullableParam(payload.Provider), nullableParam(payload.Owner),
+			nullableParam(payload.Name)).Scan(&ok); err != nil {
+			log.Error("registering a rig", "cell", payload.Cell, "rig", payload.Rig, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"registered": true})
+	})
+
 	// Project beads from a cell's graph into work_refs.
 	//
 	// work_refs has existed since 0001 as the projection of Beads into the
@@ -836,6 +876,43 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		}
 
 		var jobID string
+		// Route the dispatch to a rig that can actually do the work, or refuse
+		// it (wg-ugb).
+		//
+		// Three PortalJS beads were dispatched on 4 September and ran against
+		// datopian/workgraph-agent-sandbox, because this handler defaulted the
+		// cell to "oss" and passed the rig through unset, and the dispatcher
+		// then fell back to its own default rig. The agent looked for PortalJS
+		// source, correctly found none, and said so — after 48 model calls and
+		// about 78 cents.
+		//
+		// So: if the bead belongs to a project, the rig must hold one of that
+		// project's repositories. A refusal costs nothing; running somewhere
+		// disposable and reporting `done` cost money and looked like success.
+		if strings.TrimSpace(payload.Rig) == "" {
+			rig, why, err := rigForBead(r.Context(), db, bead, payload.Cell)
+			switch {
+			case err != nil:
+				log.Error("routing a dispatch", "bead", bead, "error", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+				return
+			case why != "":
+				// 409 rather than 400: the request is well formed and the
+				// registry cannot honour it yet. The message says what is
+				// missing, because "no rig" is fixed by registering a
+				// repository or provisioning a rig, and the person reading it
+				// needs to know which.
+				log.Info("dispatch refused for want of a rig", "bead", bead, "reason", why)
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": why,
+					"code":  "no_rig_for_project",
+				})
+				return
+			default:
+				payload.Rig = rig
+			}
+		}
+
 		if err := db.QueryRowContext(r.Context(),
 			`SELECT system_enqueue_work('work', $1, $2, $3, NULL, $4)`,
 			payload.Cell, payload.Rig, bead, id.UserID).Scan(&jobID); err != nil {

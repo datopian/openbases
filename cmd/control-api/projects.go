@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -265,4 +266,87 @@ func registerBeadDetail(authed *http.ServeMux, db *sql.DB, log *slog.Logger) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(doc)
 	})
+}
+
+// rigForBead picks a rig in the cell that holds one of the bead's project's
+// repositories (wg-ugb).
+//
+// Three answers, and the middle one is the point:
+//
+//	rig, "", nil   route here
+//	"",  why, nil  refuse, and `why` says what is missing
+//	"",  "",  nil   the bead has no project, so there is nothing to route on and
+//	                the dispatcher's default stands — company-wide work has no
+//	                repository to match, and refusing it would break the case
+//	                that worked before this existed.
+func rigForBead(ctx context.Context, db *sql.DB, bead, cell string) (rig, why string, err error) {
+	// Read outside authz.WithUser deliberately: this is the dispatch path's own
+	// routing decision, not a read on the caller's behalf, and the caller's
+	// permission to dispatch this bead has already been settled above. The
+	// function it calls is SECURITY DEFINER and joins only rig and repository
+	// names, which are not secrets.
+	rows, qerr := db.QueryContext(ctx,
+		`SELECT rig, repository FROM system_rigs_for_bead($1, $2)`, bead, cell)
+	if qerr != nil {
+		return "", "", qerr
+	}
+	defer rows.Close()
+
+	type candidate struct{ rig, repo string }
+	var found []candidate
+	for rows.Next() {
+		var c candidate
+		if scanErr := rows.Scan(&c.rig, &c.repo); scanErr != nil {
+			return "", "", scanErr
+		}
+		found = append(found, c)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return "", "", rerr
+	}
+
+	if len(found) == 1 {
+		return found[0].rig, "", nil
+	}
+	if len(found) > 1 {
+		// Several rigs could do it, so the choice is the caller's rather than
+		// ours. Picking one would be arbitrary and would hide the ambiguity
+		// until somebody wondered why their work ran in the wrong checkout.
+		names := make([]string, 0, len(found))
+		for _, c := range found {
+			names = append(names, c.rig+" ("+c.repo+")")
+		}
+		return "", "several rigs in this cell hold a repository for this bead's project, " +
+			"so name one: " + strings.Join(names, ", "), nil
+	}
+
+	// None matched. Distinguish the two reasons, because they have different
+	// fixes: a project with no registered repository needs one attaching, and a
+	// project whose repositories no rig holds needs a rig.
+	var project string
+	var repos int
+	if qerr := db.QueryRowContext(ctx, `
+		SELECT COALESCE(p.slug, ''),
+		       (SELECT count(*) FROM project_repositories r WHERE r.project_id = p.id)
+		  FROM work_refs w
+		  JOIN projects p ON p.id = w.project_id
+		 WHERE w.bead_id = $1
+		 LIMIT 1`, bead).Scan(&project, &repos); qerr != nil {
+		if errors.Is(qerr, sql.ErrNoRows) {
+			// No project: nothing to route on, and not an error. The
+			// dispatcher's default rig stands, which is what happened before
+			// this check existed.
+			return "", "", nil
+		}
+		return "", "", qerr
+	}
+
+	if repos == 0 {
+		return "", "the project " + project + " has no repository registered, so there is " +
+			"nowhere to run this bead. Attach one with POST /v1/projects/" + project +
+			"/repositories.", nil
+	}
+	return "", "no rig in cell " + cell + " holds a repository belonging to " + project +
+		". The work would otherwise run in a disposable sandbox and report success " +
+		"without doing anything.", nil
 }

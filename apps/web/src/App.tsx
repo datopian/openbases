@@ -3,7 +3,7 @@ import { Ask } from "./Ask";
 import { Inbox } from "./Inbox";
 import { Work } from "./Work";
 import { Device, deviceCodeFromHash } from "./Device";
-import { Bead, beadFromHash } from "./Bead";
+import { Bead, BeadLink, beadFromHash } from "./Bead";
 import { Platform } from "./Platform";
 import { CreateProject, ManageRepositories } from "./ProjectAdmin";
 import {
@@ -500,7 +500,7 @@ export function ProjectWork({
                   fontSize: "0.8rem",
                 }}
               >
-                {w.bead}
+                <BeadLink bead={w.bead} />
               </td>
               <td style={css.td}>
                 {w.title || <span style={css.muted}>untitled</span>}

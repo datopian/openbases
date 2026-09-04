@@ -108,6 +108,20 @@ type dispatcher struct {
 // freshly planned bead appeared in the interface only after the NEXT pass, which
 // reads as the planner having done nothing.
 func (d *dispatcher) pass(ctx context.Context) {
+	// What this rig holds, so the control plane can route a dispatch to a rig
+	// that can do the work or refuse it (wg-ugb).
+	//
+	// Reported by the node because the node is where the truth is: the rig is a
+	// working tree and its git remote says what it is a checkout of. Configuring
+	// it centrally as well would be two statements of one fact, and the one that
+	// drifts is always the one nobody looks at.
+	if err := d.registerRig(ctx); err != nil {
+		// Not fatal. A pass that cannot register still projects beads and still
+		// runs work; the cost is that dispatch cannot route until the next
+		// successful pass.
+		d.log.Warn("registering the rig", "rig", d.rig, "error", err)
+	}
+
 	if err := d.project(ctx); err != nil {
 		d.log.Error("projecting beads", "error", err)
 	}
@@ -563,4 +577,66 @@ func otherProjectLabel(labels []string, wanted string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// registerRig tells the control plane which repository this rig holds.
+func (d *dispatcher) registerRig(ctx context.Context) error {
+	owner, name := d.rigRepository(ctx)
+	body := map[string]any{"cell": d.cell, "rig": d.rig}
+	if owner != "" && name != "" {
+		body["provider"] = "github"
+		body["owner"] = owner
+		body["name"] = name
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	_, err = d.call(ctx, http.MethodPost, "/v1/node/rigs", bytes.NewReader(encoded))
+	return err
+}
+
+// rigRepository reads the rig's git remote, or returns empty when it has none.
+//
+// A rig legitimately may have none — the witness and the mayor are rigs with no
+// working tree — so "no remote" is reported as no repository rather than as an
+// error. What must not happen is guessing: a rig whose repository is unknown is
+// a rig dispatch will refuse to route to, which is the safe direction.
+func (d *dispatcher) rigRepository(ctx context.Context) (owner, name string) {
+	dir := d.cellRoot + "/town/" + d.rig
+	// The bare repository beside the working tree is where the remote lives on
+	// this layout; the working tree itself is a worktree of it.
+	for _, gitDir := range []string{dir + "/.repo.git", dir} {
+		cmd := exec.CommandContext(ctx, "git", "-C", gitDir, "remote", "get-url", "origin")
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		if o, n, ok := parseGitHubRemote(strings.TrimSpace(string(out))); ok {
+			return o, n
+		}
+	}
+	return "", ""
+}
+
+// parseGitHubRemote pulls owner and repository out of a git remote URL.
+//
+// Both forms, because a rig may be cloned either way and a remote that does not
+// parse must report NOTHING rather than a partial guess: an owner without a
+// name cannot be joined to project_repositories and would silently match no
+// project, which looks identical to a rig that holds nothing.
+func parseGitHubRemote(url string) (owner, name string, ok bool) {
+	u := strings.TrimSuffix(strings.TrimSpace(url), ".git")
+	for _, prefix := range []string{
+		"https://github.com/", "http://github.com/", "git@github.com:", "ssh://git@github.com/",
+	} {
+		if rest, found := strings.CutPrefix(u, prefix); found {
+			parts := strings.Split(strings.Trim(rest, "/"), "/")
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				return "", "", false
+			}
+			return parts[0], parts[1], true
+		}
+	}
+	return "", "", false
 }

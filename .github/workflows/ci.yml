@@ -330,6 +330,11 @@ jobs:
       - name: a bead's outcome tells done from ran-and-did-not-finish
         run: psql -v ON_ERROR_STOP=1 -f test/integration/bead_detail.sql
 
+      # A project's bead dispatched into a disposable sandbox produces a run
+      # that reports success without doing anything. It cost 78 cents to learn.
+      - name: a dispatch routes to a rig that holds the work, or refuses
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/dispatch_routing.sql
+
       # The cost importer, end to end against a stub gateway: paging, the
       # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
       # the real binary rather than SQL alone, because the decisions being

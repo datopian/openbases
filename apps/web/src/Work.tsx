@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type WorkItem, type QueueJob, type ProjectSummary } from "./api";
+import { BeadLink } from "./Bead";
 
 /**
  * Work: a brief goes in, beads come out, agents run them (WP-D2/E3, WP-F1).
@@ -315,7 +316,13 @@ export function Work() {
                     {j.id.slice(0, 8)}
                   </td>
                   <td style={css.td}>
-                    {j.kind === "plan" ? "planning" : `working ${j.bead}`}
+                    {j.kind === "plan" ? (
+                      "planning"
+                    ) : (
+                      <>
+                        working <BeadLink bead={j.bead} />
+                      </>
+                    )}
                   </td>
                   <td style={{ ...css.td, color: queueLabel(j.status).colour }}>
                     {queueLabel(j.status).text}
@@ -347,7 +354,11 @@ export function Work() {
                     {j.id.slice(0, 8)}
                   </td>
                   <td style={css.td}>
-                    {j.kind === "plan" ? "planning" : j.bead}
+                    {j.kind === "plan" ? (
+                      "planning"
+                    ) : (
+                      <BeadLink bead={j.bead} />
+                    )}
                   </td>
                   <td style={{ ...css.td, color: queueLabel(j.status).colour }}>
                     {queueLabel(j.status).text}
@@ -418,17 +429,7 @@ export function Work() {
                       list is read to scan; that page is read to understand one
                       thing. */}
                   <td style={{ ...css.td, ...css.mono, ...css.small }}>
-                    <a
-                      href={`#/work/${encodeURIComponent(i.bead)}`}
-                      style={{
-                        color: "#0b5cad",
-                        textDecoration: "none",
-                        fontWeight: 600,
-                      }}
-                      title="what happened to this bead"
-                    >
-                      {i.bead}
-                    </a>
+                    <BeadLink bead={i.bead} />
                   </td>
                   <td style={css.td}>
                     {i.title || <span style={css.muted}>untitled</span>}
