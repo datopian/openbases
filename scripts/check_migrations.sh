@@ -117,5 +117,11 @@ done
 
 python3 scripts/check_reserved_words.py || fail=1
 
+# A migration that REPLACES a function must drop the signature it creates, or
+# its second pass collides with its own first. 0078 did it, #199 fixed it and
+# explained why, and 0083 did it again -- so it is a check now rather than a
+# rule somebody knows.
+python3 scripts/check_function_signatures.py || fail=1
+
 if [ "$fail" -eq 0 ]; then echo "migration checks OK"; else echo "migration checks FAILED"; fi
 exit "$fail"
