@@ -36,8 +36,22 @@ ALTER TABLE work_refs ADD COLUMN IF NOT EXISTS last_comment_by text;
 --
 -- Both prior signatures dropped, the lesson from 0078: dropping only the older
 -- one leaves the newer as a second overload and the next call is ambiguous.
+-- ALL THREE signatures, including the one this migration is about to create.
+--
+-- 0078 shipped without dropping its own new signature and the deploy failed on
+-- its own previous run; #199 fixed that and wrote down why. This migration then
+-- made the identical mistake: it dropped the five- and six-argument forms and
+-- created a nine-argument one, so a second pass collided with
+--
+--     ERROR: function "system_project_bead" already exists with same argument
+--            types (SQLSTATE 42723)
+--
+-- scripts/check_migrations.sh now refuses a CREATE FUNCTION whose signature is
+-- not dropped in the same file, because knowing the rule was plainly not
+-- enough.
 DROP FUNCTION IF EXISTS system_project_bead(text, text, text, text, text);
 DROP FUNCTION IF EXISTS system_project_bead(text, text, text, text, text, text[]);
+DROP FUNCTION IF EXISTS system_project_bead(text, text, text, text, text, text[], text, timestamptz, text);
 
 CREATE FUNCTION system_project_bead(
     p_cell text, p_bead text, p_title text, p_kind text, p_status text,
