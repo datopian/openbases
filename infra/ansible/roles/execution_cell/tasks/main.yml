@@ -368,6 +368,13 @@
     group: root
     mode: "0755"
   when: dispatcher_local_binary | length > 0
+  # Without these, a new binary sits on disk while the old process keeps
+  # running: the task that restarts the dispatcher below is not tagged `code`,
+  # so a code-only deploy replaced the file and changed nothing. The witness
+  # install has notified its handler all along.
+  notify:
+    - Find the installed dispatcher units
+    - Restart the dispatchers
   tags: [binaries, code]
 
 - name: Install the dispatcher unit for each cell with a town
