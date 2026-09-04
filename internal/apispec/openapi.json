@@ -2529,6 +2529,65 @@
           }
         }
       }
+    },
+    "/v1/node/rigs/wanted": {
+      "get": {
+        "summary": "The rigs a cell should have, one per repository its projects hold",
+        "operationId": "get_v1_node_rigs_wanted",
+        "description": "Execution-node path (ADR-0019), service credential only. The playbook reads this and provisions what is missing with `gt rig add`, so a repository attached to a project gets a rig and work can be dispatched against it. Provisioning rather than polling: creating a rig clones a repository and seeds agent infrastructure, which is minutes and gigabytes, and belongs in a deploy rather than a fifteen-second dispatcher pass. The rig NAME is decided here rather than by the caller, because the node reports rigs by directory name and a rig named differently in two places is a rig dispatch cannot route to. `prefix` is stable per repository, not per set: a bead id is permanent, so a prefix that renumbers when another repository is attached would corrupt ids already issued.",
+        "parameters": [
+          {
+            "name": "cell",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The wanted rigs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No cell was given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

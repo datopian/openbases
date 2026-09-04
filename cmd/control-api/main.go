@@ -481,6 +481,68 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, map[string]any{"registered": true})
 	})
 
+	// Which rigs this cell should have, one per repository its projects hold.
+	//
+	// Read by the playbook, which provisions what is missing with `gt rig add`.
+	// Provisioning rather than polling: creating a rig clones a repository and
+	// seeds agent infrastructure, which is minutes of work and gigabytes of
+	// disk, and that belongs in a deploy somebody ran rather than in a
+	// fifteen-second dispatcher pass that would start cloning the moment a
+	// repository was attached from a phone.
+	authed.HandleFunc("GET /v1/node/rigs/wanted", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		cell := strings.TrimSpace(r.URL.Query().Get("cell"))
+		if cell == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "a cell is required"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+
+		type wanted struct {
+			Rig      string `json:"rig"`
+			Provider string `json:"provider"`
+			Owner    string `json:"owner"`
+			Name     string `json:"name"`
+			CloneURL string `json:"clone_url"`
+			Prefix   string `json:"prefix"`
+			Project  string `json:"project"`
+			Held     bool   `json:"held"`
+		}
+		out := []wanted{}
+		rows, err := db.QueryContext(r.Context(),
+			`SELECT rig, provider, owner, name, clone_url, prefix, project, held
+			   FROM system_rigs_wanted($1)`, cell)
+		if err != nil {
+			log.Error("listing wanted rigs", "cell", cell, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v wanted
+			if err := rows.Scan(&v.Rig, &v.Provider, &v.Owner, &v.Name,
+				&v.CloneURL, &v.Prefix, &v.Project, &v.Held); err != nil {
+				log.Error("reading a wanted rig", "cell", cell, "error", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+				return
+			}
+			out = append(out, v)
+		}
+		if err := rows.Err(); err != nil {
+			log.Error("listing wanted rigs", "cell", cell, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"cell": cell, "rigs": out})
+	})
+
 	// Project beads from a cell's graph into work_refs.
 	//
 	// work_refs has existed since 0001 as the projection of Beads into the

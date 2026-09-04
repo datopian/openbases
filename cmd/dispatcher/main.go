@@ -115,14 +115,23 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// working tree and its git remote says what it is a checkout of. Configuring
 	// it centrally as well would be two statements of one fact, and the one that
 	// drifts is always the one nobody looks at.
-	if err := d.registerRig(ctx); err != nil {
-		// Not fatal. A pass that cannot register still projects beads and still
-		// runs work; the cost is that dispatch cannot route until the next
-		// successful pass.
-		d.log.Warn("registering the rig", "rig", d.rig, "error", err)
+	//
+	// EVERY rig in the town, not just the one the dispatcher was configured
+	// with. A cell now gets a rig per repository its projects hold, and a rig
+	// that never registers is a rig dispatch refuses to route to: registering
+	// only the default meant eleven of the oss cell's twelve rigs were
+	// invisible to routing however correctly they were provisioned.
+	rigs := d.rigs()
+	for _, rig := range rigs {
+		if err := d.registerRig(ctx, rig); err != nil {
+			// Not fatal. A pass that cannot register still projects beads and
+			// still runs work; the cost is that dispatch cannot route to that
+			// rig until the next successful pass.
+			d.log.Warn("registering a rig", "rig", rig, "error", err)
+		}
 	}
 
-	if err := d.project(ctx); err != nil {
+	if err := d.project(ctx, rigs); err != nil {
 		d.log.Error("projecting beads", "error", err)
 	}
 
@@ -156,7 +165,12 @@ func (d *dispatcher) pass(ctx context.Context) {
 	//
 	// The prompt still asks, because a bead the agent labels itself is not
 	// wrong and costs nothing. Nothing depends on it.
-	before := d.beadIDs(ctx)
+	//
+	// The job's OWN rig: the run works in the rig that holds the repository the
+	// bead is about, and the beads it creates land in that rig's graph, not in
+	// the dispatcher's default one.
+	jobRig := d.rigFor(*job)
+	before := d.beadIDs(ctx, jobRig)
 
 	d.log.Info("running", "job", job.ID, "kind", job.Kind, "bead", job.Bead)
 	out, runErr := d.run(ctx, *job)
@@ -165,7 +179,7 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// then failed still produced beads, and an unattributed bead is invisible
 	// on the project page it belongs to.
 	if p := strings.TrimSpace(job.Project); p != "" {
-		d.labelNewBeads(ctx, before, p)
+		d.labelNewBeads(ctx, jobRig, before, p)
 	}
 
 	d.report(ctx, job.ID, work.Result{OK: runErr == nil, Output: out})
@@ -176,13 +190,20 @@ func (d *dispatcher) pass(ctx context.Context) {
 	}
 }
 
+// rigFor is the rig a job runs in: the one dispatch chose, or the default when
+// it named none. Routing chooses the rig by repository now (0084), so an empty
+// one means an older control plane or a job that needs no working tree.
+func (d *dispatcher) rigFor(job work.Job) string {
+	if r := strings.TrimSpace(job.Rig); r != "" {
+		return r
+	}
+	return d.rig
+}
+
 // run invokes wg-runner, which owns the working directory, the settings, the
 // deadline and the teardown. Nothing about how an agent is started belongs here.
 func (d *dispatcher) run(ctx context.Context, job work.Job) (string, error) {
-	rig := job.Rig
-	if rig == "" {
-		rig = d.rig
-	}
+	rig := d.rigFor(job)
 	// A plan job has no bead of its own, so it needs a name for its run
 	// directory and its cost attribution. The job id is the honest one: the
 	// spend belongs to the act of planning, not to any bead it produces.
@@ -259,12 +280,69 @@ var gatewayTokenPattern = regexp.MustCompile(`cf-aig-authorization:\s*Bearer\s+(
 // without a cell: readBeads shells out to bd against a real Dolt database,
 // while sendBeads is the part that has to get the endpoint right — and getting
 // the endpoint wrong is what actually happened.
-func (d *dispatcher) project(ctx context.Context) error {
-	beads, err := d.readBeads(ctx)
-	if err != nil {
+func (d *dispatcher) project(ctx context.Context, rigs []string) error {
+	// One list from every rig's graph, because a bead graph is per-rig: each
+	// rig has its own Dolt database and its own id prefix, and `bd list` in one
+	// rig cannot see another's. A cell with twelve rigs projecting only the
+	// first would show a twelfth of its work.
+	//
+	// Ids do not collide across rigs -- that is what the prefix is for -- so
+	// the lists concatenate.
+	var all []beadRow
+	var failed []string
+	for _, rig := range rigs {
+		beads, err := d.readBeads(ctx, rig)
+		if err != nil {
+			// Reported and skipped rather than fatal. A rig whose graph is
+			// mid-initialisation, or whose Dolt server is briefly down, must
+			// not take the other rigs' beads out of the interface with it.
+			d.log.Warn("reading a rig's beads", "rig", rig, "error", err)
+			failed = append(failed, rig)
+			continue
+		}
+		all = append(all, beads...)
+	}
+	if err := d.sendBeads(ctx, all); err != nil {
 		return err
 	}
-	return d.sendBeads(ctx, beads)
+	if len(failed) > 0 {
+		return fmt.Errorf("could not read %d of %d rigs: %s",
+			len(failed), len(rigs), strings.Join(failed, ", "))
+	}
+	return nil
+}
+
+// rigs lists the town's rigs, newest configuration first read from disk.
+//
+// The directory is the truth, deliberately: `gt rig add` creates the directory
+// and writes mayor/rigs.json, and a rig that exists on disk but is missing from
+// the registry file is exactly the half-created case that most needs to be
+// seen. A directory counts as a rig when it holds a config.json, which is what
+// gt writes and what the deacon, witness and logs directories beside it do not
+// have.
+//
+// The configured rig is always included, even if the town has no directory for
+// it, so a cell whose town has not been built yet behaves as it did before.
+func (d *dispatcher) rigs() []string {
+	found := []string{}
+	entries, err := os.ReadDir(d.cellRoot + "/town")
+	if err != nil {
+		d.log.Warn("reading the town", "error", err)
+		return []string{d.rig}
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(d.cellRoot + "/town/" + e.Name() + "/config.json"); err != nil {
+			continue
+		}
+		found = append(found, e.Name())
+	}
+	if !slices.Contains(found, d.rig) {
+		found = append(found, d.rig)
+	}
+	return found
 }
 
 // sendBeads projects a bead list upward. An empty list is not sent: it would be
@@ -307,9 +385,9 @@ type beadRow struct {
 }
 
 // readBeads asks bd for the cell's beads as JSON.
-func (d *dispatcher) readBeads(ctx context.Context) ([]beadRow, error) {
+func (d *dispatcher) readBeads(ctx context.Context, rig string) ([]beadRow, error) {
 	cmd := exec.CommandContext(ctx, "bd", "list", "--all", "--json")
-	cmd.Dir = d.cellRoot + "/town/" + d.rig
+	cmd.Dir = d.cellRoot + "/town/" + rig
 	cmd.Env = append(os.Environ(), "HOME="+d.cellRoot)
 	out, err := cmd.Output()
 	if err != nil {
@@ -368,7 +446,7 @@ func (d *dispatcher) readBeads(ctx context.Context) ([]beadRow, error) {
 		if rows[i].commentCount == 0 {
 			continue
 		}
-		text, at, by, err := d.lastComment(ctx, rows[i].Bead)
+		text, at, by, err := d.lastComment(ctx, rig, rows[i].Bead)
 		if err != nil {
 			// Not fatal. A bead whose comments cannot be read is still worth
 			// projecting with its status; losing the whole pass over one
@@ -383,9 +461,9 @@ func (d *dispatcher) readBeads(ctx context.Context) ([]beadRow, error) {
 }
 
 // lastComment returns the newest comment on one bead.
-func (d *dispatcher) lastComment(ctx context.Context, bead string) (text, at, by string, err error) {
+func (d *dispatcher) lastComment(ctx context.Context, rig, bead string) (text, at, by string, err error) {
 	cmd := exec.CommandContext(ctx, "bd", "show", bead, "--json")
-	cmd.Dir = d.cellRoot + "/town/" + d.rig
+	cmd.Dir = d.cellRoot + "/town/" + rig
 	cmd.Env = append(os.Environ(), "HOME="+d.cellRoot)
 	out, err := cmd.Output()
 	if err != nil {
@@ -513,11 +591,11 @@ func getenv(k, def string) string {
 // ran is at worst redundant, while missing one leaves it invisible. A wrong
 // label is refused upstream anyway: system_project_bead raises if a bead names
 // two projects.
-func (d *dispatcher) beadIDs(ctx context.Context) map[string]bool {
+func (d *dispatcher) beadIDs(ctx context.Context, rig string) map[string]bool {
 	out := map[string]bool{}
-	rows, err := d.readBeads(ctx)
+	rows, err := d.readBeads(ctx, rig)
 	if err != nil {
-		d.log.Warn("listing beads before a run", "error", err)
+		d.log.Warn("listing beads before a run", "rig", rig, "error", err)
 		return out
 	}
 	for _, r := range rows {
@@ -527,8 +605,8 @@ func (d *dispatcher) beadIDs(ctx context.Context) map[string]bool {
 }
 
 // labelNewBeads puts the job's project on every bead that appeared during it.
-func (d *dispatcher) labelNewBeads(ctx context.Context, before map[string]bool, project string) {
-	rows, err := d.readBeads(ctx)
+func (d *dispatcher) labelNewBeads(ctx context.Context, rig string, before map[string]bool, project string) {
+	rows, err := d.readBeads(ctx, rig)
 	if err != nil {
 		d.log.Error("listing beads after a run; new beads may be unattributed",
 			"project", project, "error", err)
@@ -555,7 +633,7 @@ func (d *dispatcher) labelNewBeads(ctx context.Context, before map[string]bool, 
 			continue
 		}
 		cmd := exec.CommandContext(ctx, "bd", "update", r.Bead, "--add-label", label)
-		cmd.Dir = d.cellRoot + "/town/" + d.rig
+		cmd.Dir = d.cellRoot + "/town/" + rig
 		cmd.Env = append(os.Environ(), "HOME="+d.cellRoot)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			d.log.Error("labelling a new bead", "bead", r.Bead, "label", label,
@@ -579,10 +657,10 @@ func otherProjectLabel(labels []string, wanted string) (string, bool) {
 	return "", false
 }
 
-// registerRig tells the control plane which repository this rig holds.
-func (d *dispatcher) registerRig(ctx context.Context) error {
-	owner, name := d.rigRepository(ctx)
-	body := map[string]any{"cell": d.cell, "rig": d.rig}
+// registerRig tells the control plane which repository one rig holds.
+func (d *dispatcher) registerRig(ctx context.Context, rig string) error {
+	owner, name := d.rigRepository(ctx, rig)
+	body := map[string]any{"cell": d.cell, "rig": rig}
 	if owner != "" && name != "" {
 		body["provider"] = "github"
 		body["owner"] = owner
@@ -602,8 +680,8 @@ func (d *dispatcher) registerRig(ctx context.Context) error {
 // working tree — so "no remote" is reported as no repository rather than as an
 // error. What must not happen is guessing: a rig whose repository is unknown is
 // a rig dispatch will refuse to route to, which is the safe direction.
-func (d *dispatcher) rigRepository(ctx context.Context) (owner, name string) {
-	dir := d.cellRoot + "/town/" + d.rig
+func (d *dispatcher) rigRepository(ctx context.Context, rig string) (owner, name string) {
+	dir := d.cellRoot + "/town/" + rig
 	// The bare repository beside the working tree is where the remote lives on
 	// this layout; the working tree itself is a worktree of it.
 	for _, gitDir := range []string{dir + "/.repo.git", dir} {

@@ -410,6 +410,58 @@
     label: "{{ item.name }}"
   register: cell_control_creds
 
+# One rig per repository the cell's projects hold (wg-ugb).
+#
+# 0084 made the node report which repository each rig holds and made dispatch
+# refuse when none held the work. This is the other half: the cell gets the rigs
+# its projects imply, so a dispatch against an attached repository has somewhere
+# to run. Before it, the oss cell had two rigs against twelve repositories.
+- name: Install the rig provisioner
+  ansible.builtin.template:
+    src: wg-provision-rigs.py.j2
+    dest: /usr/local/bin/wg-provision-rigs
+    owner: root
+    group: root
+    mode: "0755"
+    validate: "python3 -m py_compile %s"
+
+# In the playbook rather than in the dispatcher: creating a rig clones a
+# repository and seeds agent infrastructure, minutes of work and gigabytes of
+# disk, which belongs in a deploy somebody ran rather than in a fifteen-second
+# pass that would start cloning the moment a repository was attached from a
+# phone. Run by hand as `wg-provision-rigs <cell>` when that is too slow.
+#
+# Deliberately not tagged `code`: a code deploy ships binaries in forty seconds
+# and cloning twelve repositories does not belong inside that. It runs on a full
+# playbook run, which is where a several-minute task is expected.
+- name: Give each cell a rig per repository its projects hold
+  ansible.builtin.command: "/usr/local/bin/wg-provision-rigs {{ item.item.name }}"
+  loop: "{{ cell_towns.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.stat.exists
+    - (cell_control_creds.results
+       | selectattr('item.name', 'equalto', item.item.name)
+       | map(attribute='stat.exists') | first | default(false))
+  register: rig_provisioning
+  # "0 created" is the steady state, and reporting it as a change would fail the
+  # idempotence check on every second run.
+  changed_when: "'0 created' not in rig_provisioning.stdout"
+  # A repository that cannot be cloned is reported by the script and must not
+  # stop the deploy: the other rigs are still created, and the dispatcher below
+  # still needs to start.
+  failed_when: false
+
+- name: Report any rig that could not be created
+  ansible.builtin.debug:
+    msg: "{{ item.stderr_lines }}"
+  loop: "{{ rig_provisioning.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item.name | default('') }}"
+  when:
+    - item.stderr_lines | default([]) | length > 0
+
 # Started only when the cell actually has credentials for the control API. A
 # dispatcher without them restarts every fifteen seconds and fills the journal
 # with the same authentication error, which is how a real failure later gets

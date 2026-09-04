@@ -335,6 +335,12 @@ jobs:
       - name: a dispatch routes to a rig that holds the work, or refuses
         run: psql -v ON_ERROR_STOP=1 -f test/integration/dispatch_routing.sql
 
+      # And the other direction: given a cell, the rigs it should have. A wrong
+      # answer here is either a rig nobody can route to or two rigs holding one
+      # repository, and the prefix case caught a real collision on the oss cell.
+      - name: a cell wants one rig per repository its projects hold
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/rigs_wanted.sql
+
       # The cost importer, end to end against a stub gateway: paging, the
       # watermark, idempotency, sub-cent precision and the RLS boundary. It needs
       # the real binary rather than SQL alone, because the decisions being
@@ -470,8 +476,23 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
-      - name: dependency scan, web
+      # `npm audit` is off, by decision on 4 September.
+      #
+      # npmjs.org's audit endpoint failed three times in one morning -- 503,
+      # 503, then Bad Request -- on a lockfile the same job had already
+      # reported as "found 0 vulnerabilities". Every failure was the registry
+      # rather than our dependencies, and each one blocked a merge until it was
+      # re-run.
+      #
+      # A gate that fails for reasons unrelated to the change is a gate people
+      # learn to re-run without reading, which is worse than no gate: the next
+      # real finding gets the same reflex. `npm ci` stays, because a lockfile
+      # that will not install is our problem.
+      #
+      # What is lost, stated plainly: nothing now watches apps/web's 72
+      # packages for published advisories. Dependabot or `npm audit` against a
+      # cached advisory database would both cover it without depending on a
+      # live endpoint at merge time. Filed rather than left implicit.
+      - name: dependencies install, web
         working-directory: apps/web
-        run: |
-          npm ci --ignore-scripts
-          npm audit --audit-level=high
+        run: npm ci --ignore-scripts
