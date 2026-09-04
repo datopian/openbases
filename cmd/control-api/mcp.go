@@ -113,6 +113,37 @@ func registerMCP(mux *http.ServeMux, cfg config.ControlAPI, dispatch http.Handle
 		&sdk.StreamableHTTPOptions{
 			SessionTimeout: mcpSessionTTL,
 			Logger:         log,
+			// The SDK's own DNS-rebinding protection is off, and this is the
+			// line that made the connector work at all.
+			//
+			// It refuses a request when the SERVER's local address is loopback
+			// and the Host header is not:
+			//
+			//   if util.IsLoopback(localAddr.String()) && !util.IsLoopback(req.Host)
+			//
+			// control-api binds 127.0.0.1:8080 by design — cloudflared is the
+			// only ingress and nothing else may reach the process — and it
+			// serves a public hostname. So that condition is permanently true
+			// here and EVERY request through the tunnel was answered
+			//
+			//   403 Forbidden: invalid Host header "work-staging.openbases.com"
+			//
+			// which reached the client as "This connector has no tools
+			// available": the OAuth flow had succeeded, tools/list was refused,
+			// and nothing in the message pointed at a Host header.
+			//
+			// The protection is aimed at a local MCP server on a developer's
+			// machine, where a page can resolve a name to 127.0.0.1 and reach a
+			// server that trusts its own loopback. That threat does not exist
+			// here. The only route in is the tunnel, and Access authenticates
+			// every request before the origin sees it — so a page cannot make
+			// an authenticated request at all, whatever it resolves.
+			//
+			// What replaces it is not nothing: originGuard above enforces our
+			// own Origin allow-list, which is the check that applies to a
+			// tunnelled server, and a test asserts it still refuses a foreign
+			// origin with this disabled.
+			DisableLocalhostProtection: true,
 		},
 	)
 
