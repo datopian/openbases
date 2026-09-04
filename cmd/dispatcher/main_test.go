@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -137,4 +138,79 @@ func TestGatewayTokenComesFromTheCellSettings(t *testing.T) {
 	if _, err := d.gatewayToken(); err == nil {
 		t.Error("missing settings must refuse the run")
 	}
+}
+
+// The town's rigs are read from disk, and the things beside them are not rigs.
+//
+// This is the bug the rig-per-repository change would otherwise have shipped:
+// a town holds logs, events, settings and plugins directories next to its
+// rigs, and treating those as rigs means four `bd list` failures every fifteen
+// seconds and four bogus registrations that dispatch could route work to.
+func TestOnlyDirectoriesWithAConfigCountAsRigs(t *testing.T) {
+	root := t.TempDir()
+	town := filepath.Join(root, "town")
+	for _, rig := range []string{"sandbox", "portaljs", "autoclaw"} {
+		if err := os.MkdirAll(filepath.Join(town, rig), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(town, rig, "config.json"),
+			[]byte(`{"type":"rig"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Everything a real town has beside its rigs, none of which has a
+	// config.json: this is what distinguishes them.
+	for _, other := range []string{"logs", "events", "settings", "plugins", "deacon"} {
+		if err := os.MkdirAll(filepath.Join(town, other), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(town, "rigs.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &dispatcher{cellRoot: root, rig: "sandbox", log: quietLog()}
+	got := d.rigs()
+	slices.Sort(got)
+	want := []string{"autoclaw", "portaljs", "sandbox"}
+	if !slices.Equal(got, want) {
+		t.Errorf("rigs() = %v, want %v", got, want)
+	}
+}
+
+// A town that is not there yet still yields the configured rig.
+//
+// A cell whose town has not been built reported one rig before this change and
+// must keep reporting one: returning nothing would make the dispatcher project
+// no beads and register nothing, which reads as a healthy empty cell.
+func TestATownlessCellStillReportsItsConfiguredRig(t *testing.T) {
+	d := &dispatcher{cellRoot: t.TempDir(), rig: "sandbox", log: quietLog()}
+	if got := d.rigs(); !slices.Equal(got, []string{"sandbox"}) {
+		t.Errorf("rigs() = %v, want [sandbox]", got)
+	}
+}
+
+// The configured rig is included even when the town has no directory for it,
+// for the same reason: it is the rig the unit was told to serve.
+func TestTheConfiguredRigIsAlwaysIncluded(t *testing.T) {
+	root := t.TempDir()
+	town := filepath.Join(root, "town")
+	if err := os.MkdirAll(filepath.Join(town, "portaljs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(town, "portaljs", "config.json"),
+		[]byte(`{"type":"rig"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &dispatcher{cellRoot: root, rig: "sandbox", log: quietLog()}
+	got := d.rigs()
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"portaljs", "sandbox"}) {
+		t.Errorf("rigs() = %v, want [portaljs sandbox]", got)
+	}
+}
+
+func quietLog() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

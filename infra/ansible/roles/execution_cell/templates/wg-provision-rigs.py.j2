@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Give a cell one rig per repository its projects hold.
+
+Dispatch routes work to a rig that holds the repository the work is about
+(0084), and refuses when none does. Before this existed, the oss cell had two
+rigs built by hand -- `sandbox` and `autoclaw` -- while its projects held twelve
+repositories, so ten of them could be planned against and none could be worked
+on. A dispatch against datopian/portaljs refused with "no rig on this cell holds
+it", which is the correct refusal and a useless answer.
+
+The registry decides what rigs a cell should have; this asks it and creates
+what is missing. It does not decide anything itself, and in particular it does
+not invent names or prefixes -- the node reports rigs by directory name, so a
+name chosen here and a name chosen there is a rig dispatch cannot route to.
+
+Run by the playbook, and by hand when a repository has just been attached:
+
+    wg-provision-rigs oss            # create what is missing
+    wg-provision-rigs oss --dry-run  # say what it would create
+
+Exit status is 0 when the cell has what it should, whether or not this run
+created anything. A rig that cannot be created is reported and the rest are
+still attempted: one unreachable repository must not leave eleven rigs
+unprovisioned.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+CELLS_ROOT = "{{ cells_root }}"
+GT = "/usr/local/bin/gt"
+
+
+def credentials(cell):
+    """Read the cell's control-plane credentials, as the dispatcher does."""
+    path = os.path.join(CELLS_ROOT, cell, ".credentials", "control-api.env")
+    env = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip().strip('"')
+    missing = [k for k in ("WG_CONTROL_API", "WG_ACCESS_CLIENT_ID",
+                           "WG_ACCESS_CLIENT_SECRET") if not env.get(k)]
+    if missing:
+        raise SystemExit(f"{path} is missing {', '.join(missing)}")
+    return env
+
+
+def wanted(cell, env):
+    """Ask the control plane which rigs this cell should have."""
+    url = f"{env['WG_CONTROL_API'].rstrip('/')}/v1/node/rigs/wanted?cell={cell}"
+    req = urllib.request.Request(url, headers={
+        # The same service credential the dispatcher uses. Access authenticates
+        # it at the edge; the endpoint then refuses anything that is not a
+        # service caller.
+        "CF-Access-Client-Id": env["WG_ACCESS_CLIENT_ID"],
+        "CF-Access-Client-Secret": env["WG_ACCESS_CLIENT_SECRET"],
+    })
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r).get("rigs") or []
+
+
+def existing(town):
+    """What the town already has, by rig name and by repository URL.
+
+    Both, because either alone provisions twice. Names drift: `autoclaw` holds
+    autoclaw.sh, whose derived name is `autoclaw_sh`, so matching on the name
+    would clone the same repository into a second rig -- two bead graphs and two
+    branch namespaces for one repository, with dispatch routing to whichever the
+    query returned first. And a rig that exists under the right name may not
+    have registered its repository yet, so matching only on URL would create a
+    directory that is already there.
+    """
+    names, urls = set(), set()
+    path = os.path.join(town, "rigs.json")
+    try:
+        with open(path) as f:
+            registry = json.load(f)
+    except FileNotFoundError:
+        registry = {}
+    for name, rig in (registry.get("rigs") or {}).items():
+        names.add(name)
+        if rig.get("git_url"):
+            urls.add(normalise(rig["git_url"]))
+    # The directory is the other half of the answer: `gt rig add` fails on an
+    # existing directory, and a half-created rig is exactly the case where
+    # rigs.json has no entry.
+    for entry in sorted(os.listdir(town)) if os.path.isdir(town) else []:
+        if os.path.isfile(os.path.join(town, entry, "config.json")):
+            names.add(entry)
+    return names, urls
+
+
+def normalise(url):
+    """Compare repository URLs by what they point at, not how they spell it."""
+    u = url.strip().rstrip("/")
+    for suffix in (".git",):
+        if u.endswith(suffix):
+            u = u[: -len(suffix)]
+    for prefix in ("https://", "http://", "ssh://git@", "git@"):
+        if u.startswith(prefix):
+            u = u[len(prefix):]
+            break
+    return u.replace(":", "/").lower()
+
+
+def add(cell, rig, url, prefix, dry_run):
+    """Create one rig, as the cell user."""
+    user = "wgcell_" + cell.replace("-", "_")
+    home = os.path.join(CELLS_ROOT, cell)
+    cmd = [
+        "sudo", "-u", user,
+        # HOME rather than sudo's own environment, because gt reads the town
+        # from it and a run without it wrote a root-owned Dolt manifest into
+        # the graph twice before (wg-p4h).
+        "env", f"HOME={home}", "PATH=/usr/local/bin:/usr/bin:/bin",
+        GT, "rig", "add", rig, url, "--prefix", prefix,
+    ]
+    if dry_run:
+        print(f"would create {rig} from {url} (prefix {prefix})")
+        return True
+    print(f"creating {rig} from {url} (prefix {prefix})")
+    # No timeout: a clone of a large repository legitimately takes minutes, and
+    # a rig killed halfway leaves a directory `gt rig add` will then refuse.
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        out = (r.stderr or r.stdout or "").strip()
+        print(f"FAILED to create {rig}: {out}", file=sys.stderr)
+        return False
+    return True
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    dry_run = "--dry-run" in sys.argv[1:]
+    if len(args) != 1:
+        raise SystemExit("usage: wg-provision-rigs <cell> [--dry-run]")
+    cell = args[0]
+
+    town = os.path.join(CELLS_ROOT, cell, "town")
+    if not os.path.isdir(town):
+        print(f"{cell} has no town; nothing to provision")
+        return 0
+
+    try:
+        rigs = wanted(cell, credentials(cell))
+    except (OSError, urllib.error.URLError, ValueError) as e:
+        print(f"cannot read the wanted rigs for {cell}: {e}", file=sys.stderr)
+        return 1
+
+    names, urls = existing(town)
+    created, failed = 0, 0
+    for r in rigs:
+        rig, url = r.get("rig", ""), r.get("clone_url", "")
+        if not rig or not url:
+            continue
+        if rig in names or normalise(url) in urls:
+            continue
+        if add(cell, rig, url, r.get("prefix", ""), dry_run):
+            created += 1
+            names.add(rig)
+            urls.add(normalise(url))
+        else:
+            failed += 1
+
+    # The word the playbook greps for, so a run that created nothing reports no
+    # change and the idempotence check passes.
+    print(f"{cell}: {len(rigs)} wanted, {created} created, {failed} failed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
