@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A migration that REPLACES a function must drop the signature it creates.
+"""A migration must be able to run twice: functions and policies.
 
 The mistake this catches, twice made:
 
@@ -99,8 +99,60 @@ def types_of(args: str, named: bool) -> str:
     return ",".join(types)
 
 
+# The migration number from which the POLICY rule applies.
+#
+# It is a floor rather than "every file", because every file finds 64 unguarded
+# CREATE POLICY statements across eleven migrations from 0008 to 0070 -- all of
+# them the FIRST creation of a policy on a new table, all applied and recorded
+# everywhere, and all unfixable: cmd/migrate refuses to run when an applied
+# migration's checksum changes. Demanding edits to them would be demanding a
+# broken deploy.
+#
+# They are also not the risk. A recorded migration never runs again. The risk is
+# a NEW migration whose DDL reaches a database out of band -- which is how 0078,
+# 0083 and 0084 all failed within a day -- and every new migration is above this
+# floor by definition.
+#
+# Raise it only if a future cleanup makes an earlier range compliant; never
+# lower it to silence a new file.
+POLICY_RULE_FROM = 84
+
+# CREATE POLICY has the same failure and no signature to compare: a policy name
+# is unique per table, so the rule is simply that it must be dropped first.
+#
+# 0084 shipped an unguarded CREATE POLICY and the deploy failed with
+#
+#     ERROR: policy "execution_rigs_read" for table "execution_rigs" already
+#            exists (SQLSTATE 42710)
+#
+# which is the third time in one day that a migration tripped over its own
+# previous run. The function rule below was written after the second.
 for path in sorted(MIGRATIONS.glob("*.sql")):
     sql = path.read_text()
+    number = int(path.name[:4]) if path.name[:4].isdigit() else 0
+    for m in re.finditer(r"(?is)CREATE\s+POLICY\s+(\w+)\s+ON\s+(\w+)", sql):
+        if number < POLICY_RULE_FROM:
+            continue
+        policy, table = m.group(1).lower(), m.group(2).lower()
+        pattern = (
+            r"(?is)DROP\s+POLICY\s+IF\s+EXISTS\s+"
+            + re.escape(policy) + r"\s+ON\s+" + re.escape(table)
+        )
+        if re.search(pattern, sql):
+            continue
+        # A policy created inside a DO block that drops by name dynamically --
+        # 0023 does this in a loop -- is not visible to a regex, so a file that
+        # mentions DROP POLICY IF EXISTS at all is trusted to have thought
+        # about it.
+        if re.search(r"(?is)DROP\s+POLICY\s+IF\s+EXISTS", sql):
+            continue
+        if path.name in FROZEN:
+            continue
+        problems.append(
+            f"{path.name}: creates policy {policy} on {table} without dropping it first.\n"
+            f"      Add: DROP POLICY IF EXISTS {policy} ON {table};\n"
+            f"      Without it a second pass fails with SQLSTATE 42710 (0084)."
+        )
 
     dropped: dict[str, set[str]] = {}
     for m in re.finditer(r"(?is)DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?(\w+)\s*\(", sql):
@@ -134,4 +186,5 @@ if problems:
     sys.exit(1)
 for name, why in sorted(FROZEN.items()):
     print(f"  frozen: {name} — {why}")
+print(f"policies created from {POLICY_RULE_FROM:04d} onward are dropped first")
 print(f"function replacements drop the signature they create ({len(list(MIGRATIONS.glob('*.sql')))} file(s))")

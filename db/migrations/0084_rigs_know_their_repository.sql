@@ -60,6 +60,7 @@ ALTER TABLE execution_rigs FORCE ROW LEVEL SECURITY;
 -- Readable by any authenticated caller, like execution_cells: a rig name and a
 -- public repository name are not secrets, and the dispatch path needs to read
 -- them to explain a refusal. Written only through the function below.
+DROP POLICY IF EXISTS execution_rigs_read ON execution_rigs;
 CREATE POLICY execution_rigs_read ON execution_rigs FOR SELECT
     USING (current_app_user() IS NOT NULL);
 
