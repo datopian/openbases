@@ -58,9 +58,15 @@ BEGIN
                         execution_cell_id)
   VALUES (org, 'attr-two', 'Attribution Two', u, got, cell) RETURNING id INTO two;
 
-  -- A project: label attributes the bead, even though the cell cannot.
+  -- The CANONICAL label attributes the bead, even though the cell cannot.
+  --
+  -- wg-project-<slug>, which is what internal/work's planning prompt tells the
+  -- agent to write and what internal/publish already writes. 0078 read
+  -- `project:<slug>` instead, a spelling it invented, so the producer and the
+  -- consumer disagreed and a real plan job's beads came out unattributable
+  -- (0082).
   PERFORM system_project_bead('attr-shared', 'attr-1', 'Labelled', 'task', 'open',
-                              ARRAY['kind:task', 'project:attr-two']);
+                              ARRAY['kind:task', 'wg-project-attr-two']);
   SELECT project_id INTO got FROM work_refs WHERE bead_id = 'attr-1';
   IF got IS DISTINCT FROM two THEN
     RAISE EXCEPTION 'a project: label did not attribute the bead (got %, wanted %)', got, two;
@@ -76,11 +82,22 @@ BEGIN
     RAISE EXCEPTION 'an unlabelled bead in a two-project cell was attributed to % anyway', got;
   END IF;
 
+  -- The older spelling still attributes, for one migration's worth of overlap:
+  -- sixteen beads were hand-labelled `project:<slug>` while that was believed
+  -- to be the convention, and orphaning them would be the very failure being
+  -- fixed.
+  PERFORM system_project_bead('attr-shared', 'attr-1b', 'Older spelling', 'task', 'open',
+                              ARRAY['project:attr-two']);
+  SELECT project_id INTO got FROM work_refs WHERE bead_id = 'attr-1b';
+  IF got IS DISTINCT FROM two THEN
+    RAISE EXCEPTION 'the older project: spelling stopped attributing (got %)', got;
+  END IF;
+
   -- A label naming no project is a typo, and must be loud. Recording the bead
   -- with no project would hide it in exactly the way this bead exists to fix.
   BEGIN
     PERFORM system_project_bead('attr-shared', 'attr-3', 'Typo', 'task', 'open',
-                                ARRAY['project:attr-nonexistent']);
+                                ARRAY['wg-project-attr-nonexistent']);
     RAISE EXCEPTION 'a label naming a project that does not exist was accepted';
   EXCEPTION WHEN others THEN
     IF position('no project has that slug' IN SQLERRM) = 0 THEN RAISE; END IF;
@@ -90,11 +107,29 @@ BEGIN
   -- express. Refused rather than resolved by picking one.
   BEGIN
     PERFORM system_project_bead('attr-shared', 'attr-4', 'Both', 'task', 'open',
-                                ARRAY['project:attr-one', 'project:attr-two']);
-    RAISE EXCEPTION 'a bead carrying two project: labels was accepted';
+                                ARRAY['wg-project-attr-one', 'wg-project-attr-two']);
+    RAISE EXCEPTION 'a bead carrying two project labels was accepted';
   EXCEPTION WHEN others THEN
     IF position('belongs to one project' IN SQLERRM) = 0 THEN RAISE; END IF;
   END;
+
+  -- And ACROSS the two spellings, which is the case a per-spelling check would
+  -- miss: one of each is still a bead in two projects.
+  BEGIN
+    PERFORM system_project_bead('attr-shared', 'attr-4b', 'Both spellings', 'task', 'open',
+                                ARRAY['wg-project-attr-one', 'project:attr-two']);
+    RAISE EXCEPTION 'a bead naming one project per spelling was accepted';
+  EXCEPTION WHEN others THEN
+    IF position('belongs to one project' IN SQLERRM) = 0 THEN RAISE; END IF;
+  END;
+
+  -- The same project in both spellings is ONE project, not two.
+  PERFORM system_project_bead('attr-shared', 'attr-4c', 'Same twice', 'task', 'open',
+                              ARRAY['wg-project-attr-two', 'project:attr-two']);
+  SELECT project_id INTO got FROM work_refs WHERE bead_id = 'attr-4c';
+  IF got IS DISTINCT FROM two THEN
+    RAISE EXCEPTION 'one project written both ways was not treated as one (got %)', got;
+  END IF;
 
   -- The cell fallback still works where the cell can answer. Most cells are
   -- one-to-one with a project, and removing this would silently unattribute

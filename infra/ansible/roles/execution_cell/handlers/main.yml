@@ -22,3 +22,46 @@
   loop_control:
     label: "{{ item.name }}"
   tags: [always]
+
+# A new dispatcher binary must actually replace the running process.
+#
+# "Enable the dispatcher for each cell with a town" already restarts it, and
+# that task is NOT tagged `code` -- so `--tags code`, which is the deploy people
+# use for a code change (wg-ufp), installed a new binary and left the old
+# process running. On 4 September that hid a fix for two deploys: the binary was
+# on disk at 07:37 while the process had been up since 2 September, so beads
+# kept being projected without their labels and a plan job's output stayed
+# unattributable.
+#
+# A handler, notified by the binary install, because handlers carry
+# tags: [always] and therefore fire under any tag selection. The witness has had
+# one all along, which is why the same mistake was never possible there.
+#
+# SELF-CONTAINED on purpose: it stats the unit files itself rather than reading
+# a fact registered by a task in the main play. Under a tag selection that task
+# may not have run, and a handler that references an undefined variable fails
+# the run at the worst possible moment -- after the binary has been replaced.
+# Handlers run in the order they are DEFINED, so the stat below is available to
+# the restart that follows it.
+- name: Find the installed dispatcher units
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/wg-dispatcher-{{ item.name }}.service"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: dispatcher_units
+  when: dispatcher_local_binary | length > 0
+  tags: [always]
+
+- name: Restart the dispatchers
+  ansible.builtin.systemd_service:
+    name: "wg-dispatcher-{{ item.item.name }}.service"
+    state: restarted
+    daemon_reload: true
+  # A cell with no town has no dispatcher unit, and restarting a unit that does
+  # not exist fails the run.
+  when: item.stat is defined and item.stat.exists
+  loop: "{{ dispatcher_units.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name | default('?') }}"
+  tags: [always]
