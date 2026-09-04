@@ -123,6 +123,14 @@ the laptop and the phone cannot be served different tools.
 Putting them in Postgres would make a transport detail durable, and the thing
 worth keeping across a restart — who the person is — lives in the token.
 
+**Clients must be told to use DCR rather than hosted client metadata.** Access
+advertises a `registration_endpoint` and no CIMD support, so a client that
+identifies itself with a Client ID Metadata Document — which is Claude's
+*recommended* setting — fails after a successful login, with an error that
+reads like a credentials problem and is not one. The runbook says which option
+to pick and shows the metadata that settles it. This is the one piece of
+per-client configuration the design does not remove.
+
 **Dynamic client registration is enabled on Access's side**, for localhost and
 loopback redirects. That is Cloudflare's registration endpoint, not ours;
 nothing about it reaches the origin. It is what lets a command-line client with

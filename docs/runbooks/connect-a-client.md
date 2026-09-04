@@ -91,6 +91,50 @@ chosen for.
 
 ## When it does not work
 
+### "Authorization with Workgraph failed" after the login succeeded
+
+You completed the Google login and the client then refused. The login working
+means Access is configured; what failed is how the client identified ITSELF.
+
+**Set the connector's OAuth client mode to DCR, not the recommended one.**
+
+Claude offers three:
+
+| Option | Works here |
+|---|---|
+| *Use Anthropic's hosted client metadata (CIMD)* — marked **Recommended** | **No.** Access does not support it. |
+| *No client ID — register one automatically (DCR)* — marked *Detected* | **Yes.** Use this. |
+| *Use your own OAuth client* | Works, if you registered one yourself. |
+
+The recommended option is the one that cannot work, which is why this is worth
+writing down. CIMD has the client present its `client_id` as a URL that the
+authorization server fetches to learn about it. Access does not advertise
+support, and its metadata is the whole list of what it does:
+
+```bash
+curl -sS https://datopian.cloudflareaccess.com/.well-known/oauth-authorization-server | python3 -m json.tool
+```
+
+```
+authorization_endpoint, token_endpoint, registration_endpoint,
+revocation_endpoint, grant_types_supported [authorization_code, refresh_token],
+code_challenge_methods_supported [S256], response_types_supported [code],
+token_endpoint_auth_methods_supported [client_secret_basic, client_secret_post, none]
+```
+
+No `client_id_metadata_document_supported`, and no CIMD field of any kind. The
+`registration_endpoint` is there, so **DCR is the path Access offers** — which
+is what "Detected" beside that option is telling you.
+
+The other two settings are already right and need no change: **Authentication →
+Always required**, and **Transport → Streamable HTTP**.
+
+If DCR still fails, the reference the client shows you (`ofid_…`) is
+Anthropic's, not ours, and means nothing on this side. Read our half from Zero
+Trust → Logs → Access, filtered to the Workgraph application: the failed event
+names the `redirect_uri` and the client that asked. The deploy token cannot read
+those logs, so this is a dashboard step.
+
 ### The client says it cannot authenticate, or shows a raw 302
 
 Managed OAuth is probably not enabled on the Access application. Check what an
