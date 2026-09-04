@@ -11,7 +11,7 @@
  * cost. In that order because it is the order somebody asks: did it work, why
  * not, and what did I pay to find out.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { age, api, asList, type BeadDetail } from "./api";
 
 const css = {
@@ -283,4 +283,40 @@ export function beadFromHash(): string | null {
   const m = /^#\/work\/(.+)$/.exec(window.location.hash);
   const raw = m?.[1];
   return raw ? decodeURIComponent(raw) : null;
+}
+
+/**
+ * A bead id, as a link to what happened to it.
+ *
+ * One component because the first version of this linked ONE of the four
+ * places a bead id is rendered — the work list — and left the queue rows and
+ * the project page's work list as plain text. Which meant "click the bead"
+ * worked or did not depending on which table you happened to be looking at,
+ * and reported as the feature not existing.
+ */
+export function BeadLink({
+  bead,
+  style,
+}: {
+  // Optional, because a plan job has no bead of its own and the queue tables
+  // render the same cell for both kinds. Absent renders nothing rather than an
+  // empty link, which would be a clickable gap.
+  bead?: string | null;
+  style?: CSSProperties;
+}) {
+  if (!bead) return null;
+  return (
+    <a
+      href={`#/work/${encodeURIComponent(bead)}`}
+      style={{
+        color: "#0b5cad",
+        textDecoration: "none",
+        fontWeight: 600,
+        ...style,
+      }}
+      title="what happened to this bead"
+    >
+      {bead}
+    </a>
+  );
 }

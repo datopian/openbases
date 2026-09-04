@@ -70,7 +70,11 @@ var routeActions = map[string]routeAction{
 	// One bead's outcome, the agent's own words and its spend (wg-m07).
 	// ProjectRead: system_bead_detail refuses a bead in a project the caller
 	// cannot see, exactly as the work list does.
-	"GET /v1/work/{bead}":                                    {Action: authz.ProjectRead},
+	"GET /v1/work/{bead}": {Action: authz.ProjectRead},
+
+	// The node reporting what its rigs hold (wg-ugb). A service credential,
+	// like the other /v1/node paths, and the handler refuses a human caller.
+	"POST /v1/node/rigs":                                     {Action: authz.AgentInspect},
 	"GET /v1/projects/{slug}/repositories":                   {Action: authz.ProjectRead},
 	"POST /v1/projects/{slug}/repositories":                  {Action: authz.ProjectManage},
 	"DELETE /v1/projects/{slug}/repositories/{owner}/{name}": {Action: authz.ProjectManage},
