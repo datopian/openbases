@@ -279,7 +279,61 @@ func registerBeadDetail(authed *http.ServeMux, db *sql.DB, log *slog.Logger) {
 //	                the dispatcher's default stands — company-wide work has no
 //	                repository to match, and refusing it would break the case
 //	                that worked before this existed.
-func rigForBead(ctx context.Context, db *sql.DB, bead, cell string) (rig, why string, err error) {
+//
+// candidate is one rig that could run a bead, and the repository that makes it
+// able to.
+type candidate struct{ rig, repo string }
+
+// chooseRig decides between the rigs that can run a bead.
+//
+// Separated from the query so it can be tested without a database: it holds the
+// branch that decides whether a caller-named rig is honoured, which is the one
+// place where naming a rig could become a way past the check rather than a
+// choice within it. `decided` is false only when nothing matched, which leaves
+// the caller to explain WHY nothing matched -- a question that needs the
+// database again.
+func chooseRig(found []candidate, wanted string) (rig, why string, decided bool) {
+	names := func() string {
+		out := make([]string, 0, len(found))
+		for _, c := range found {
+			out = append(out, c.rig+" ("+c.repo+")")
+		}
+		return strings.Join(out, ", ")
+	}
+
+	// A named rig has to be one of them. This is the case the PortalJS project
+	// reaches every time: it holds datopian/portaljs AND
+	// datopian/cloud.portaljs.com, so two rigs can do the work and the caller
+	// must say which -- but saying `sandbox` is not an answer to that question.
+	// The first version of the handler skipped the whole check when a rig was
+	// named, which reproduced exactly the failure the check exists to prevent.
+	if w := strings.TrimSpace(wanted); w != "" && len(found) > 0 {
+		for _, c := range found {
+			if c.rig == w {
+				return c.rig, "", true
+			}
+		}
+		return "", "no rig called " + w + " in this cell holds a repository for this " +
+			"bead's project; the ones that do are: " + names(), true
+	}
+
+	if len(found) == 1 {
+		return found[0].rig, "", true
+	}
+	if len(found) > 1 {
+		// Several rigs could do it, so the choice is the caller's rather than
+		// ours. Picking one would be arbitrary and would hide the ambiguity
+		// until somebody wondered why their work ran in the wrong checkout.
+		return "", "several rigs in this cell hold a repository for this bead's project, " +
+			"so name one: " + names(), true
+	}
+	return "", "", false
+}
+
+// wanted is the rig the caller asked for, or empty to let the registry choose.
+// A caller who names one is choosing among the rigs that can do the work; it is
+// not a way past the check.
+func rigForBead(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig, why string, err error) {
 	// Read outside authz.WithUser deliberately: this is the dispatch path's own
 	// routing decision, not a read on the caller's behalf, and the caller's
 	// permission to dispatch this bead has already been settled above. The
@@ -292,7 +346,6 @@ func rigForBead(ctx context.Context, db *sql.DB, bead, cell string) (rig, why st
 	}
 	defer rows.Close()
 
-	type candidate struct{ rig, repo string }
 	var found []candidate
 	for rows.Next() {
 		var c candidate
@@ -305,19 +358,8 @@ func rigForBead(ctx context.Context, db *sql.DB, bead, cell string) (rig, why st
 		return "", "", rerr
 	}
 
-	if len(found) == 1 {
-		return found[0].rig, "", nil
-	}
-	if len(found) > 1 {
-		// Several rigs could do it, so the choice is the caller's rather than
-		// ours. Picking one would be arbitrary and would hide the ambiguity
-		// until somebody wondered why their work ran in the wrong checkout.
-		names := make([]string, 0, len(found))
-		for _, c := range found {
-			names = append(names, c.rig+" ("+c.repo+")")
-		}
-		return "", "several rigs in this cell hold a repository for this bead's project, " +
-			"so name one: " + strings.Join(names, ", "), nil
+	if rig, why, decided := chooseRig(found, wanted); decided {
+		return rig, why, nil
 	}
 
 	// None matched. Distinguish the two reasons, because they have different
@@ -333,10 +375,15 @@ func rigForBead(ctx context.Context, db *sql.DB, bead, cell string) (rig, why st
 		 WHERE w.bead_id = $1
 		 LIMIT 1`, bead).Scan(&project, &repos); qerr != nil {
 		if errors.Is(qerr, sql.ErrNoRows) {
-			// No project: nothing to route on, and not an error. The
-			// dispatcher's default rig stands, which is what happened before
-			// this check existed.
-			return "", "", nil
+			// No project: nothing to route on, and not an error. A rig the
+			// caller named is honoured, and otherwise the dispatcher's default
+			// stands -- which is what happened before this check existed.
+			//
+			// Returning "" for a named rig here would CLEAR it, because the
+			// caller assigns this result unconditionally now. That is the
+			// hazard of turning two paths into one, and it is why this returns
+			// `wanted` rather than the empty string.
+			return strings.TrimSpace(wanted), "", nil
 		}
 		return "", "", qerr
 	}

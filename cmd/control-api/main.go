@@ -951,28 +951,34 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		// So: if the bead belongs to a project, the rig must hold one of that
 		// project's repositories. A refusal costs nothing; running somewhere
 		// disposable and reporting `done` cost money and looked like success.
-		if strings.TrimSpace(payload.Rig) == "" {
-			rig, why, err := rigForBead(r.Context(), db, bead, payload.Cell)
-			switch {
-			case err != nil:
-				log.Error("routing a dispatch", "bead", bead, "error", err)
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
-				return
-			case why != "":
-				// 409 rather than 400: the request is well formed and the
-				// registry cannot honour it yet. The message says what is
-				// missing, because "no rig" is fixed by registering a
-				// repository or provisioning a rig, and the person reading it
-				// needs to know which.
-				log.Info("dispatch refused for want of a rig", "bead", bead, "reason", why)
-				writeJSON(w, http.StatusConflict, map[string]any{
-					"error": why,
-					"code":  "no_rig_for_project",
-				})
-				return
-			default:
-				payload.Rig = rig
-			}
+		//
+		// A NAMED rig is checked too, and that is the point of this being
+		// written as one path rather than two. The first version skipped the
+		// whole check whenever the caller named a rig, so `{"rig":"sandbox"}`
+		// reproduced the exact failure the check exists to prevent -- a
+		// PortalJS bead running in a disposable sandbox, reporting done, having
+		// found no PortalJS source. A caller naming a rig is choosing between
+		// the rigs that can do the work, not opting out of the question.
+		rig, why, err := rigForBead(r.Context(), db, bead, payload.Cell, payload.Rig)
+		switch {
+		case err != nil:
+			log.Error("routing a dispatch", "bead", bead, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		case why != "":
+			// 409 rather than 400: the request is well formed and the
+			// registry cannot honour it yet. The message says what is
+			// missing, because "no rig" is fixed by registering a
+			// repository or provisioning a rig, and the person reading it
+			// needs to know which.
+			log.Info("dispatch refused for want of a rig", "bead", bead, "reason", why)
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": why,
+				"code":  "no_rig_for_project",
+			})
+			return
+		default:
+			payload.Rig = rig
 		}
 
 		if err := db.QueryRowContext(r.Context(),

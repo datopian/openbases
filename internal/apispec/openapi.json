@@ -2029,7 +2029,7 @@
             }
           },
           "409": {
-            "description": "This idempotency key was used for a different request",
+            "description": "This idempotency key was used for a different request, or no rig can run this bead (`no_rig_for_project`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2049,7 +2049,7 @@
             }
           }
         },
-        "description": "Starts an agent. Costs money, and is gated by the per-bead budget (ADR-0022) and the per-token daily cap. Routed to a rig that holds one of the bead's project's repositories, and REFUSED when none does: dispatching a project's bead into a disposable sandbox produces a run that reports success without doing anything (wg-ugb). A bead with no project is not routed, and the caller's rig stands.",
+        "description": "Runs one bead. The rig is chosen from the repositories the bead's project holds: exactly one candidate is used, none refuses with `no_rig_for_project`, and several refuses asking for one to be named. A named `rig` must be one of the candidates -- it chooses between them rather than opting out of the check, because dispatching a project's bead into a rig that does not hold its code produces a run that reports success having found nothing.",
         "parameters": [
           {
             "name": "bead",
@@ -2069,7 +2069,27 @@
             },
             "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
           }
-        ]
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "cell": {
+                    "type": "string",
+                    "description": "The execution cell. Defaults to the project's."
+                  },
+                  "rig": {
+                    "type": "string",
+                    "description": "Optional. Which rig to run in, when several hold this project's repositories. Must be one of the rigs named in the 409 refusal."
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/projects/{slug}/repositories": {

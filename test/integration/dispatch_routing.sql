@@ -95,6 +95,17 @@ BEGIN
     RAISE EXCEPTION 'two rigs hold this project''s repositories and % matched', n;
   END IF;
 
+  -- BOTH must be named. The refusal a caller reads is built from this list,
+  -- and now that naming a rig is how the ambiguity is resolved, a list that
+  -- omits one offers a choice that cannot be made. This is the ordinary case,
+  -- not a corner: the PortalJS project holds datopian/portaljs AND
+  -- datopian/cloud.portaljs.com.
+  SELECT string_agg(rig, ',' ORDER BY rig) INTO got
+    FROM system_rigs_for_bead('rt-1', 'route-cell');
+  IF got <> 'routed,routed-two' THEN
+    RAISE EXCEPTION 'the candidate rigs were % rather than both', got;
+  END IF;
+
   -- A project with no repository at all routes nowhere, and the handler says so
   -- differently: the fix is to attach a repository, not to provision a rig.
   SELECT count(*) INTO n FROM system_rigs_for_bead('rt-none', 'route-cell');
@@ -129,7 +140,7 @@ BEGIN
     NULL;
   END;
 
-  RAISE NOTICE 'dispatch routing: unrelated rig refused, matching rig found, empty and company beads not routed';
+  RAISE NOTICE 'dispatch routing: unrelated rig refused, matching rig found, two candidates both offered, empty and company beads not routed';
 END $$;
 
 ROLLBACK;
