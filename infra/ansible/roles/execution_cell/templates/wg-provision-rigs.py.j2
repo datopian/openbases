@@ -109,9 +109,19 @@ def existing(town):
     # The directory is the other half of the answer: `gt rig add` fails on an
     # existing directory, and a half-created rig is exactly the case where
     # rigs.json has no entry.
+    #
+    # A directory counts when its config.json SAYS it is a rig. town/settings
+    # holds a config.json of type "town-settings", so the presence of the file
+    # is not the discriminator -- the same mistake cost the dispatcher a pass
+    # per fifteen seconds until it was fixed.
     for entry in sorted(os.listdir(town)) if os.path.isdir(town) else []:
-        if os.path.isfile(os.path.join(town, entry, "config.json")):
-            names.add(entry)
+        config = os.path.join(town, entry, "config.json")
+        try:
+            with open(config) as f:
+                if json.load(f).get("type") == "rig":
+                    names.add(entry)
+        except (OSError, ValueError):
+            continue
     return names, urls
 
 

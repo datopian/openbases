@@ -312,14 +312,22 @@ func (d *dispatcher) project(ctx context.Context, rigs []string) error {
 	return nil
 }
 
-// rigs lists the town's rigs, newest configuration first read from disk.
+// rigs lists the town's rigs, read from disk.
 //
 // The directory is the truth, deliberately: `gt rig add` creates the directory
 // and writes mayor/rigs.json, and a rig that exists on disk but is missing from
-// the registry file is exactly the half-created case that most needs to be
-// seen. A directory counts as a rig when it holds a config.json, which is what
-// gt writes and what the deacon, witness and logs directories beside it do not
-// have.
+// the registry file is exactly the half-created case that most needs to be seen.
+//
+// A directory is a rig when its config.json SAYS it is a rig. The presence of
+// the file is not enough, and this is not hypothetical: town/settings holds a
+// config.json with "type": "town-settings", so the first version of this treated
+// it as a rig and the staging dispatcher logged, every pass,
+//
+//	level=WARN msg="reading a rig's beads" rig=settings error="bd list: signal: killed"
+//
+// -- `bd` there does not fail, it HANGS until the deadline kills it, so a
+// non-rig in the town costs a whole pass rather than a log line. It also
+// registered `settings` as a rig holding no repository.
 //
 // The configured rig is always included, even if the town has no directory for
 // it, so a cell whose town has not been built yet behaves as it did before.
@@ -334,7 +342,7 @@ func (d *dispatcher) rigs() []string {
 		if !e.IsDir() {
 			continue
 		}
-		if _, err := os.Stat(d.cellRoot + "/town/" + e.Name() + "/config.json"); err != nil {
+		if !isRig(d.cellRoot + "/town/" + e.Name() + "/config.json") {
 			continue
 		}
 		found = append(found, e.Name())
@@ -343,6 +351,26 @@ func (d *dispatcher) rigs() []string {
 		found = append(found, d.rig)
 	}
 	return found
+}
+
+// isRig reports whether a config.json declares its directory to be a rig.
+//
+// A file that cannot be read or parsed is NOT a rig. That is the safe
+// direction: a directory wrongly included is polled by bd on every pass and
+// registered as routable, while one wrongly excluded is only invisible until
+// somebody looks at the town.
+func isRig(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var config struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return false
+	}
+	return config.Type == "rig"
 }
 
 // sendBeads projects a bead list upward. An empty list is not sent: it would be

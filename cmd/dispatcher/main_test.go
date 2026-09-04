@@ -142,11 +142,13 @@ func TestGatewayTokenComesFromTheCellSettings(t *testing.T) {
 
 // The town's rigs are read from disk, and the things beside them are not rigs.
 //
-// This is the bug the rig-per-repository change would otherwise have shipped:
-// a town holds logs, events, settings and plugins directories next to its
-// rigs, and treating those as rigs means four `bd list` failures every fifteen
-// seconds and four bogus registrations that dispatch could route work to.
-func TestOnlyDirectoriesWithAConfigCountAsRigs(t *testing.T) {
+// A rig is a directory whose config.json SAYS "type": "rig". The presence of
+// the file is not enough: town/settings has one saying "town-settings", and
+// treating it as a rig made the staging dispatcher log
+// `rig=settings error="bd list: signal: killed"` on every pass -- bd there
+// hangs rather than failing, so it cost a whole pass -- and registered
+// `settings` as a rig holding no repository.
+func TestOnlyDirectoriesThatSayTheyAreRigsCountAsRigs(t *testing.T) {
 	root := t.TempDir()
 	town := filepath.Join(root, "town")
 	for _, rig := range []string{"sandbox", "portaljs", "autoclaw"} {
@@ -158,14 +160,34 @@ func TestOnlyDirectoriesWithAConfigCountAsRigs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Everything a real town has beside its rigs, none of which has a
-	// config.json: this is what distinguishes them.
-	for _, other := range []string{"logs", "events", "settings", "plugins", "deacon"} {
+	// Everything a real town has beside its rigs.
+	for _, other := range []string{"logs", "events", "plugins", "deacon"} {
 		if err := os.MkdirAll(filepath.Join(town, other), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(town, "rigs.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// And settings, which DOES have a config.json -- with a different type.
+	// Treating the file's presence as the discriminator made the staging
+	// dispatcher poll it every pass, where bd hung until the deadline killed
+	// it, and registered `settings` as a rig holding no repository.
+	if err := os.MkdirAll(filepath.Join(town, "settings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(town, "settings", "config.json"),
+		[]byte(`{"type":"town-settings","version":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A config.json that cannot be parsed is not a rig either: a directory
+	// wrongly included is polled and registered as routable, while one wrongly
+	// excluded is merely invisible.
+	if err := os.MkdirAll(filepath.Join(town, "truncated"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(town, "truncated", "config.json"),
+		[]byte(`{"type":"ri`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
