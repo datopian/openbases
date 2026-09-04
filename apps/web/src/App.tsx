@@ -3,6 +3,7 @@ import { Ask } from "./Ask";
 import { Inbox } from "./Inbox";
 import { Work } from "./Work";
 import { Device, deviceCodeFromHash } from "./Device";
+import { Bead, beadFromHash } from "./Bead";
 import { Platform } from "./Platform";
 import { CreateProject, ManageRepositories } from "./ProjectAdmin";
 import {
@@ -585,6 +586,7 @@ export function App() {
     deviceCodeFromHash(),
   );
   const [platform, setPlatform] = useState<boolean>(() => onPlatform());
+  const [bead, setBead] = useState<string | null>(() => beadFromHash());
 
   useEffect(() => {
     api
@@ -604,6 +606,7 @@ export function App() {
       setAsk(onAsk());
       setWork(onWork());
       setPlatform(onPlatform());
+      setBead(beadFromHash());
       setDevice(deviceCodeFromHash());
     };
     window.addEventListener("hashchange", onHash);
@@ -621,6 +624,7 @@ export function App() {
     setAsk(false);
     setWork(false);
     setPlatform(false);
+    setBead(null);
   };
 
   return (
@@ -713,6 +717,15 @@ export function App() {
 
       {device !== null ? (
         <Device code={device} />
+      ) : bead ? (
+        <Bead
+          id={bead}
+          onBack={() => {
+            window.location.hash = "#/work";
+            setBead(null);
+            setWork(true);
+          }}
+        />
       ) : platform ? (
         <Platform />
       ) : work ? (

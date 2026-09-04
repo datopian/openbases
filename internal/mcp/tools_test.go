@@ -218,6 +218,7 @@ func TestToolsCallTheRoutesTheTableNames(t *testing.T) {
 		{"workgraph_ask", "GET", "/v1/ask", nil},
 		{"workgraph_ask", "GET", "/v1/ask?q=what+changed", map[string]any{"question": "what changed"}},
 		{"workgraph_work_list", "GET", "/v1/work", nil},
+		{"workgraph_bead", "GET", "/v1/work/sa-kfh", map[string]any{"bead": "sa-kfh"}},
 		{"workgraph_project_list", "GET", "/v1/projects", nil},
 		{"workgraph_file_work", "POST", "/v1/work/plan", map[string]any{"brief": "do a thing"}},
 		{"workgraph_dispatch", "POST", "/v1/work/wg-abc/dispatch", map[string]any{"bead": "wg-abc"}},
@@ -362,4 +363,41 @@ func callOn(t *testing.T, s *sdk.Server, tool string, args map[string]any) *sdk.
 		t.Fatalf("calling %s: %v", tool, err)
 	}
 	return res
+}
+
+// The bead detail tool is what answers "did that work", so it must reach one
+// bead rather than the list, and must escape the id into the path.
+func TestTheBeadToolEscapesTheIdIntoThePath(t *testing.T) {
+	stub := &stubCaller{status: 200, resp: `{}`}
+	call(t, stub, "workgraph_bead", map[string]any{"bead": "sa-a/../../v1/tokens"})
+	if strings.Contains(stub.path, "../") {
+		t.Errorf("an unescaped bead id reached the path: %q", stub.path)
+	}
+	if !strings.HasPrefix(stub.path, "/v1/work/") {
+		t.Errorf("the bead tool called %q, which is not one bead", stub.path)
+	}
+}
+
+func TestTheBeadToolRefusesAnEmptyId(t *testing.T) {
+	stub := &stubCaller{status: 200, resp: `{}`}
+	res := call(t, stub, "workgraph_bead", map[string]any{"bead": "  "})
+	if !res.IsError {
+		t.Fatal("an empty bead id was accepted")
+	}
+	if stub.method != "" {
+		t.Errorf("it called %s %s anyway", stub.method, stub.path)
+	}
+}
+
+// A 404 from the detail endpoint means "no such bead, or none you can see",
+// and the model must be able to read that rather than see a transport failure.
+func TestAMissingBeadIsAReadableRefusal(t *testing.T) {
+	stub := &stubCaller{status: 404, resp: `{"error":"no such bead, or none you can see","code":"not_found"}`}
+	res := call(t, stub, "workgraph_bead", map[string]any{"bead": "sa-nope"})
+	if !res.IsError {
+		t.Error("a missing bead should be flagged isError")
+	}
+	if !strings.Contains(text(res), "no such bead") {
+		t.Errorf("the server's words did not survive: %q", text(res))
+	}
 }

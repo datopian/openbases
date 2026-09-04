@@ -30,7 +30,9 @@ const css = {
   } as const,
   muted: { color: "#666" } as const,
   small: { fontSize: "0.85rem" } as const,
-  mono: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } as const,
+  mono: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  } as const,
   th: {
     textAlign: "left" as const,
     borderBottom: "2px solid #ddd",
@@ -40,7 +42,11 @@ const css = {
     letterSpacing: "0.04em",
     color: "#555",
   },
-  td: { borderBottom: "1px solid #eee", padding: "0.45rem 0.5rem", verticalAlign: "top" as const },
+  td: {
+    borderBottom: "1px solid #eee",
+    padding: "0.45rem 0.5rem",
+    verticalAlign: "top" as const,
+  },
   button: {
     padding: "0.5rem 0.9rem",
     borderRadius: "4px",
@@ -181,9 +187,15 @@ export function Work() {
     }
   };
 
-  const active = (queue ?? []).filter((j) => j.status === "queued" || j.status === "running");
-  const recent = (queue ?? []).filter((j) => j.status !== "queued" && j.status !== "running").slice(0, 5);
-  const shown = (items ?? []).filter((i) => (onlyOpen ? i.status !== "closed" : true));
+  const active = (queue ?? []).filter(
+    (j) => j.status === "queued" || j.status === "running",
+  );
+  const recent = (queue ?? [])
+    .filter((j) => j.status !== "queued" && j.status !== "running")
+    .slice(0, 5);
+  const shown = (items ?? []).filter((i) =>
+    onlyOpen ? i.status !== "closed" : true,
+  );
 
   return (
     <section>
@@ -195,14 +207,20 @@ export function Work() {
       </p>
 
       {error && (
-        <div style={{ ...css.card, borderColor: "#e0b4b4", background: "#fff8f8" }}>
+        <div
+          style={{ ...css.card, borderColor: "#e0b4b4", background: "#fff8f8" }}
+        >
           <strong>Something went wrong.</strong>
-          <div style={{ ...css.small, ...css.mono, marginTop: "0.35rem" }}>{error}</div>
+          <div style={{ ...css.small, ...css.mono, marginTop: "0.35rem" }}>
+            {error}
+          </div>
         </div>
       )}
 
       <div style={css.card}>
-        <label htmlFor="brief" style={{ fontWeight: 600 }}>Give an agent a brief</label>
+        <label htmlFor="brief" style={{ fontWeight: 600 }}>
+          Give an agent a brief
+        </label>
         <p style={{ ...css.muted, ...css.small, marginTop: "0.25rem" }}>
           It files beads and does none of the work, so you can read the plan
           before any of it runs.
@@ -213,14 +231,24 @@ export function Work() {
           before they type rather than next to the thing they press afterwards.
         */}
         <div style={{ marginBottom: "0.6rem" }}>
-          <label htmlFor="project" style={{ ...css.small, ...css.muted, display: "block" }}>
+          <label
+            htmlFor="project"
+            style={{ ...css.small, ...css.muted, display: "block" }}
+          >
             File the beads into
           </label>
           <select
             id="project"
             value={project}
             onChange={(e) => setProject(e.target.value)}
-            style={{ padding: "0.4rem", fontFamily: "inherit", fontSize: "0.9rem", borderRadius: "4px", border: "1px solid #ccc", minWidth: "18rem" }}
+            style={{
+              padding: "0.4rem",
+              fontFamily: "inherit",
+              fontSize: "0.9rem",
+              borderRadius: "4px",
+              border: "1px solid #ccc",
+              minWidth: "18rem",
+            }}
           >
             <option value="">No project — company-wide work</option>
             {projects.map((p) => (
@@ -242,10 +270,28 @@ export function Work() {
           onChange={(e) => setBrief(e.target.value)}
           rows={4}
           placeholder="e.g. Add a CHANGELOG to the sandbox repository and describe how releases are cut."
-          style={{ width: "100%", padding: "0.6rem", fontFamily: "inherit", fontSize: "0.95rem", borderRadius: "4px", border: "1px solid #ccc" }}
+          style={{
+            width: "100%",
+            padding: "0.6rem",
+            fontFamily: "inherit",
+            fontSize: "0.95rem",
+            borderRadius: "4px",
+            border: "1px solid #ccc",
+          }}
         />
-        <div style={{ marginTop: "0.6rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <button style={{ ...css.button, opacity: busy || !brief.trim() ? 0.5 : 1 }} onClick={plan} disabled={busy || !brief.trim()}>
+        <div
+          style={{
+            marginTop: "0.6rem",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.75rem",
+          }}
+        >
+          <button
+            style={{ ...css.button, opacity: busy || !brief.trim() ? 0.5 : 1 }}
+            onClick={plan}
+            disabled={busy || !brief.trim()}
+          >
             {busy ? "Queueing…" : "Plan this"}
           </button>
           {note && <span style={{ ...css.small, color: "#1a6" }}>{note}</span>}
@@ -255,14 +301,28 @@ export function Work() {
       {active.length > 0 && (
         <div style={css.card}>
           <strong>In flight</strong>
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "0.5rem" }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              marginTop: "0.5rem",
+            }}
+          >
             <tbody>
               {active.map((j) => (
                 <tr key={j.id}>
-                  <td style={{ ...css.td, ...css.mono, ...css.small }}>{j.id.slice(0, 8)}</td>
-                  <td style={css.td}>{j.kind === "plan" ? "planning" : `working ${j.bead}`}</td>
-                  <td style={{ ...css.td, color: queueLabel(j.status).colour }}>{queueLabel(j.status).text}</td>
-                  <td style={{ ...css.td, ...css.small, ...css.muted }}>{age(j.created_at)}</td>
+                  <td style={{ ...css.td, ...css.mono, ...css.small }}>
+                    {j.id.slice(0, 8)}
+                  </td>
+                  <td style={css.td}>
+                    {j.kind === "plan" ? "planning" : `working ${j.bead}`}
+                  </td>
+                  <td style={{ ...css.td, color: queueLabel(j.status).colour }}>
+                    {queueLabel(j.status).text}
+                  </td>
+                  <td style={{ ...css.td, ...css.small, ...css.muted }}>
+                    {age(j.created_at)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -273,13 +333,25 @@ export function Work() {
       {recent.length > 0 && (
         <div style={css.card}>
           <strong>Recently finished</strong>
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "0.5rem" }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              marginTop: "0.5rem",
+            }}
+          >
             <tbody>
               {recent.map((j) => (
                 <tr key={j.id}>
-                  <td style={{ ...css.td, ...css.mono, ...css.small }}>{j.id.slice(0, 8)}</td>
-                  <td style={css.td}>{j.kind === "plan" ? "planning" : j.bead}</td>
-                  <td style={{ ...css.td, color: queueLabel(j.status).colour }}>{queueLabel(j.status).text}</td>
+                  <td style={{ ...css.td, ...css.mono, ...css.small }}>
+                    {j.id.slice(0, 8)}
+                  </td>
+                  <td style={css.td}>
+                    {j.kind === "plan" ? "planning" : j.bead}
+                  </td>
+                  <td style={{ ...css.td, color: queueLabel(j.status).colour }}>
+                    {queueLabel(j.status).text}
+                  </td>
                   <td style={{ ...css.td, ...css.small, ...css.muted }}>
                     {/* The agent's own words. A failure a person can read here is
                         a failure they do not need a terminal on the node for. */}
@@ -292,10 +364,18 @@ export function Work() {
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+        }}
+      >
         <h2 style={{ marginBottom: "0.5rem" }}>Beads</h2>
         <button style={css.ghost} onClick={() => setOnlyOpen((v) => !v)}>
-          {onlyOpen ? "showing open — show all" : "showing all — show open only"}
+          {onlyOpen
+            ? "showing open — show all"
+            : "showing all — show open only"}
         </button>
       </div>
 
@@ -329,11 +409,30 @@ export function Work() {
           <tbody>
             {shown.slice(0, 100).map((i) => {
               const q = queueLabel(i.queue_state);
-              const busyNow = i.queue_state === "queued" || i.queue_state === "running";
+              const busyNow =
+                i.queue_state === "queued" || i.queue_state === "running";
               return (
                 <tr key={`${i.cell}:${i.bead}`}>
-                  <td style={{ ...css.td, ...css.mono, ...css.small }}>{i.bead}</td>
-                  <td style={css.td}>{i.title || <span style={css.muted}>untitled</span>}</td>
+                  {/* The id is the way in to what happened to it (wg-m07):
+                      outcome, the agent's own comment, and per-model spend. A
+                      list is read to scan; that page is read to understand one
+                      thing. */}
+                  <td style={{ ...css.td, ...css.mono, ...css.small }}>
+                    <a
+                      href={`#/work/${encodeURIComponent(i.bead)}`}
+                      style={{
+                        color: "#0b5cad",
+                        textDecoration: "none",
+                        fontWeight: 600,
+                      }}
+                      title="what happened to this bead"
+                    >
+                      {i.bead}
+                    </a>
+                  </td>
+                  <td style={css.td}>
+                    {i.title || <span style={css.muted}>untitled</span>}
+                  </td>
                   {/* "company" rather than blank: an empty cell reads as
                       missing data, and a bead with no project is a real and
                       different thing -- work everybody who can log in may
@@ -344,12 +443,27 @@ export function Work() {
                   <td style={{ ...css.td, ...css.small }}>{i.status}</td>
                   <td style={{ ...css.td, ...css.small, color: q.colour }}>
                     {q.text}
-                    {i.queued_at && <span style={{ ...css.muted, marginLeft: "0.4rem" }}>{age(i.queued_at)}</span>}
+                    {i.queued_at && (
+                      <span style={{ ...css.muted, marginLeft: "0.4rem" }}>
+                        {age(i.queued_at)}
+                      </span>
+                    )}
                   </td>
-                  <td style={{ ...css.td, ...css.small, ...css.mono, textAlign: "right" }}>
+                  <td
+                    style={{
+                      ...css.td,
+                      ...css.small,
+                      ...css.mono,
+                      textAlign: "right",
+                    }}
+                  >
                     {/* Blank rather than 0 when nothing was spent: a zero
                         implies it ran and cost nothing. */}
-                    {i.requests > 0 ? cents(i.spent_cents) : <span style={css.muted}>–</span>}
+                    {i.requests > 0 ? (
+                      cents(i.spent_cents)
+                    ) : (
+                      <span style={css.muted}>–</span>
+                    )}
                   </td>
                   <td style={{ ...css.td, textAlign: "right" }}>
                     {i.status !== "closed" && (

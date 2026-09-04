@@ -217,3 +217,52 @@ func registerPlatformState(authed *http.ServeMux, db *sql.DB, log *slog.Logger) 
 		_, _ = w.Write(doc)
 	})
 }
+
+// registerBeadDetail adds the read of one bead: what happened to it, what the
+// agent said, and what it cost (wg-m07).
+//
+// The question this answers is "I dispatched that — did anything happen?", and
+// before this the honest answer was to read a JSONL file on the execution node.
+func registerBeadDetail(authed *http.ServeMux, db *sql.DB, log *slog.Logger) {
+	if db == nil {
+		return
+	}
+	authed.HandleFunc("GET /v1/work/{bead}", func(w http.ResponseWriter, r *http.Request) {
+		ident, _ := authn.FromContext(r.Context())
+		if ident.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no application user"})
+			return
+		}
+		bead := strings.TrimSpace(r.PathValue("bead"))
+		if bead == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "a bead id is required"})
+			return
+		}
+
+		// Inside authz.WithUser: system_bead_detail is SECURITY DEFINER and
+		// checks can_read_project against current_app_user(), so a query
+		// issued without an identity would be answered as nobody.
+		var doc []byte
+		err := authz.WithUser(r.Context(), db, ident.UserID, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(r.Context(),
+				`SELECT system_bead_detail($1)`, bead).Scan(&doc)
+		})
+		if err != nil {
+			log.Error("reading a bead", "bead", bead, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		if len(doc) == 0 || string(doc) == "null" {
+			// A bead in a project the caller may not see is answered exactly
+			// like a bead that does not exist. Confirming its existence would
+			// leak the project (ADR-0013).
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"error": "no such bead, or none you can see",
+				"code":  "not_found",
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(doc)
+	})
+}

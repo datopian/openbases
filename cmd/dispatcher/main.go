@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -125,8 +126,34 @@ func (d *dispatcher) pass(ctx context.Context) {
 		return
 	}
 
+	// The beads that existed before the run, so the ones it creates can be
+	// identified afterwards and labelled with the job's project (wg-sjm).
+	//
+	// This replaces asking the agent to do it. internal/work's planning prompt
+	// says "Label every bead you create with `wg-project-<slug>`", and on
+	// 4 September a plan job produced three beads with no labels at all: the
+	// instruction was followed by nobody and the beads were unattributable, so
+	// no project page could show them.
+	//
+	// The project is known exactly when the job is enqueued -- work_queue
+	// carries it, verified against the requester's membership -- and routing a
+	// fact like that through a prompt and hoping it comes back is not a
+	// mechanism. It governs who may read the work.
+	//
+	// The prompt still asks, because a bead the agent labels itself is not
+	// wrong and costs nothing. Nothing depends on it.
+	before := d.beadIDs(ctx)
+
 	d.log.Info("running", "job", job.ID, "kind", job.Kind, "bead", job.Bead)
 	out, runErr := d.run(ctx, *job)
+
+	// Labelled whether the run succeeded or not. A job that produced beads and
+	// then failed still produced beads, and an unattributed bead is invisible
+	// on the project page it belongs to.
+	if p := strings.TrimSpace(job.Project); p != "" {
+		d.labelNewBeads(ctx, before, p)
+	}
+
 	d.report(ctx, job.ID, work.Result{OK: runErr == nil, Output: out})
 	if runErr != nil {
 		d.log.Error("job failed", "job", job.ID, "error", runErr)
@@ -251,6 +278,18 @@ type beadRow struct {
 	// (wg-43n). Omitted when empty, so an older control plane sees the payload
 	// it always saw.
 	Labels []string `json:"labels,omitempty"`
+	// The most recent comment, when the bead has one (wg-m07).
+	//
+	// The agent's own words are the most useful artefact of a run — on
+	// 4 September three runs exited 0, left their beads open, and explained in
+	// a comment that they could not proceed — and they were reachable only by
+	// reading the graph on this node. Carried up so a person can see them.
+	Comment   string `json:"comment,omitempty"`
+	CommentAt string `json:"comment_at,omitempty"`
+	CommentBy string `json:"comment_by,omitempty"`
+	// commentCount is bd's own count, used to decide whether to ask for the
+	// comments at all. Not sent upward.
+	commentCount int
 }
 
 // readBeads asks bd for the cell's beads as JSON.
@@ -290,6 +329,9 @@ func (d *dispatcher) readBeads(ctx context.Context) ([]beadRow, error) {
 			row.Kind, _ = r["type"].(string)
 		}
 		row.Status, _ = r["status"].(string)
+		if n, ok := r["comment_count"].(float64); ok {
+			row.commentCount = int(n)
+		}
 		// bd omits the field entirely for a bead with no labels rather than
 		// emitting an empty list, so absence has to be tolerated.
 		if raw, ok := r["labels"].([]any); ok {
@@ -301,7 +343,66 @@ func (d *dispatcher) readBeads(ctx context.Context) ([]beadRow, error) {
 		}
 		rows = append(rows, row)
 	}
+	// The newest comment, for the beads that have one.
+	//
+	// One `bd show` per commented bead rather than per bead: on this cell that
+	// is a handful out of thirty-odd, and a show for every bead on every
+	// fifteen-second pass would be a real cost for a field that is usually
+	// absent. bd's list output does not carry comments, only a count, which is
+	// exactly the discriminator needed.
+	for i := range rows {
+		if rows[i].commentCount == 0 {
+			continue
+		}
+		text, at, by, err := d.lastComment(ctx, rows[i].Bead)
+		if err != nil {
+			// Not fatal. A bead whose comments cannot be read is still worth
+			// projecting with its status; losing the whole pass over one
+			// unreadable comment would be the wrong trade.
+			d.log.Warn("reading comments", "bead", rows[i].Bead, "error", err)
+			continue
+		}
+		rows[i].Comment, rows[i].CommentAt, rows[i].CommentBy = text, at, by
+	}
+
 	return rows, nil
+}
+
+// lastComment returns the newest comment on one bead.
+func (d *dispatcher) lastComment(ctx context.Context, bead string) (text, at, by string, err error) {
+	cmd := exec.CommandContext(ctx, "bd", "show", bead, "--json")
+	cmd.Dir = d.cellRoot + "/town/" + d.rig
+	cmd.Env = append(os.Environ(), "HOME="+d.cellRoot)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", "", "", fmt.Errorf("bd show %s: %w", bead, err)
+	}
+
+	// bd show returns either an object or a single-element array, depending on
+	// version. Both are read, for the same reason readBeads reads two shapes.
+	var one map[string]any
+	if err := json.Unmarshal(out, &one); err != nil {
+		var many []map[string]any
+		if err2 := json.Unmarshal(out, &many); err2 != nil || len(many) == 0 {
+			return "", "", "", fmt.Errorf("bd show %s returned neither an object nor a list", bead)
+		}
+		one = many[0]
+	}
+
+	list, ok := one["comments"].([]any)
+	if !ok || len(list) == 0 {
+		return "", "", "", nil
+	}
+	// The LAST one. bd returns them oldest first, and the useful comment is the
+	// most recent thing the agent said.
+	c, ok := list[len(list)-1].(map[string]any)
+	if !ok {
+		return "", "", "", nil
+	}
+	text, _ = c["text"].(string)
+	by, _ = c["author"].(string)
+	at, _ = c["created_at"].(string)
+	return text, at, by, nil
 }
 
 func (d *dispatcher) claim(ctx context.Context) (*work.Job, error) {
@@ -388,4 +489,78 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// beadIDs returns the ids currently in the rig's graph, as a set.
+//
+// Errors are swallowed to an empty set on purpose: this is used to work out
+// which beads are NEW, and an empty "before" makes every bead look new. That is
+// the safe direction — labelling a bead with the project of the job that just
+// ran is at worst redundant, while missing one leaves it invisible. A wrong
+// label is refused upstream anyway: system_project_bead raises if a bead names
+// two projects.
+func (d *dispatcher) beadIDs(ctx context.Context) map[string]bool {
+	out := map[string]bool{}
+	rows, err := d.readBeads(ctx)
+	if err != nil {
+		d.log.Warn("listing beads before a run", "error", err)
+		return out
+	}
+	for _, r := range rows {
+		out[r.Bead] = true
+	}
+	return out
+}
+
+// labelNewBeads puts the job's project on every bead that appeared during it.
+func (d *dispatcher) labelNewBeads(ctx context.Context, before map[string]bool, project string) {
+	rows, err := d.readBeads(ctx)
+	if err != nil {
+		d.log.Error("listing beads after a run; new beads may be unattributed",
+			"project", project, "error", err)
+		return
+	}
+
+	label := "wg-project-" + project
+	for _, r := range rows {
+		if before[r.Bead] {
+			continue
+		}
+		// Already labelled, by the agent following the prompt or by an earlier
+		// pass. Skipping keeps the log quiet about work already done.
+		if slices.Contains(r.Labels, label) {
+			continue
+		}
+		// A bead that already names a DIFFERENT project is left alone and
+		// reported. Adding ours would make it name two, which
+		// system_project_bead refuses outright — better to say so here than to
+		// break the whole projection pass.
+		if other, ok := otherProjectLabel(r.Labels, label); ok {
+			d.log.Warn("a new bead already names another project; leaving it alone",
+				"bead", r.Bead, "has", other, "job_project", project)
+			continue
+		}
+		cmd := exec.CommandContext(ctx, "bd", "update", r.Bead, "--add-label", label)
+		cmd.Dir = d.cellRoot + "/town/" + d.rig
+		cmd.Env = append(os.Environ(), "HOME="+d.cellRoot)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			d.log.Error("labelling a new bead", "bead", r.Bead, "label", label,
+				"error", err, "output", strings.TrimSpace(string(out)))
+			continue
+		}
+		d.log.Info("labelled a new bead", "bead", r.Bead, "label", label)
+	}
+}
+
+// otherProjectLabel reports a project label that is not the wanted one.
+func otherProjectLabel(labels []string, wanted string) (string, bool) {
+	for _, l := range labels {
+		if l == wanted {
+			continue
+		}
+		if strings.HasPrefix(l, "wg-project-") || strings.HasPrefix(l, "project:") {
+			return l, true
+		}
+	}
+	return "", false
 }

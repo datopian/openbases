@@ -456,11 +456,14 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		var payload struct {
 			Cell  string `json:"cell"`
 			Beads []struct {
-				Bead   string   `json:"bead"`
-				Title  string   `json:"title"`
-				Kind   string   `json:"kind"`
-				Status string   `json:"status"`
-				Labels []string `json:"labels"`
+				Bead      string   `json:"bead"`
+				Title     string   `json:"title"`
+				Kind      string   `json:"kind"`
+				Status    string   `json:"status"`
+				Labels    []string `json:"labels"`
+				Comment   string   `json:"comment"`
+				CommentAt string   `json:"comment_at"`
+				CommentBy string   `json:"comment_by"`
 			} `json:"beads"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&payload); err != nil {
@@ -478,9 +481,11 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			}
 			var ok bool
 			if err := db.QueryRowContext(r.Context(),
-				`SELECT system_project_bead($1,$2,$3,$4,$5,$6)`,
+				`SELECT system_project_bead($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 				payload.Cell, b.Bead, b.Title, b.Kind, b.Status,
-				beadLabels(b.Labels)).Scan(&ok); err != nil {
+				beadLabels(b.Labels),
+				nullableParam(b.Comment), nullableTime(b.CommentAt),
+				nullableParam(b.CommentBy)).Scan(&ok); err != nil {
 				log.Error("projecting a bead", "cell", payload.Cell, "bead", b.Bead, "error", err)
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 				return
@@ -1445,6 +1450,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 	registerWrites(authed, inbox, idem, log)
 	registerProjectWrites(authed, store, idem, log)
 	registerPlatformState(authed, db, log)
+	registerBeadDetail(authed, db, log)
 
 	// The event stream and cursor pagination (wg-p4h.8).
 	registerStream(authed, eventLog, log)
@@ -1729,6 +1735,25 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 // nullableParam turns an absent query parameter into a SQL NULL, so a filter
 // that was not asked for does not become a filter for the empty string.
+// nullableTime parses an RFC 3339 timestamp, or NULL when it is absent or
+// unparseable.
+//
+// Unparseable rather than an error, because this reads a field a node sends and
+// a bad timestamp on one bead's comment must not fail the whole projection
+// pass. The comment text is the useful part; losing its clock is a nuisance,
+// losing the pass is an outage.
+func nullableTime(v string) any {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return nil
+	}
+	return t
+}
+
 func nullableParam(v string) any {
 	if strings.TrimSpace(v) == "" {
 		return nil
