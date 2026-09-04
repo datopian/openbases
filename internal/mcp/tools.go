@@ -54,6 +54,10 @@ type fileWorkArgs struct {
 	Project string `json:"project,omitempty" jsonschema:"Project slug to file the beads into, from workgraph_project_list. Omit ONLY for company-wide work: a brief filed with no project produces beads every colleague who can log in may read. Anything client-shaped needs one, and the server refuses a project you are not a member of."`
 }
 
+type beadArgs struct {
+	Bead string `json:"bead" jsonschema:"The bead id, for example wg-abc or sa-kfh."`
+}
+
 type dispatchArgs struct {
 	Bead string `json:"bead" jsonschema:"The bead id, for example wg-abc."`
 }
@@ -86,6 +90,7 @@ var Routes = []Route{
 	{Tool: "workgraph_inbox", Method: http.MethodGet, Path: "/v1/inbox", ReadOnly: true},
 	{Tool: "workgraph_ask", Method: http.MethodGet, Path: "/v1/ask", ReadOnly: true},
 	{Tool: "workgraph_work_list", Method: http.MethodGet, Path: "/v1/work", ReadOnly: true},
+	{Tool: "workgraph_bead", Method: http.MethodGet, Path: "/v1/work/{bead}", ReadOnly: true},
 	{Tool: "workgraph_project_list", Method: http.MethodGet, Path: "/v1/projects", ReadOnly: true},
 	{Tool: "workgraph_file_work", Method: http.MethodPost, Path: "/v1/work/plan", SpendsMoney: true},
 	{Tool: "workgraph_dispatch", Method: http.MethodPost, Path: "/v1/work/{bead}/dispatch", SpendsMoney: true},
@@ -127,6 +132,23 @@ var (
 		},
 	}
 
+	// The answer to "I dispatched that -- did anything happen?".
+	//
+	// Its own tool rather than more fields on workgraph_work_list, because the
+	// list is read to scan and this is read to understand one thing: a list
+	// carrying every bead's log tail, comment and per-model spend would be
+	// unreadable on a phone and expensive to produce.
+	toolBead = &sdk.Tool{
+		Name: "workgraph_bead",
+		Description: "Everything known about one bead: whether the work finished, " +
+			"why not if it did not, what the agent said about it, and which model it " +
+			"used and what that cost. Use after dispatching, and for 'what happened to', " +
+			"'did that work', 'why did that fail', 'what did that cost'.",
+		Annotations: &sdk.ToolAnnotations{
+			Title: "Bead detail", ReadOnlyHint: true, DestructiveHint: ptr(false),
+		},
+	}
+
 	toolProjectList = &sdk.Tool{
 		Name:        "workgraph_project_list",
 		Description: "Projects this person can see.",
@@ -165,7 +187,7 @@ var (
 // cheapest useful thing is the first thing it sees.
 func Tools() []*sdk.Tool {
 	return []*sdk.Tool{
-		toolInbox, toolAsk, toolWorkList, toolProjectList, toolFileWork, toolDispatch,
+		toolInbox, toolAsk, toolWorkList, toolBead, toolProjectList, toolFileWork, toolDispatch,
 	}
 }
 
@@ -195,6 +217,16 @@ func NewServer(o Options) *sdk.Server {
 
 	sdk.AddTool(s, toolWorkList, func(ctx context.Context, _ *sdk.CallToolRequest, _ noArgs) (*sdk.CallToolResult, any, error) {
 		return plain(ctx, c, shell, obs, "workgraph_work_list", http.MethodGet, "/v1/work", nil)
+	})
+
+	sdk.AddTool(s, toolBead, func(ctx context.Context, _ *sdk.CallToolRequest, a beadArgs) (*sdk.CallToolResult, any, error) {
+		bead := strings.TrimSpace(a.Bead)
+		if bead == "" {
+			return errorResult("a bead id is required"), nil, nil
+		}
+		// Escaped: a bead id reaches a path segment.
+		return plain(ctx, c, shell, obs, "workgraph_bead", http.MethodGet,
+			"/v1/work/"+url.PathEscape(bead), nil)
 	})
 
 	sdk.AddTool(s, toolProjectList, func(ctx context.Context, _ *sdk.CallToolRequest, _ noArgs) (*sdk.CallToolResult, any, error) {

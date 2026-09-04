@@ -65,7 +65,12 @@ var routeActions = map[string]routeAction{
 	// company-management gate lives in system_platform_state, because the
 	// answer is about the platform rather than about any one project and
 	// there is no per-row rule that would express it.
-	"GET /v1/platform":                                       {Action: authz.OrganisationRead},
+	"GET /v1/platform": {Action: authz.OrganisationRead},
+
+	// One bead's outcome, the agent's own words and its spend (wg-m07).
+	// ProjectRead: system_bead_detail refuses a bead in a project the caller
+	// cannot see, exactly as the work list does.
+	"GET /v1/work/{bead}":                                    {Action: authz.ProjectRead},
 	"GET /v1/projects/{slug}/repositories":                   {Action: authz.ProjectRead},
 	"POST /v1/projects/{slug}/repositories":                  {Action: authz.ProjectManage},
 	"DELETE /v1/projects/{slug}/repositories/{owner}/{name}": {Action: authz.ProjectManage},

@@ -2378,6 +2378,75 @@
           }
         }
       }
+    },
+    "/v1/work/{bead}": {
+      "get": {
+        "summary": "What happened to one bead: its outcome, the agent's own words, and what it cost",
+        "operationId": "get_v1_work_bead",
+        "description": "The answer to \"I dispatched that - did anything happen?\". `outcome` is derived rather than stored: `done` when the run succeeded AND the bead is closed, `blocked` when the run exited zero and left the bead open, `failed` when the run failed, plus `queued`, `running` and `never_dispatched`. The distinction matters - a run can exit zero having reported that it could not do the work, and `done` alone would read as success. `comment` carries the newest comment on the bead, which is where an agent explains itself. `spend` is broken down by model, because \"which model was used\" is a question a total cannot answer, and carries `newest_record` because usage arrives on an hourly import - a run that finished minutes ago shows no spend yet, and a zero would read as free.",
+        "parameters": [
+          {
+            "name": "bead",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bead",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No bead id was given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such bead, or none the caller may see - the two are deliberately indistinguishable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

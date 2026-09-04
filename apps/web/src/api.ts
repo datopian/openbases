@@ -171,6 +171,51 @@ export interface PlatformAlert {
   newest: string | null;
 }
 
+/** What happened to one bead (wg-m07). */
+export interface BeadDetail {
+  bead: string;
+  title: string | null;
+  kind: string | null;
+  status: string | null;
+  project: string | null;
+  cell: string | null;
+  last_seen: string | null;
+  /**
+   * Derived, not stored: `done` only when the run succeeded AND the bead is
+   * closed. `blocked` is a run that exited zero and left the bead open — an
+   * agent that reported it could not do the work. Treating that as `done` is
+   * how people stop trusting the status field.
+   */
+  outcome:
+    "done" | "blocked" | "failed" | "queued" | "running" | "never_dispatched";
+  run: {
+    job: string;
+    status: string;
+    rig: string | null;
+    created: string | null;
+    claimed: string | null;
+    finished: string | null;
+    log_tail: string | null;
+  } | null;
+  comment: { text: string; at: string | null; by: string | null } | null;
+  spend: {
+    cents: string | number;
+    calls: number;
+    by_model:
+      | {
+          model: string;
+          provider: string | null;
+          calls: number;
+          input_tokens: number;
+          output_tokens: number;
+          cents: string | number;
+        }[]
+      | null;
+    /** Usage arrives on an hourly import, so this can lag the run. */
+    newest_record: string | null;
+  };
+}
+
 export interface AttentionItem {
   id: string;
   rule: string;
@@ -409,6 +454,8 @@ export const api = {
   projects: async () =>
     asList(await get<ProjectSummary[] | null>("/v1/projects")),
   platform: () => get<PlatformState>("/v1/platform"),
+
+  bead: (id: string) => get<BeadDetail>(`/v1/work/${encodeURIComponent(id)}`),
 
   projectDetail: (slug: string) =>
     get<ProjectDetail & { repositories: RepositoryStatus[] }>(
