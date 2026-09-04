@@ -50,7 +50,39 @@ module "environment" {
   # If a real connection still fails after applying this, read the redirect_uri
   # the registration actually asked for from Zero Trust -> Logs -> Access and
   # replace this value with it. docs/runbooks/connect-a-client.md says how.
-  access_oauth_allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+  # Domain-scoped rather than one exact path, after the exact path failed.
+  #
+  # https://claude.ai/api/mcp/auth_callback is a REAL endpoint -- it answers 400
+  # to a bare GET rather than 404, and claude.com/api/mcp/auth_callback does 404
+  # -- so the URI itself was right, it was applied, and a hosted client still
+  # could not connect. That leaves the registration REQUEST rather than the
+  # value: a client that submits several redirect_uris is refused outright if
+  # any one of them is outside the list, and we cannot see which ones it sends.
+  #
+  # So the list stops trying to predict the path. Cloudflare's own documented
+  # example is domain-scoped in exactly this way
+  # (https://playground.ai.cloudflare.com/*), and `/*` matches all sub-paths.
+  #
+  # What this widens, stated plainly: an authorization code may now be
+  # redirected to ANY path on claude.ai or claude.com rather than one. What
+  # holds it: PKCE S256, which the authorization server advertises and requires,
+  # so a code intercepted at another path on that domain is not redeemable
+  # without the verifier; the client is registered to those domains and nowhere
+  # else; and a token, however obtained, still resolves to the person who
+  # completed an interactive Access login and is enforced against the same
+  # policies as their browser session.
+  #
+  # claude.com as well as claude.ai because Anthropic is mid-rename --
+  # support.anthropic.com now 301s to support.claude.com -- and a callback that
+  # moves domain would fail exactly like this.
+  #
+  # NARROW IT BACK once the Access log shows which URI a real registration
+  # asks for: Zero Trust -> Logs -> Access, the failed event names it. This is a
+  # widening bought with lack of visibility, not a preference.
+  access_oauth_allowed_redirect_uris = [
+    "https://claude.ai/*",
+    "https://claude.com/*",
+  ]
 
   ai_monthly_budget = var.ai_monthly_budget
   ai_budget_shares  = var.ai_budget_shares
