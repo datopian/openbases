@@ -212,13 +212,21 @@ func (d *dispatcher) run(ctx context.Context, job work.Job) (string, error) {
 		bead = "plan-" + job.ID
 	}
 
+	// The rig's canonical working tree, which is what `gt rig add` calls the
+	// refinery. Told to the agent rather than left to be found: routing now
+	// guarantees this rig holds the repository the bead's project owns, so the
+	// path is known here and an agent that has to search finds whatever else
+	// is in reach instead.
+	job.Checkout = d.cellRoot + "/town/" + rig + "/refinery/rig"
+	instructions := job.Instructions()
+
 	args := []string{
 		"-bead", bead,
 		"-cell", d.cell,
 		"-rig", rig,
 		"-cell-root", d.cellRoot,
 		"-role", job.Role(),
-		"-instructions", job.Instructions(),
+		"-instructions", instructions,
 		"-deadline", d.deadline.String(),
 	}
 	// The gateway token comes from the cell's own agent settings, which is

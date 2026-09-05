@@ -24,12 +24,16 @@ const (
 
 // Job is one claimed unit of work.
 type Job struct {
-	ID    string `json:"id"`
-	Kind  Kind   `json:"kind"`
-	Cell  string `json:"cell"`
-	Rig   string `json:"rig"`
-	Bead  string `json:"bead,omitempty"`
-	Brief string `json:"brief,omitempty"`
+	ID   string `json:"id"`
+	Kind Kind   `json:"kind"`
+	Cell string `json:"cell"`
+	Rig  string `json:"rig"`
+	// Checkout is where the rig's code is on the node, filled in by the
+	// dispatcher because only the node knows its own paths. Empty is allowed
+	// and simply omits the line: an older node sends no such thing.
+	Checkout string `json:"-"`
+	Bead     string `json:"bead,omitempty"`
+	Brief    string `json:"brief,omitempty"`
 	// Project is the slug the work is filed into, verified against the
 	// requester's membership when the job was enqueued. Empty is company-wide
 	// work; it is not a default the runner may choose, which is why it travels
@@ -112,10 +116,27 @@ func (j Job) Instructions() string {
 			strings.TrimSpace(j.Brief), project)
 
 	case KindWork:
+		// The checkout is NAMED, not left to be found.
+		//
+		// Without it an agent searches, and what it finds is whatever else is
+		// in reach: sa-4yn is about PortalJS and reported "no PortalJS source
+		// code accessible anywhere in this environment (checked town/sandbox,
+		// .repo.git, mayor/rig, refinery/rig, and all polecat sandboxes)".
+		// That was true of the directory it looked in and false of the machine
+		// -- town/portaljs held the code. Dispatch now guarantees the rig holds
+		// the repository the bead's project owns, so the path is known and
+		// saying it costs one line.
+		where := ""
+		if c := strings.TrimSpace(j.Checkout); c != "" {
+			where = fmt.Sprintf(
+				" The code this bead is about is checked out at %s; work there, "+
+					"and if what the bead describes is not in that checkout, say so "+
+					"rather than looking elsewhere on the machine.", c)
+		}
 		return fmt.Sprintf(
 			"Work the bead %s. Read it first, do what it asks, and close it when the work "+
 				"is done and not before. If you cannot complete it, leave it open and say why "+
-				"in a comment.", j.Bead)
+				"in a comment.%s", j.Bead, where)
 	}
 	return ""
 }

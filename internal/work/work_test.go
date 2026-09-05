@@ -81,3 +81,35 @@ func TestPlanPromptCarriesTheProject(t *testing.T) {
 		t.Fatalf("a projectless plan mentions a project label:\n%s", got)
 	}
 }
+
+// A work job names the checkout, so the agent does not have to find it.
+//
+// sa-4yn is about PortalJS and reported "no PortalJS source code accessible
+// anywhere in this environment (checked town/sandbox, .repo.git, mayor/rig,
+// refinery/rig, and all polecat sandboxes)". True of the directory it searched,
+// false of the machine: town/portaljs held the code. Dispatch now guarantees
+// the rig holds the repository the bead's project owns, so the path is known.
+func TestAWorkJobNamesTheCheckout(t *testing.T) {
+	j := Job{Kind: KindWork, Bead: "sa-4yn", Cell: "oss", Rig: "portaljs",
+		Checkout: "/srv/cells/oss/town/portaljs/refinery/rig"}
+	got := j.Instructions()
+	for _, want := range []string{
+		"sa-4yn",
+		"/srv/cells/oss/town/portaljs/refinery/rig",
+		"rather than looking elsewhere",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the instructions do not mention %q:\n%s", want, got)
+		}
+	}
+
+	// An older node sends no checkout, and the instruction must still read as
+	// a sentence rather than trailing off into a path that is not there.
+	bare := Job{Kind: KindWork, Bead: "sa-4yn", Cell: "oss"}.Instructions()
+	if strings.Contains(bare, "checked out at") {
+		t.Errorf("a job with no checkout still claims one:\n%s", bare)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(bare), "in a comment.") {
+		t.Errorf("the instruction does not end cleanly:\n%s", bare)
+	}
+}

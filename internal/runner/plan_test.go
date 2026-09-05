@@ -692,3 +692,53 @@ func TestTheGraphFollowsTheBeadAcrossRigs(t *testing.T) {
 		})
 	}
 }
+
+// The agent must reach BOTH rigs: the code and the graph.
+//
+// These are the same directory in the ordinary case, and were assumed to be
+// until routing by repository separated them. Giving only one is a run that
+// costs full price and cannot work. With only the bead's rig, sa-4yn ran
+// against PortalJS for 32.4 cents and reported "no PortalJS source code
+// accessible anywhere in this environment", having searched town/sandbox --
+// the one directory it could reach -- while town/portaljs sat outside its
+// sandbox.
+func TestTheAgentCanReachBothTheCodeAndTheGraph(t *testing.T) {
+	root := t.TempDir()
+	for _, r := range []struct{ rig, prefix string }{{"sandbox", "sa"}, {"portaljs", "por7"}} {
+		if err := os.MkdirAll(filepath.Join(root, "town", r.rig), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"type":"rig","name":"` + r.rig + `","beads":{"prefix":"` + r.prefix + `"}}`
+		if err := os.WriteFile(filepath.Join(root, "town", r.rig, "config.json"),
+			[]byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := spec()
+	s.CellRoot, s.Bead, s.Rig = root, "sa-4yn", "portaljs"
+	p, err := New(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		filepath.Join(root, "town", "portaljs"), // the code
+		filepath.Join(root, "town", "sandbox"),  // the graph
+	} {
+		if !strings.Contains(p.Settings, want) {
+			t.Errorf("%s is not in additionalDirectories, so the sandbox confines the agent away from it", want)
+		}
+	}
+
+	// And when they are the same rig, the path appears once. A settings file
+	// naming one directory twice invites the reader to wonder which is real.
+	s2 := spec()
+	s2.CellRoot, s2.Bead, s2.Rig = root, "por7-abc", "portaljs"
+	p2, err := New(s2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(p2.Settings, filepath.Join(root, "town", "portaljs")); n != 1 {
+		t.Errorf("the rig appears %d times in the settings, want once", n)
+	}
+}
