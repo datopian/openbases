@@ -412,13 +412,29 @@ func New(s Spec) (Plan, error) {
 	}
 	p.AllowedTools = tools
 
-	// The rig's graph, which is what the agent has to read and close.
+	// The graph that holds THIS BEAD, which is not always the rig the work runs
+	// in.
 	//
-	// Without it the run is a no-op that costs money: the first agent to get
-	// this far reported "I can't read wg-8el-trust's contents, so I can't act on
-	// it, and I can't leave a comment on it either".
+	// Without a graph at all the run is a no-op that costs money: the first
+	// agent to get this far reported "I can't read wg-8el-trust's contents, so
+	// I can't act on it, and I can't leave a comment on it either".
+	//
+	// And with the WRONG graph it is the same no-op, which is what routing by
+	// repository introduced. A bead graph is per-rig: each rig has its own Dolt
+	// database and its own id prefix, and one cannot see another's. sa-4yn was
+	// filed in the sandbox rig and is about PortalJS, so it now runs in the
+	// portaljs rig -- where `bd show sa-4yn` answers
+	//
+	//	Error fetching sa-4yn: no issue found matching "sa-4yn"
+	//
+	// The working tree has to be the rig that holds the code; the graph has to
+	// be the rig that holds the bead. They were the same thing only while
+	// every bead lived in one rig.
 	if rig := strings.TrimSpace(s.Rig); rig != "" {
 		p.BeadsDir = filepath.Join(s.CellRoot, "town", rig)
+		if owner := rigOwningBead(s.CellRoot, s.Bead); owner != "" && owner != rig {
+			p.BeadsDir = filepath.Join(s.CellRoot, "town", owner)
+		}
 	}
 
 	p.Env = map[string]string{}
@@ -703,6 +719,50 @@ func renderSettings(headers string, tools []string, beadsDir string) (string, er
 }
 
 // dirs returns a one-element list, or none, without a nil in the JSON.
+// rigOwningBead finds the rig whose graph a bead id belongs to, by its prefix.
+//
+// The prefix is what makes an id unambiguous across graphs, and every rig
+// records its own in config.json, so this is a lookup rather than a guess:
+//
+//	sandbox   sa       portaljs   por7      datahub_next  datc
+//
+// An id whose prefix matches no rig returns empty, and the caller keeps the rig
+// the work runs in. That is the safe direction and the old behaviour: a bead
+// this cannot place is a bead that was already being looked for in the run's
+// own graph.
+func rigOwningBead(cellRoot, bead string) string {
+	prefix, _, found := strings.Cut(strings.TrimSpace(bead), "-")
+	if !found || prefix == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(filepath.Join(cellRoot, "town"))
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(cellRoot, "town", e.Name(), "config.json"))
+		if err != nil {
+			continue
+		}
+		var config struct {
+			Type  string `json:"type"`
+			Beads struct {
+				Prefix string `json:"prefix"`
+			} `json:"beads"`
+		}
+		if err := json.Unmarshal(raw, &config); err != nil {
+			continue
+		}
+		if config.Type == "rig" && config.Beads.Prefix == prefix {
+			return e.Name()
+		}
+	}
+	return ""
+}
+
 func dirs(d string) []string {
 	if d == "" {
 		return []string{}
