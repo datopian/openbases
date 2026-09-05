@@ -433,6 +433,12 @@ jobs:
       - name: the Access bypass guard fails when it should
         run: bash test/acceptance/access_bypass_guard.sh
 
+      # A deploy script whose failures are unreadable is a deploy script that
+      # gets re-run rather than read. This one reported the wrong line twice on
+      # one afternoon, in opposite directions; both real outputs are fixtures.
+      - name: the rig provisioner reports the useful part of a failure
+        run: python3 test/acceptance/provisioner_reason.py
+
       # SOPS encrypts by key NAME, which makes the naming a security boundary.
       # Needs no key material: it reads ciphertext markers, never decrypts.
       - name: encrypted secrets
