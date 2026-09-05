@@ -1,4 +1,4 @@
-package main
+package dispatchroute
 
 import (
 	"strings"
@@ -61,15 +61,15 @@ func TestANamedRigMustBeOneThatHoldsTheWork(t *testing.T) {
 		found: nil,
 	}} {
 		t.Run(c.name, func(t *testing.T) {
-			rig, why, decided := chooseRig(c.found, c.wanted)
+			rig, why, decided := Choose(c.found, c.wanted)
 			if len(c.found) == 0 {
 				if decided {
-					t.Fatalf("chooseRig decided %q with no candidates", rig)
+					t.Fatalf("Choose decided %q with no candidates", rig)
 				}
 				return
 			}
 			if !decided {
-				t.Fatal("chooseRig did not decide")
+				t.Fatal("Choose did not decide")
 			}
 			if c.refused {
 				if why == "" {

@@ -2,7 +2,9 @@
 //
 //	wg-work sync-hq                 project the company graph into the UI
 //	wg-work plan "a brief"          queue a planning job
-//	wg-work dispatch wg-abc         queue one bead
+//	wg-work dispatch wg-abc [cell] [rig]
+//	                                queue one bead, in a rig that holds its
+//	                                project's code
 //	wg-work list                    what work exists, and what it cost
 //	wg-work queue                   what is queued, running or finished
 //
@@ -29,6 +31,7 @@ import (
 
 	"github.com/datopian/workgraph/internal/authz"
 	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/workgraph/internal/dispatchroute"
 )
 
 func main() {
@@ -64,17 +67,41 @@ func main() {
 
 	case "dispatch":
 		if len(args) < 1 {
-			fmt.Fprintln(os.Stderr, "usage: wg-work dispatch <bead> [cell]")
+			fmt.Fprintln(os.Stderr, "usage: wg-work dispatch <bead> [cell] [rig]")
 			os.Exit(2)
 		}
+		bead := args[0]
 		cell := cellOr(args, 1)
-		var id string
-		if err := db.QueryRowContext(ctx,
-			`SELECT system_enqueue_work('work', $1, 'sandbox', $2, NULL, NULL)`,
-			cell, args[0]).Scan(&id); err != nil {
+
+		// Routed, not hardcoded. This read `'sandbox'` -- the literal string --
+		// which is the exact failure the routing in dispatchroute was written
+		// to prevent: three PortalJS beads ran in a disposable sandbox, found
+		// no PortalJS source, correctly said so, and cost 78 cents. That it
+		// survived here is worse than it surviving in the API, because this is
+		// the tool somebody reaches for during a demo or an incident, when
+		// nobody is going to notice that `done` meant nothing.
+		rig, why, err := dispatchroute.For(ctx, db, bead, cell, rigOr(args, 2))
+		if err != nil {
 			fail(err)
 		}
-		fmt.Printf("queued %s for %s on %s\n", id, args[0], cell)
+		if why != "" {
+			fmt.Fprintf(os.Stderr, "not dispatched: %s\n", why)
+			os.Exit(5)
+		}
+		if rig == "" {
+			// No project, so nothing to route on, and the dispatcher's own
+			// default stands -- which is what happened before any of this
+			// existed. Said out loud rather than left to be discovered.
+			fmt.Fprintf(os.Stderr, "%s belongs to no project; running in the cell's default rig\n", bead)
+		}
+
+		var id string
+		if err := db.QueryRowContext(ctx,
+			`SELECT system_enqueue_work('work', $1, $2, $3, NULL, NULL)`,
+			cell, rig, bead).Scan(&id); err != nil {
+			fail(err)
+		}
+		fmt.Printf("queued %s for %s on %s in rig %s\n", id, bead, cell, orDefault(rig))
 
 	case "list":
 		listWork(ctx, db)
@@ -293,6 +320,26 @@ func cellOr(args []string, i int) string {
 		return args[i]
 	}
 	return "oss"
+}
+
+// rigOr is the rig named on the command line, or empty to let routing choose.
+//
+// Empty rather than a default on purpose: "no rig given" and "this rig" are
+// different requests, and defaulting is how `sandbox` got in here.
+func rigOr(args []string, i int) string {
+	if len(args) > i {
+		return strings.TrimSpace(args[i])
+	}
+	return ""
+}
+
+// orDefault names the dispatcher's own default for the one case where routing
+// has no opinion, so the line printed says what will actually happen.
+func orDefault(rig string) string {
+	if rig == "" {
+		return "(the cell's default)"
+	}
+	return rig
 }
 
 func dash(s string) string {

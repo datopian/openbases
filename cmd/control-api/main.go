@@ -29,6 +29,7 @@ import (
 	"github.com/datopian/workgraph/internal/budget"
 	"github.com/datopian/workgraph/internal/chiefofstaff"
 	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/workgraph/internal/dispatchroute"
 	"github.com/datopian/workgraph/internal/domain"
 	"github.com/datopian/workgraph/internal/events"
 	"github.com/datopian/workgraph/internal/githubapp"
@@ -959,7 +960,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		// PortalJS bead running in a disposable sandbox, reporting done, having
 		// found no PortalJS source. A caller naming a rig is choosing between
 		// the rigs that can do the work, not opting out of the question.
-		rig, why, err := rigForBead(r.Context(), db, bead, payload.Cell, payload.Rig)
+		rig, why, err := dispatchroute.For(r.Context(), db, bead, payload.Cell, payload.Rig)
 		switch {
 		case err != nil:
 			log.Error("routing a dispatch", "bead", bead, "error", err)
