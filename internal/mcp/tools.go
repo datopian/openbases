@@ -60,6 +60,15 @@ type beadArgs struct {
 
 type dispatchArgs struct {
 	Bead string `json:"bead" jsonschema:"The bead id, for example wg-abc."`
+	// A rig, for when more than one can do the work.
+	//
+	// Without this the refusal was unactionable from a hosted client: the
+	// PortalJS project holds datopian/portaljs AND datopian/cloud.portaljs.com,
+	// so dispatch answered "several rigs hold a repository for this bead's
+	// project, so name one" and there was no field in which to name one. The
+	// server refuses a rig that does not hold the work, so this is a choice
+	// among the candidates rather than a way round the check.
+	Rig string `json:"rig,omitempty" jsonschema:"Optional. The rig to run in, when dispatch says several hold this project's repositories. It must be one of the rigs it named."`
 }
 
 type noArgs struct{}
@@ -174,7 +183,9 @@ var (
 	toolDispatch = &sdk.Tool{
 		Name: "workgraph_dispatch",
 		Description: "Run one bead. SPENDS MONEY: an agent runs against it. " +
-			"Confirm with the person before calling this for work they did not ask you to run.",
+			"Confirm with the person before calling this for work they did not ask you to run. " +
+			"If it answers that several rigs hold this project's repositories, call it again " +
+			"with one of the rigs it named.",
 		Annotations: &sdk.ToolAnnotations{
 			Title: "Dispatch (spends money)", ReadOnlyHint: false, DestructiveHint: ptr(true),
 		},
@@ -260,8 +271,12 @@ func NewServer(o Options) *sdk.Server {
 		// Escaped, because a bead id reaches a path segment. The CLI
 		// interpolated it raw, which was safe only because the caller was the
 		// same process that had just read it from the server.
+		body := map[string]any{}
+		if rig := strings.TrimSpace(a.Rig); rig != "" {
+			body["rig"] = rig
+		}
 		return plain(ctx, c, shell, obs, "workgraph_dispatch", http.MethodPost,
-			"/v1/work/"+url.PathEscape(bead)+"/dispatch", map[string]any{})
+			"/v1/work/"+url.PathEscape(bead)+"/dispatch", body)
 	})
 
 	return s
