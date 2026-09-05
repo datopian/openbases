@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -95,6 +96,9 @@ type Plan struct {
 	AllowedTools []string
 	// BeadsDir is the graph the agent reads and closes its bead in.
 	BeadsDir string
+	// RigDir is the rig holding the code the bead is about, which is not always
+	// the rig the bead lives in.
+	RigDir string
 	// Env is what the run needs in its environment. Not the gateway credential,
 	// which is only honoured from a settings file, and not anything secret.
 	Env map[string]string
@@ -431,7 +435,8 @@ func New(s Spec) (Plan, error) {
 	// be the rig that holds the bead. They were the same thing only while
 	// every bead lived in one rig.
 	if rig := strings.TrimSpace(s.Rig); rig != "" {
-		p.BeadsDir = filepath.Join(s.CellRoot, "town", rig)
+		p.RigDir = filepath.Join(s.CellRoot, "town", rig)
+		p.BeadsDir = p.RigDir
 		if owner := rigOwningBead(s.CellRoot, s.Bead); owner != "" && owner != rig {
 			p.BeadsDir = filepath.Join(s.CellRoot, "town", owner)
 		}
@@ -470,7 +475,7 @@ func planClaude(p *Plan, s Spec, tools []string) error {
 	if err != nil {
 		return err
 	}
-	settings, err := renderSettings(headers, tools, p.BeadsDir)
+	settings, err := renderSettings(headers, tools, p.RigDir, p.BeadsDir)
 	if err != nil {
 		return err
 	}
@@ -685,7 +690,7 @@ func renderHeaders(token string, metadata map[string]string) (string, error) {
 }
 
 // renderSettings builds the settings file the CLI is pointed at.
-func renderSettings(headers string, tools []string, beadsDir string) (string, error) {
+func renderSettings(headers string, tools []string, rigDir, beadsDir string) (string, error) {
 	doc := map[string]any{
 		// Honoured only from here. The same value exported into the process
 		// environment is ignored, and the run then reaches the gateway with no
@@ -705,10 +710,20 @@ func renderSettings(headers string, tools []string, beadsDir string) (string, er
 				"Bash(curl:*)",
 				"Bash(rm:*)",
 			},
-			// The rig, so the agent can reach the graph its bead lives in. The
-			// sandbox otherwise confines it to its own working directory, and an
-			// agent that cannot read its bead cannot do anything with it.
-			"additionalDirectories": dirs(beadsDir),
+			// BOTH rigs: the one holding the code, and the one holding the
+			// bead. The sandbox otherwise confines the agent to its own run
+			// directory, and it needs to read both.
+			//
+			// They are usually the same directory and were assumed to be until
+			// routing by repository separated them. Giving only one is a run
+			// that costs full price and cannot work: with only the bead's rig,
+			// sa-4yn ran against PortalJS for 32.4 cents and reported "no
+			// PortalJS source code accessible anywhere in this environment",
+			// having searched town/sandbox -- the graph it could reach --
+			// while town/portaljs sat outside its sandbox. With only the run's
+			// rig it is the mirror image: the code is there and the bead
+			// cannot be read or closed.
+			"additionalDirectories": dirs(rigDir, beadsDir),
 		},
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
@@ -763,11 +778,20 @@ func rigOwningBead(cellRoot, bead string) string {
 	return ""
 }
 
-func dirs(d string) []string {
-	if d == "" {
-		return []string{}
+// dirs is the set of directories, in order, without duplicates or blanks.
+//
+// Deduplicated because the two rigs are the same directory in the ordinary
+// case, and a settings file naming one path twice invites the reader to wonder
+// which one is the real one.
+func dirs(paths ...string) []string {
+	out := []string{}
+	for _, d := range paths {
+		if d == "" || slices.Contains(out, d) {
+			continue
+		}
+		out = append(out, d)
 	}
-	return []string{d}
+	return out
 }
 
 func known(m map[string]string) string {
