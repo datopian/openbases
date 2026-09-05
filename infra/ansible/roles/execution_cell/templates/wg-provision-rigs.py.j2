@@ -165,15 +165,42 @@ def add(cell, rig, url, prefix, dry_run):
     # command from the remote user's home, not from the town.
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=town)
     if r.returncode != 0:
-        # The FIRST line only. gt follows its error with its whole usage text,
-        # forty lines of flags, and the ansible task that reports this printed
-        # all of it -- so the one line that said "not in a Gas Town workspace"
-        # arrived buried in a wall of `--sparse-checkout` documentation.
-        out = (r.stderr or r.stdout or "").strip().splitlines()
-        why = out[0] if out else f"exit status {r.returncode}"
-        print(f"FAILED to create {rig}: {why}", file=sys.stderr)
+        print(f"FAILED to create {rig}: {reason(r)}", file=sys.stderr)
         return False
     return True
+
+
+def reason(r):
+    """The useful part of a failed `gt rig add`.
+
+    Neither the first line nor the last one, and both were tried:
+
+      gt's own errors come FIRST and are followed by its entire usage text, so
+      printing everything buried "not in a Gas Town workspace" in forty lines
+      of `--sparse-checkout` documentation;
+
+      a git failure underneath gt comes LAST, after git's progress output, so
+      printing the first line reported `Cloning into bare repository...` --
+      which is not an error at all -- and hid
+      `git-credential-workgraph: no token issued for data-portal-examples`.
+
+    So: everything except gt's usage block, which starts at a line of "Usage:"
+    and runs to the end.
+    """
+    lines = (r.stderr or r.stdout or "").strip().splitlines()
+    kept = []
+    for line in lines:
+        if line.strip() == "Usage:":
+            break
+        if line.strip():
+            kept.append(line.strip())
+    if not kept:
+        return f"exit status {r.returncode}"
+    # A cap, because a clone can print a lot and this goes through an ansible
+    # debug message. The last lines are the ones nearest the failure.
+    if len(kept) > 6:
+        kept = ["..."] + kept[-6:]
+    return " | ".join(kept)
 
 
 def main():
