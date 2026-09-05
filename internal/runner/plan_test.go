@@ -643,3 +643,52 @@ func TestTheClaudeRuntimeHasNoStateDirectory(t *testing.T) {
 		t.Errorf("claude asked for a state directory: %q", p.StatePath)
 	}
 }
+
+// The graph follows the BEAD, not the rig the work runs in.
+//
+// Routing by repository split the two apart: sa-4yn was filed in the sandbox
+// rig and is about PortalJS, so it now runs in the portaljs rig -- where
+// `bd show sa-4yn` answers `no issue found matching "sa-4yn"`, because a bead
+// graph is per-rig and one cannot see another's. The working tree has to be the
+// rig that holds the code and the graph has to be the rig that holds the bead.
+func TestTheGraphFollowsTheBeadAcrossRigs(t *testing.T) {
+	root := t.TempDir()
+	town := func(rig, prefix, kind string) {
+		if err := os.MkdirAll(filepath.Join(root, "town", rig), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"type":"` + kind + `","name":"` + rig + `","beads":{"prefix":"` + prefix + `"}}`
+		if err := os.WriteFile(filepath.Join(root, "town", rig, "config.json"),
+			[]byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	town("sandbox", "sa", "rig")
+	town("portaljs", "por7", "rig")
+	// Not a rig, and it carries a config.json: it must never be chosen however
+	// its contents read.
+	town("settings", "sa", "town-settings")
+
+	for _, c := range []struct{ name, bead, rig, want string }{
+		{"a bead from another rig brings its own graph", "sa-4yn", "portaljs", "sandbox"},
+		{"a bead from the run's own rig keeps it", "por7-abc", "portaljs", "portaljs"},
+		{"an unknown prefix falls back to the run's rig", "zz9-abc", "portaljs", "portaljs"},
+		{"an id with no prefix falls back too", "4yn", "portaljs", "portaljs"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := spec()
+			s.CellRoot, s.Bead, s.Rig = root, c.bead, c.rig
+			p, err := New(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(root, "town", c.want)
+			if p.BeadsDir != want {
+				t.Errorf("beads dir is %q, want %q", p.BeadsDir, want)
+			}
+			if p.Env["BEADS_DIR"] != filepath.Join(want, ".beads") {
+				t.Errorf("BEADS_DIR is %q, so bd would look in the wrong place", p.Env["BEADS_DIR"])
+			}
+		})
+	}
+}
