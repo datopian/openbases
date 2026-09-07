@@ -1,4 +1,4 @@
-# Managed by Ansible (WP-I3). Resource limits for cell {{ item.name }}.
+# Managed by Ansible (WP-I3). Resource limits for cell {{ cell.name }}.
 #
 # This is the slice agents ACTUALLY run in. The limits on user-<uid>.slice apply
 # only to real login sessions, and agents are not started from one: dispatch runs
@@ -6,13 +6,13 @@
 # scope and no limit applied to any of them. The user slice held zero processes
 # while advertising a quota.
 #
-# Placement is by `systemd-run --slice=wgcell-{{ item.name }}.slice`, which puts
+# Placement is by `systemd-run --slice=wgcell-{{ cell.name }}.slice`, which puts
 # the town — and therefore tmux, and therefore every agent it spawns — inside
 # this cgroup. Verified on the node: a 40% quota produced exactly 2400 ms of CPU
 # in 6 seconds with 89 throttled periods.
 
 [Unit]
-Description=Workgraph execution cell {{ item.name }}
+Description=Workgraph execution cell {{ cell.name }}
 Before=slices.target
 
 [Slice]
@@ -24,10 +24,26 @@ TasksAccounting=yes
 IOAccounting=yes
 
 # Derived from the node, not chosen. See the role defaults for the reasoning.
+#
+# Memory follows the LOAD, not the cell count. A cell with no town runs no
+# agents, so it gets the floor -- enough to be provisioned into, not enough to
+# work in -- and the cells that do the work share what is left. An equal split
+# reserved 1863 MiB on this node for two cells measured at 0 MB while the one
+# doing everything was capped at 932 MiB, which is the ceiling that OOM-killed
+# an `npm ci` needing 724 MiB.
+{% if cell_has_a_town | bool %}
 CPUQuota={{ cell_cpu_percent }}%
-MemoryHigh={{ (cell_memory_mb * 0.8) | round | int }}M
+MemoryHigh={{ (cell_memory_mb | int * 0.8) | round | int }}M
 MemoryMax={{ cell_memory_mb }}M
-TasksMax={{ item.max_processes | default(512) }}
+{% else %}
+# No town: nothing runs here yet. The floor is deliberate rather than
+# generous — it will be raised by the next deploy after this cell gets a town,
+# because that is what the derivation reads.
+CPUQuota={{ cell_cpu_percent }}%
+MemoryHigh={{ (cell_idle_memory_mb | int * 0.8) | round | int }}M
+MemoryMax={{ cell_idle_memory_mb }}M
+{% endif %}
+TasksMax={{ cell.max_processes | default(512) }}
 
 # MemoryHigh before MemoryMax on purpose: it throttles and reclaims under
 # pressure rather than killing outright, so a cell that is merely busy slows
