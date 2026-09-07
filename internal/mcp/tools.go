@@ -185,9 +185,12 @@ var (
 	// unreadable on a phone and expensive to produce.
 	toolBead = &sdk.Tool{
 		Name: "workgraph_bead",
-		Description: "Everything known about one bead: whether the work finished, " +
-			"why not if it did not, what the agent said about it, and which model it " +
-			"used and what that cost. Use after dispatching, and for 'what happened to', " +
+		Description: "Everything known about one bead, including one still running: " +
+			"whether the work finished, why not if it did not, what the agent said, " +
+			"which HARNESS and MODEL are running it, what it has cost, and the pull " +
+			"request if it landed. Cost arrives on an hourly import, so a run in " +
+			"flight reports `awaiting_import` rather than a zero that reads as free. " +
+			"Use after dispatching, and for 'what is it doing', 'what happened to', " +
 			"'did that work', 'why did that fail', 'what did that cost'.",
 		Annotations: &sdk.ToolAnnotations{
 			Title: "Bead detail", ReadOnlyHint: true, DestructiveHint: ptr(false),

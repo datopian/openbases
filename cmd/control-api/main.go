@@ -436,6 +436,49 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, job)
 	})
 
+	// What a run is using, reported by the node when it starts.
+	//
+	// The node is the only party that knows: wg-runner resolves the harness and
+	// model from a catalogue on the execution node. Without this the control
+	// plane learned which model did the work only from usage_records, which the
+	// cost importer fills hourly — so a bead in progress showed no model and no
+	// harness at all, which is exactly what somebody asks about a run they are
+	// waiting on.
+	authed.HandleFunc("POST /v1/node/work/{id}/plan", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		var body struct {
+			Runtime string `json:"runtime"`
+			Model   string `json:"model"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		var recorded sql.NullBool
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT system_record_run_plan($1, $2, $3)`,
+			r.PathValue("id"), body.Runtime, body.Model).Scan(&recorded); err != nil {
+			log.Error("recording what a run uses", "job", r.PathValue("id"), "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		// A job the control plane has forgotten is not an error the node should
+		// fail its run over: it is reported as not recorded and the run goes on.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"recorded": recorded.Valid && recorded.Bool,
+			"runtime":  body.Runtime,
+			"model":    body.Model,
+		})
+	})
+
 	// Report a finished job.
 	authed.HandleFunc("POST /v1/node/work/{id}/result", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := authn.FromContext(r.Context())

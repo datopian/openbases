@@ -804,3 +804,53 @@ func TestTheAgentGetsTheBrowseCommandAndNotTheBrowser(t *testing.T) {
 		}
 	}
 }
+
+// The dispatcher and the runner resolve the same harness and model, because
+// they call the same resolver.
+//
+// Reading the catalogue in the dispatcher and applying the precedence rule
+// again there would be a second implementation of it, and the two would
+// disagree silently on the day somebody changed one — both would still return
+// something plausible.
+func TestPlannedForMatchesWhatTheRunnerWouldUse(t *testing.T) {
+	cat := &Catalogue{
+		Runtimes: map[string]Runtime{"polecat": "opencode"},
+		Models:   map[string]string{"polecat": "workers-ai/@cf/zai-org/glm-5.3-flash"},
+	}
+	harness, model := cat.PlannedFor("polecat")
+	if harness != "opencode" || model != "workers-ai/@cf/zai-org/glm-5.3-flash" {
+		t.Errorf("PlannedFor = %q, %q", harness, model)
+	}
+
+	// A catalogue that names one role must not blank the others: the built-in
+	// table answers for a role it omits, per key rather than per table.
+	harness, model = cat.PlannedFor("crew")
+	if harness == "" || model == "" {
+		t.Errorf("a role the catalogue omits got %q, %q; the built-in table should answer", harness, model)
+	}
+
+	// And a nil catalogue is the built-in table throughout, which is what a
+	// node with no /etc/workgraph/models.json has.
+	var absent *Catalogue
+	harness, model = absent.PlannedFor("polecat")
+	if harness == "" || model == "" {
+		t.Errorf("no catalogue gave %q, %q; the built-in table should answer", harness, model)
+	}
+}
+
+// LoadCatalogue("") must not be mistaken for "no catalogue configured".
+//
+// The dispatcher grew a catalogue field that nothing populated, so it held "".
+// That compiles, and LoadCatalogue("") fails, so the report was swallowed to a
+// log line and the feature silently did nothing on every run. Asserted so the
+// difference between "absent" and "not configured" stays visible.
+func TestAnAbsentCatalogueAndAnUnsetPathDiffer(t *testing.T) {
+	absent, err := LoadCatalogue(filepath.Join(t.TempDir(), "models.json"))
+	if err != nil || absent != nil {
+		t.Errorf("a missing file gave %v, %v; want nil, nil so the built-in table is used", absent, err)
+	}
+	if _, err := LoadCatalogue(""); err == nil {
+		t.Error("an empty path was accepted; a dispatcher that never set it would report nothing " +
+			"and look like a node with no catalogue")
+	}
+}

@@ -2878,6 +2878,116 @@
           }
         }
       }
+    },
+    "/v1/node/work/{id}/plan": {
+      "post": {
+        "summary": "Report the harness and model a run is using",
+        "operationId": "post_v1_node_work_id_plan",
+        "description": "Execution-node path (ADR-0019), service credential only. The node reports this when it STARTS a run, because it is the only party that knows: wg-runner resolves the harness and model from a catalogue on the execution node. Without it the control plane learns which model did the work only from usage_records, which the cost importer fills hourly \u2014 so a bead in progress shows no model and no harness at all. Surfaced on the bead's detail as `run.harness` and `run.model`. A job the control plane no longer holds answers `recorded: false` rather than failing, because a node should not abandon a run over it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A repeat under the same key replays the recorded success rather than acting twice. This endpoint is naturally idempotent as well: it records the same two values."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "runtime": {
+                    "type": "string",
+                    "description": "The harness, for example opencode or claude."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "provider/model, for example workers-ai/@cf/zai-org/glm-5.3-flash."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded, or reported as not recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

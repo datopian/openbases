@@ -341,6 +341,12 @@ jobs:
       - name: a repository's check command is opt-in and readable by a node
         run: psql -v ON_ERROR_STOP=1 -f test/integration/repository_check.sql
 
+      # The status of a bead in progress has to include what is running it. The
+      # model was only ever visible through an hourly cost import, and the
+      # harness was recorded nowhere.
+      - name: a running bead names its harness and model
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/run_says_what_it_uses.sql
+
       # Where an agent's work went. Before the landing path, a run that changed
       # code closed its bead with the change stranded in a working tree on the
       # node, and nothing in the interface said so.
