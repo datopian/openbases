@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -740,5 +741,66 @@ func TestTheAgentCanReachBothTheCodeAndTheGraph(t *testing.T) {
 	}
 	if n := strings.Count(p2.Settings, filepath.Join(root, "town", "portaljs")); n != 1 {
 		t.Errorf("the rig appears %d times in the settings, want once", n)
+	}
+}
+
+// The two runtimes grant the same commands, because the bash block is derived
+// from the same allowlist rather than written out twice.
+//
+// It WAS written out by hand as {"*": "deny", "bd *": "allow"}, which meant
+// adding a command to DefaultTools granted it under the claude runtime and
+// silently not under opencode. OpenCode is the default runtime now, so that
+// drift would have been the live behaviour: an agent told it had a browser,
+// with no permission to run it.
+func TestBothRuntimesGrantTheSameCommands(t *testing.T) {
+	got := bashPermissions(DefaultTools["polecat"])
+
+	// Deny first. OpenCode matches with the LAST pattern winning, so a
+	// catch-all written after the allows would deny everything while reading
+	// exactly the same.
+	if got["*"] != "deny" {
+		t.Errorf("the catch-all is %q, want deny", got["*"])
+	}
+	for _, want := range []string{"bd *", "wg-browse *"} {
+		if got[want] != "allow" {
+			t.Errorf("%q is %q, want allow", want, got[want])
+		}
+	}
+	// And nothing else is allowed. A permission block that grants more than
+	// the allowlist is the drift this function exists to prevent.
+	for pattern, decision := range got {
+		if decision != "allow" {
+			continue
+		}
+		if pattern != "bd *" && pattern != "wg-browse *" {
+			t.Errorf("%q is allowed and is not in the allowlist", pattern)
+		}
+	}
+
+	// A role with no Bash entries gets deny and nothing else, rather than an
+	// empty block — which OpenCode would read as no restriction at all.
+	bare := bashPermissions([]string{"Read", "Grep"})
+	if len(bare) != 1 || bare["*"] != "deny" {
+		t.Errorf("a role with no shell got %v, want only a deny", bare)
+	}
+}
+
+// The browser reaches the agent as `wg-browse`, never as the browser itself.
+// The command is what decides which addresses may be fetched; the binary would
+// fetch anything, including this node's cloud metadata, which answers 200.
+func TestTheAgentGetsTheBrowseCommandAndNotTheBrowser(t *testing.T) {
+	for _, role := range []string{"polecat", "crew"} {
+		tools := DefaultTools[role]
+		if !slices.Contains(tools, "Bash(wg-browse:*)") {
+			t.Errorf("%s cannot browse at all: %v", role, tools)
+		}
+		for _, forbidden := range []string{
+			"Bash(chrome-headless-shell:*)", "Bash(chrome:*)", "Bash(chromium:*)",
+			"Bash(curl:*)", "Bash(*)",
+		} {
+			if slices.Contains(tools, forbidden) {
+				t.Errorf("%s is granted %s, which bypasses the address policy", role, forbidden)
+			}
+		}
 	}
 }

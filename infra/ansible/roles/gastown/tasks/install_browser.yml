@@ -1,0 +1,139 @@
+---
+# A browser the agents can use, and the narrow command they reach it through.
+#
+# Not install_binary.yml: that expects a tar.gz with one executable, and this is
+# a zip whose binary needs the shared libraries beside it.
+
+- name: Check which headless browser is installed
+  ansible.builtin.command: "{{ chrome_headless_shell_binary }} --version"
+  register: browser_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Report that chrome-headless-shell {{ chrome_headless_shell_version }} would be installed"
+  ansible.builtin.debug:
+    msg: "chrome-headless-shell {{ chrome_headless_shell_version }} is not installed; a real run would install it"
+  when:
+    - ansible_check_mode
+    - chrome_headless_shell_version not in (browser_installed.stdout | default(''))
+  changed_when: true
+
+# Chrome links against these at runtime and reports a bare "error while loading
+# shared libraries" without them, which reads as a broken download rather than a
+# missing dependency. Installed whether or not the browser is, so a node that
+# has the binary and lost a library is repaired.
+- name: Install the libraries Chrome links against
+  ansible.builtin.apt:
+    name:
+      - libnss3
+      - libnspr4
+      - libatk1.0-0t64
+      - libatk-bridge2.0-0t64
+      - libcups2t64
+      - libdrm2
+      - libxkbcommon0
+      - libxcomposite1
+      - libxdamage1
+      - libxfixes3
+      - libxrandr2
+      - libgbm1
+      - libpango-1.0-0
+      - libcairo2
+      - libasound2t64
+      - fonts-liberation
+    state: present
+    update_cache: true
+
+- name: "Install chrome-headless-shell {{ chrome_headless_shell_version }}"
+  when:
+    - not ansible_check_mode
+    - chrome_headless_shell_version not in (browser_installed.stdout | default(''))
+  block:
+    - name: Create a staging directory for the browser
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: -browser-install
+      register: browser_staging
+
+    - name: Download and install the browser
+      block:
+        - name: Download chrome-headless-shell
+          ansible.builtin.get_url:
+            url: >-
+              https://storage.googleapis.com/chrome-for-testing-public/{{
+              chrome_headless_shell_version }}/linux64/chrome-headless-shell-linux64.zip
+            dest: "{{ browser_staging.path }}/chrome.zip"
+            checksum: "sha256:{{ chrome_headless_shell_sha256 }}"
+            mode: "0644"
+
+        # Its whole directory, because the binary needs the .so files and the
+        # locale data that ship beside it. A versioned prefix, so a rollback is
+        # a symlink change.
+        - name: Unpack the browser into its own versioned prefix
+          ansible.builtin.unarchive:
+            src: "{{ browser_staging.path }}/chrome.zip"
+            dest: /usr/local/lib
+            remote_src: true
+            owner: root
+            group: root
+            creates: >-
+              /usr/local/lib/chrome-headless-shell-{{
+              chrome_headless_shell_version }}/chrome-headless-shell
+
+        # The zip unpacks as chrome-headless-shell-linux64, so it is renamed to
+        # carry the version. Without this every version overwrites the last and
+        # the `creates` guard above can never be true.
+        - name: Give the unpacked browser a versioned name
+          ansible.builtin.command: >-
+            mv /usr/local/lib/chrome-headless-shell-linux64
+               /usr/local/lib/chrome-headless-shell-{{ chrome_headless_shell_version }}
+          args:
+            creates: >-
+              /usr/local/lib/chrome-headless-shell-{{
+              chrome_headless_shell_version }}/chrome-headless-shell
+            removes: /usr/local/lib/chrome-headless-shell-linux64
+
+        - name: Make the browser executable
+          ansible.builtin.file:
+            path: >-
+              /usr/local/lib/chrome-headless-shell-{{
+              chrome_headless_shell_version }}/chrome-headless-shell
+            mode: "0755"
+
+        - name: Put the browser on the PATH
+          ansible.builtin.file:
+            src: >-
+              /usr/local/lib/chrome-headless-shell-{{
+              chrome_headless_shell_version }}/chrome-headless-shell
+            dest: "{{ chrome_headless_shell_binary }}"
+            state: link
+            force: true
+
+        - name: Confirm the installed browser is the pinned one
+          ansible.builtin.command: "{{ chrome_headless_shell_binary }} --version"
+          register: browser_now
+          changed_when: false
+
+        - name: Refuse a browser that is not the pinned version
+          ansible.builtin.assert:
+            that: chrome_headless_shell_version in browser_now.stdout
+            fail_msg: >-
+              {{ chrome_headless_shell_binary }} reports
+              {{ browser_now.stdout }}, not {{ chrome_headless_shell_version }}
+      always:
+        - name: Clean up the browser download
+          ansible.builtin.file:
+            path: "{{ browser_staging.path }}"
+            state: absent
+
+# The command the agents actually get. The browser itself is never in their
+# allowlist: `wg-browse` is, and it decides which addresses may be fetched.
+- name: Install the browse command
+  ansible.builtin.template:
+    src: wg-browse.py.j2
+    dest: /usr/local/bin/wg-browse
+    owner: root
+    group: root
+    mode: "0755"
+    validate: "python3 -m py_compile %s"

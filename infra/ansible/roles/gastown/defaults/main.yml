@@ -28,6 +28,22 @@ dolt_sha256_linux_amd64: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc3145
 node_version: "v22.23.2"
 node_sha256_linux_x64: "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
 
+# A browser for the agents, pinned like everything else that gets installed.
+#
+# chrome-headless-shell rather than a full Chrome or the distribution's
+# chromium. Ubuntu 24.04 offers `chromium` only as a snap transitional package,
+# and a snap on a headless server means snapd, mount units and a confinement
+# model that fights a systemd slice. Chrome for Testing publishes a pinned,
+# versioned, headless-only build that is a zip and nothing else.
+#
+# The digest is computed from the artefact rather than published by Google:
+# Chrome for Testing's manifest carries URLs and no checksums, so this was read
+# from the downloaded zip on 2026-09-07. A copied number rots, which is why the
+# date is here.
+chrome_headless_shell_version: "152.0.7977.82"
+chrome_headless_shell_sha256: "0ca12ea26b502a83e32db334a17883c315348845efc071d908de7a6d94a97eff"
+chrome_headless_shell_binary: /usr/local/bin/chrome-headless-shell
+
 # Gas Town spawns the Claude Code CLI: its start command is
 # `exec claude --dangerously-skip-permissions`. The agent harness is therefore a
 # dependency of the orchestrator, not an implementation detail of the model.

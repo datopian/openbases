@@ -49,6 +49,12 @@
 - name: Install a pinned Node for repository checks
   ansible.builtin.include_tasks: install_node.yml
 
+# And a browser, so an agent can look at a page rather than reason about the
+# source and hope. sa-r5k was asked to confirm a hero tab was "pixel-for-pixel
+# unchanged" and had no way to see it.
+- name: Install a browser for the agents
+  ansible.builtin.include_tasks: install_browser.yml
+
 # tmux is a hard dependency, not a convenience: Gas Town runs each agent in a
 # tmux session so a session survives the orchestrator restarting and can be
 # reattached for inspection.
