@@ -80,6 +80,22 @@ Two runtimes to begin with, because two is what proves the abstraction and one d
 `claude` stays the default. This ADR does not migrate anything; it makes migration
 possible and cheap to trial one bead at a time.
 
+> **Superseded on 2026-09-07.** The default is now `opencode` on
+> `workers-ai/@cf/zai-org/glm-5.3-flash`. What moved it was
+> `scripts/model_bakeoff.sh`, which screens a candidate on context, tool use,
+> and real work scored on the edit rather than the answer. GLM 5.3 Flash passed
+> all three, as did the Sonnet 5 control, and the runs cost $0.0037 against
+> $0.2732 — with every call landing in `usage_records` carrying `role`, `cell`
+> and `bead`, which is the acceptance criterion this ADR set below.
+>
+> This is recorded here rather than only in the Ansible defaults because an ADR
+> that says "claude stays the default" while the configuration says otherwise is
+> the two-places-disagreeing problem the rest of this document warns about.
+>
+> The screens are an off-by-one and a file edit, so this is not evidence that
+> GLM matches Sonnet on hard work. `-runtime claude -model
+> anthropic/claude-sonnet-5` still overrides per run.
+
 ### Attribution is the acceptance criterion, not the model working
 
 A run that reaches a model but arrives untagged is worse than a run that fails, because it

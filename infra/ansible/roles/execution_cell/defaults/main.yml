@@ -48,13 +48,37 @@ dispatcher_interval: 10s
 #
 # Names are <gateway-provider>/<model> (wg-8e0), the spelling the gateway uses
 # and the one that comes back in usage_records.
+# The runtime and model the work roles get by default.
+#
+# OpenCode on GLM 5.3 Flash since 2026-09-07, replacing Claude Code on
+# Sonnet 5. ADR-0024 built the runtime abstraction and deliberately left the
+# default alone; scripts/model_bakeoff.sh is what moved it, and the numbers are
+# the whole argument:
+#
+#   screen 1 context     glm-5.3-flash 1310720   sonnet-5 200000    both pass
+#   screen 2 tool use    both edited the file
+#   screen 3 real work   both fixed the boundary  (scored on the EDIT, not prose)
+#
+#   bakeoff-tools  sonnet-5 6 calls $0.1738   glm 4 calls $0.0015
+#   bakeoff-work   sonnet-5 7 calls $0.0994   glm 6 calls $0.0022
+#
+# $0.2732 against $0.0037 for the same passing result, and every GLM call
+# arrived in usage_records carrying role, cell and bead -- which is ADR-0024's
+# actual acceptance criterion, because a run that reaches a model untagged is
+# worse than one that fails.
+#
+# What this is NOT evidence of: that GLM matches Sonnet on hard work. The
+# screens are an off-by-one and a file edit. It is evidence that it can do the
+# work at all, attributably, at a fiftieth of the price -- which is enough to
+# make it the default when any run can override it with `-runtime claude
+# -model anthropic/claude-sonnet-5` and a bead that needs more can say so.
 wg_model_runtimes:
-  polecat: claude
-  crew: claude
+  polecat: opencode
+  crew: opencode
 
 wg_model_roles:
-  polecat: anthropic/claude-sonnet-5
-  crew: anthropic/claude-sonnet-5
+  polecat: workers-ai/@cf/zai-org/glm-5.3-flash
+  crew: workers-ai/@cf/zai-org/glm-5.3-flash
 
 wg_model_effort:
   polecat: medium
