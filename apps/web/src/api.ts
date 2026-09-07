@@ -198,6 +198,22 @@ export interface BeadDetail {
     log_tail: string | null;
   } | null;
   comment: { text: string; at: string | null; by: string | null } | null;
+  /**
+   * Where the work went. Empty is the honest answer for a bead whose work
+   * needed no code change, and it was the only answer possible for anything
+   * before the landing path existed: an agent cannot run git, so a change it
+   * made stayed in a working tree on the execution node.
+   *
+   * Newest first. More than one means the bead was worked more than once.
+   */
+  pull_requests: {
+    url: string;
+    number: number;
+    repository: string;
+    head: string;
+    base: string;
+    opened: string | null;
+  }[];
   spend: {
     cents: string | number;
     calls: number;

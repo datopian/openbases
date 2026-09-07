@@ -482,6 +482,148 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, map[string]any{"registered": true})
 	})
 
+	// Where an agent's work landed.
+	//
+	// The node has just pushed a branch and asks for the pull request to be
+	// opened. It happens here rather than on the node because opening one
+	// needs the App key, and a node that could open pull requests on its own
+	// would need that key on the node.
+	//
+	// The repository is NOT taken from the request. It is looked up from the
+	// rig, so a node cannot ask for a pull request against a repository its
+	// rig does not hold -- the same discipline as routing a dispatch.
+	authed.HandleFunc("POST /v1/node/pull-requests", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			log.Warn("pull request refused for a human session", "subject", id.Subject)
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		var body struct {
+			Cell  string `json:"cell"`
+			Rig   string `json:"rig"`
+			Bead  string `json:"bead"`
+			Head  string `json:"head"`
+			Base  string `json:"base"`
+			Title string `json:"title"`
+			Body  string `json:"body"`
+			Job   string `json:"job"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		for name, v := range map[string]string{
+			"cell": body.Cell, "rig": body.Rig, "bead": body.Bead,
+			"head": body.Head, "base": body.Base, "title": body.Title,
+		} {
+			if strings.TrimSpace(v) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "a pull request needs a " + name})
+				return
+			}
+		}
+		if body.Head == body.Base {
+			// GitHub refuses this too. Named here because the answer matters:
+			// a request to open a pull request from main onto main is a node
+			// that failed to make a branch, and a 422 does not say that.
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": "head and base are both " + body.Head + "; no branch was made"})
+			return
+		}
+		if db == nil || gh == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error": "no database or github app"})
+			return
+		}
+
+		var owner, repo string
+		if err := db.QueryRowContext(r.Context(), `
+			SELECT e.owner, e.name
+			  FROM execution_rigs e
+			  JOIN execution_cells c ON c.id = e.execution_cell_id
+			 WHERE c.slug = $1 AND e.rig = $2
+			   AND e.owner IS NOT NULL AND e.name IS NOT NULL`,
+			body.Cell, body.Rig).Scan(&owner, &repo); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				log.Info("pull request refused: the rig holds no repository",
+					"cell", body.Cell, "rig", body.Rig)
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "rig " + body.Rig + " on cell " + body.Cell +
+						" holds no repository, so nothing can have landed there",
+					"code": "rig_holds_no_repository",
+				})
+				return
+			}
+			log.Error("looking up a rig's repository", "rig", body.Rig, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+
+		tok, err := gh.InstallationToken(r.Context(), repo)
+		if err != nil {
+			log.Error("minting a token to open a pull request",
+				"repository", owner+"/"+repo, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "could not mint a token"})
+			return
+		}
+
+		// Already open for this branch? Then this is a second run on the same
+		// bead, which pushed another commit to the same branch. Returning the
+		// existing one is the whole reason the branch name is stable: work
+		// re-dispatched must not multiply pull requests, or the review queue
+		// becomes noise nobody reads.
+		pr, err := gh.FindPullRequest(r.Context(), tok, owner, repo, body.Head)
+		if err != nil {
+			log.Error("looking for an existing pull request",
+				"repository", owner+"/"+repo, "head", body.Head, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "could not reach github"})
+			return
+		}
+		reused := pr != nil
+		if pr == nil {
+			pr, err = gh.OpenPullRequest(r.Context(), tok, githubapp.OpenPullRequestRequest{
+				Owner: owner, Repo: repo,
+				Head: body.Head, Base: body.Base,
+				Title: body.Title, Body: body.Body,
+			})
+			if err != nil {
+				log.Error("opening a pull request", "repository", owner+"/"+repo,
+					"head", body.Head, "error", err)
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error": "could not open a pull request"})
+				return
+			}
+		}
+
+		var job any
+		if j := strings.TrimSpace(body.Job); j != "" {
+			job = j
+		}
+		if _, err := db.ExecContext(r.Context(),
+			`SELECT system_record_pull_request($1, $2, $3, $4, $5, $6, $7, $8)`,
+			body.Cell, body.Rig, body.Bead, pr.Number, pr.HTMLURL,
+			body.Head, body.Base, job); err != nil {
+			// The pull request EXISTS at this point. Failing the request would
+			// invite a retry that finds it again and records it, so this is
+			// logged and the URL is still returned: losing the record is bad,
+			// losing the caller's knowledge of the URL is worse.
+			log.Error("recording a pull request", "bead", body.Bead,
+				"url", pr.HTMLURL, "error", err)
+		}
+
+		log.Info("pull request", "bead", body.Bead, "repository", owner+"/"+repo,
+			"number", pr.Number, "url", pr.HTMLURL, "reused", reused)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"url":        pr.HTMLURL,
+			"number":     pr.Number,
+			"repository": owner + "/" + repo,
+			"head":       body.Head,
+			"base":       body.Base,
+			"reused":     reused,
+		})
+	})
+
 	// Which rigs this cell should have, one per repository its projects hold.
 	//
 	// Read by the playbook, which provisions what is missing with `gt rig add`.

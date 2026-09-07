@@ -76,7 +76,10 @@ var routeActions = map[string]routeAction{
 	// like the other /v1/node paths, and the handler refuses a human caller.
 	"POST /v1/node/rigs": {Action: authz.AgentInspect},
 	// Which rigs a cell should have, read by the playbook at provision time.
-	"GET /v1/node/rigs/wanted":                               {Action: authz.AgentInspect},
+	"GET /v1/node/rigs/wanted": {Action: authz.AgentInspect},
+	// Where an agent's work landed. Service credential only, and the
+	// repository comes from the rig rather than from the request.
+	"POST /v1/node/pull-requests":                            {Action: authz.AgentInspect},
 	"GET /v1/projects/{slug}/repositories":                   {Action: authz.ProjectRead},
 	"POST /v1/projects/{slug}/repositories":                  {Action: authz.ProjectManage},
 	"DELETE /v1/projects/{slug}/repositories/{owner}/{name}": {Action: authz.ProjectManage},

@@ -167,7 +167,51 @@ def add(cell, rig, url, prefix, dry_run):
     if r.returncode != 0:
         print(f"FAILED to create {rig}: {reason(r)}", file=sys.stderr)
         return False
+    exclude_plumbing(cell, rig)
     return True
+
+
+def exclude_plumbing(cell, rig):
+    """Tell the new checkout to ignore gastown's own plumbing.
+
+    `gt rig add` writes .beads/redirect into the refinery working tree, and it
+    is not in the repository's .gitignore because it has nothing to do with the
+    repository. Left alone it shows as an untracked file beside the agent's real
+    work:
+
+        M site/components/home/LandingHero.tsx
+        ?? .beads/
+
+    The landing path excludes it before staging anything and refuses to commit
+    it, so this is belt and braces -- but a rig whose `git status` is clean from
+    the moment it is created is one an agent cannot be confused by, and the file
+    is local to this node either way.
+    """
+    tree = os.path.join(CELLS_ROOT, cell, "town", rig, "refinery", "rig")
+    exclude = os.path.join(tree, ".git", "info", "exclude")
+    # refinery/rig is a worktree, so .git is a FILE pointing elsewhere and the
+    # naive path does not exist. git itself resolves it.
+    r = subprocess.run(["git", "-C", tree, "rev-parse", "--git-path", "info/exclude"],
+                       capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        path = r.stdout.strip()
+        exclude = path if os.path.isabs(path) else os.path.join(tree, path)
+    try:
+        os.makedirs(os.path.dirname(exclude), exist_ok=True)
+        body = ""
+        if os.path.exists(exclude):
+            with open(exclude) as f:
+                body = f.read()
+        if ".beads/" in body:
+            return
+        if body and not body.endswith("\n"):
+            body += "\n"
+        with open(exclude, "w") as f:
+            f.write(body + "# Gas Town's plumbing, local to this node.\n.beads/\n")
+    except OSError as e:
+        # Not fatal: the landing path excludes it again before it stages
+        # anything, and refuses to commit it regardless.
+        print(f"could not exclude the plumbing in {rig}: {e}", file=sys.stderr)
 
 
 def reason(r):
