@@ -36,6 +36,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/datopian/workgraph/internal/check"
 	"github.com/datopian/workgraph/internal/landing"
 	"github.com/datopian/workgraph/internal/version"
 	"github.com/datopian/workgraph/internal/work"
@@ -188,7 +189,25 @@ func (d *dispatcher) pass(ctx context.Context) {
 	tree := d.treeBefore(jobRig)
 
 	d.log.Info("running", "job", job.ID, "kind", job.Kind, "bead", job.Bead)
-	out, runErr := d.run(ctx, *job)
+	out, runErr := d.run(ctx, *job, "")
+
+	// Does it work? The agent cannot answer that -- it has no shell -- so the
+	// repository's own build or test command is run here, and if it fails the
+	// agent gets one more pass with the output.
+	//
+	// One extra pass, not a loop. An agent that could not fix it the first
+	// time is usually not one pass away, and each pass costs a full run: the
+	// two on sa-kfh were 15 and 40 model calls. A second failure is reported
+	// rather than ground away at.
+	checked := d.check(ctx, *job, jobRig)
+	if checked != nil && !checked.OK && runErr == nil {
+		d.log.Info("the check failed; giving the agent the output",
+			"job", job.ID, "bead", job.Bead, "command", checked.Command)
+		second, secondErr := d.run(ctx, *job, checked.Feedback())
+		out += "\n\n--- the check failed, so the agent was given the output and ran again ---\n\n" + second
+		runErr = secondErr
+		checked = d.check(ctx, *job, jobRig)
+	}
 
 	// Labelled whether the run succeeded or not. A job that produced beads and
 	// then failed still produced beads, and an unattributed bead is invisible
@@ -214,7 +233,7 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// fixed; the pull request body says which it was, so a reviewer is not
 	// misled about how finished it is.
 	if job.Kind == work.KindWork {
-		d.landWork(ctx, *job, jobRig, out, tree, runErr == nil)
+		d.landWork(ctx, *job, jobRig, out, tree, checked, runErr == nil)
 	}
 
 	d.report(ctx, job.ID, work.Result{OK: runErr == nil, Output: out})
@@ -237,7 +256,7 @@ func (d *dispatcher) rigFor(job work.Job) string {
 
 // run invokes wg-runner, which owns the working directory, the settings, the
 // deadline and the teardown. Nothing about how an agent is started belongs here.
-func (d *dispatcher) run(ctx context.Context, job work.Job) (string, error) {
+func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (string, error) {
 	rig := d.rigFor(job)
 	// A plan job has no bead of its own, so it needs a name for its run
 	// directory and its cost attribution. The job id is the honest one: the
@@ -254,6 +273,12 @@ func (d *dispatcher) run(ctx context.Context, job work.Job) (string, error) {
 	// is in reach instead.
 	job.Checkout = d.cellRoot + "/town/" + rig + "/refinery/rig"
 	instructions := job.Instructions()
+	if e := strings.TrimSpace(extra); e != "" {
+		// Appended, not substituted: the second pass is the same job with what
+		// the check said added to it, so the bead, the acceptance criteria and
+		// the checkout are all still in front of the agent.
+		instructions += "\n\n" + e
+	}
 
 	args := []string{
 		"-bead", bead,
@@ -797,7 +822,7 @@ func parseGitHubRemote(url string) (owner, name string, ok bool) {
 // failed job would misreport the work, and the changes stay in the working
 // tree either way, which is where they were before any of this existed.
 func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string,
-	before []landing.Change, ok bool) {
+	before []landing.Change, checked *check.Result, ok bool) {
 	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
 	if _, err := os.Stat(dir); err != nil {
 		// A rig with no refinery working tree holds no code to change. The
@@ -847,7 +872,7 @@ func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string
 		d.log.Warn("the landing was not clean", "bead", job.Bead, "warning", res.Warning)
 	}
 
-	url, err := d.openPullRequest(ctx, job, rig, res, base, summary, title, ok)
+	url, err := d.openPullRequest(ctx, job, rig, res, base, summary, title, checked, ok)
 	if err != nil {
 		d.log.Error("opening a pull request", "bead", job.Bead,
 			"branch", res.Branch, "error", err)
@@ -870,7 +895,7 @@ func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string
 // openPullRequest asks the control plane to open it. The node cannot: opening
 // one needs the App key, and the key stays on the control node.
 func (d *dispatcher) openPullRequest(ctx context.Context, job work.Job, rig string,
-	res *landing.Result, base, summary, title string, ok bool) (string, error) {
+	res *landing.Result, base, summary, title string, checked *check.Result, ok bool) (string, error) {
 
 	// What the reviewer needs to know first is whether the agent thought it
 	// had finished, because a pull request from an unfinished run looks
@@ -881,7 +906,28 @@ func (d *dispatcher) openPullRequest(ctx context.Context, job work.Job, rig stri
 	} else if job.Bead != "" {
 		state = "The agent completed its run. See the bead for whether it closed it."
 	}
-	body := "Bead `" + job.Bead + "`.\n\n" + state + "\n\n" +
+	// Whether it was checked, stated before anything else a reviewer reads.
+	// An unchecked change and a change whose tests pass look identical in a
+	// diff, and the difference is most of what a reviewer wants to know.
+	checkedLine := "**Not checked.** No build or test command is configured for this " +
+		"repository, so nothing here has been executed."
+	if checked != nil {
+		switch {
+		case checked.OK:
+			checkedLine = "**The repository's own check passed** after this change: `" +
+				checked.Command + "` (" + checked.Took.String() + ")."
+		case checked.TimedOut:
+			checkedLine = "**The check did not finish.** `" + checked.Command +
+				"` was still running after " + checked.Took.String() + " and was stopped."
+		default:
+			checkedLine = "**The check FAILED** after this change: `" + checked.Command +
+				"`. The agent was given the output and ran again; it still fails.\n\n" +
+				"<details><summary>check output</summary>\n\n```\n" +
+				checked.Output + "\n```\n\n</details>"
+		}
+	}
+
+	body := "Bead `" + job.Bead + "`.\n\n" + state + "\n\n" + checkedLine + "\n\n" +
 		"Files: `" + strings.Join(res.Files, "`, `") + "`\n\n" +
 		"Opened by a Workgraph agent run. Nobody has reviewed this."
 	if s := strings.TrimSpace(summary); s != "" {
@@ -1072,4 +1118,42 @@ func (d *dispatcher) refresh(rig string) {
 	case moved:
 		d.log.Info("refreshed the checkout", "rig", rig, "base", base)
 	}
+}
+
+// check runs the repository's own build or test command against what the agent
+// wrote, or reports nothing when the repository has not been opted in.
+//
+// The agent cannot do this: it has no shell, deliberately. See internal/check
+// for why running the command here rather than granting one is the difference
+// that matters.
+func (d *dispatcher) check(ctx context.Context, job work.Job, rig string) *check.Result {
+	if job.Kind != work.KindWork || strings.TrimSpace(job.Check) == "" {
+		return nil
+	}
+	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
+	res, err := check.Run(ctx, dir, job.Check, d.checkDeadline())
+	if err != nil {
+		d.log.Error("running the repository's check", "bead", job.Bead,
+			"rig", rig, "command", job.Check, "error", err)
+		return nil
+	}
+	if res == nil {
+		return nil
+	}
+	d.log.Info("checked", "bead", job.Bead, "command", res.Command,
+		"ok", res.OK, "timed_out", res.TimedOut, "took", res.Took)
+	return res
+}
+
+// checkDeadline is how long a check may take.
+//
+// A share of the job's own deadline rather than a separate number, so a cell
+// configured for short jobs does not spend twice as long checking as running.
+// Half, because a failing check is followed by a second agent pass and another
+// check, and the whole sequence has to fit.
+func (d *dispatcher) checkDeadline() time.Duration {
+	if d.deadline <= 0 {
+		return 5 * time.Minute
+	}
+	return d.deadline / 2
 }

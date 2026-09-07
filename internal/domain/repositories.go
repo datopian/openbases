@@ -227,6 +227,47 @@ func (s *Store) DetachRepository(ctx context.Context, userID, slug, owner, name 
 	})
 }
 
+// SetRepositoryCheck records the command that says whether a change to a
+// repository works, or clears it when command is empty.
+//
+// Written through authz.WithUser like every other project write, so the same
+// membership decides it: somebody who may attach a repository may say how it is
+// checked. That matters more than it looks -- the command runs code from the
+// repository as the cell user, so setting one is a privileged act and not a
+// piece of metadata.
+func (s *Store) SetRepositoryCheck(ctx context.Context, userID, slug, owner, name, command string) error {
+	owner, name, err := ParseFullName(owner + "/" + name)
+	if err != nil {
+		return err
+	}
+	command = strings.TrimSpace(command)
+	return authz.WithUser(ctx, s.db, userID, func(tx *sql.Tx) error {
+		id, err := projectIDBySlug(ctx, tx, slug)
+		if err != nil {
+			return err
+		}
+		var value any
+		if command != "" {
+			value = command
+		}
+		res, err := tx.ExecContext(ctx, `
+			UPDATE project_repositories SET check_command = $4
+			 WHERE project_id = $1::uuid AND provider = 'github' AND owner = $2 AND name = $3`,
+			id, owner, name, value)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
 // projectIDBySlug resolves a project the caller may see.
 func projectIDBySlug(ctx context.Context, tx *sql.Tx, slug string) (string, error) {
 	var id string
