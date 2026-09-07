@@ -537,13 +537,16 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 
+		// Through the function, not with an inline query. execution_rigs has
+		// RLS forced and its policy needs an app user; a service caller is a
+		// node and has none, so a direct read matches nothing and reports a
+		// rig that holds a repository as holding none. That is what the first
+		// landing did: it pushed its branch and then failed to open the pull
+		// request for a rig plainly recorded as holding
+		// datopian/workgraph-agent-sandbox.
 		var owner, repo string
-		if err := db.QueryRowContext(r.Context(), `
-			SELECT e.owner, e.name
-			  FROM execution_rigs e
-			  JOIN execution_cells c ON c.id = e.execution_cell_id
-			 WHERE c.slug = $1 AND e.rig = $2
-			   AND e.owner IS NOT NULL AND e.name IS NOT NULL`,
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT owner, name FROM system_rig_repository($1, $2)`,
 			body.Cell, body.Rig).Scan(&owner, &repo); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				log.Info("pull request refused: the rig holds no repository",
