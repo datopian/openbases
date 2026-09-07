@@ -494,7 +494,9 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
-      # `npm audit` is off, by decision on 4 September.
+      # `npm audit` is off, by decision on 4 September. .github/dependabot.yml
+      # watches these packages for advisories instead -- out of band, so a
+      # registry outage produces no pull request rather than a red build.
       #
       # npmjs.org's audit endpoint failed three times in one morning -- 503,
       # 503, then Bad Request -- on a lockfile the same job had already
