@@ -19,7 +19,29 @@ Authenticate once per session:
 cloudflared access login ssh-staging.openbases.com
 ```
 
-That opens a browser and caches a short-lived token. For unattended runs — CI — an Access **service
+That opens a browser and caches a short-lived token. **Short means one hour** --
+measured from the cached token's own claims:
+
+```
+~/.cloudflared/ssh-staging.openbases.com-...-token
+  iat 2026-09-07T13:39:27+00:00
+  exp 2026-09-07T14:39:27+00:00
+```
+
+Every SSH connection re-invokes `cloudflared access ssh`, so the first one after
+the hour is up fails and ansible reports the host as unreachable:
+
+```
+Data could not be sent to remote host "ssh-exec-staging.openbases.com".
+... Connection closed by UNKNOWN port 65535
+```
+
+`UNKNOWN port 65535` because the peer is a pipe rather than a socket, which is
+what makes an expiring credential look like a network fault. cloudflared mints a
+fresh host token from the longer-lived org token on its next run without a
+browser, so `retries = 3` in `ansible.cfg` handles it: the retry
+re-authenticates. Before that was set, a run of more than an hour reliably lost
+a host part-way and needed starting again (wg-r9i). For unattended runs — CI — an Access **service
 token** is the right credential, but creating one needs an `Access: Service Tokens` permission the
 deploy token does not currently hold (`wg-8yv.49`).
 
