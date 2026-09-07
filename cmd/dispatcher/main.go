@@ -174,6 +174,14 @@ func (d *dispatcher) pass(ctx context.Context) {
 	jobRig := d.rigFor(*job)
 	before := d.beadIDs(ctx, jobRig)
 
+	// And what the working tree already held, for the same reason: so that
+	// what the run did can be told apart from what was lying about. gt leaves
+	// an untracked .gitignore in a rig whose repository has none, and portaljs
+	// carried sa-kfh's uncommitted change for two days -- either would
+	// otherwise arrive in a pull request attributed to a bead that did not
+	// make it.
+	tree := d.treeBefore(jobRig)
+
 	d.log.Info("running", "job", job.ID, "kind", job.Kind, "bead", job.Bead)
 	out, runErr := d.run(ctx, *job)
 
@@ -201,7 +209,7 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// fixed; the pull request body says which it was, so a reviewer is not
 	// misled about how finished it is.
 	if job.Kind == work.KindWork {
-		d.landWork(ctx, *job, jobRig, out, runErr == nil)
+		d.landWork(ctx, *job, jobRig, out, tree, runErr == nil)
 	}
 
 	d.report(ctx, job.ID, work.Result{OK: runErr == nil, Output: out})
@@ -783,7 +791,8 @@ func parseGitHubRemote(url string) (owner, name string, ok bool) {
 // and its result is about to be recorded; turning a landing problem into a
 // failed job would misreport the work, and the changes stay in the working
 // tree either way, which is where they were before any of this existed.
-func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string, ok bool) {
+func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string,
+	before []landing.Change, ok bool) {
 	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
 	if _, err := os.Stat(dir); err != nil {
 		// A rig with no refinery working tree holds no code to change. The
@@ -809,6 +818,7 @@ func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string
 		Title:   title,
 		Base:    base,
 		Summary: summary,
+		Before:  before,
 	})
 	if err != nil {
 		d.log.Error("landing a change", "bead", job.Bead, "rig", rig, "error", err)
@@ -990,4 +1000,35 @@ func subject(title, bead string) string {
 		return t + " (" + bead + ")"
 	}
 	return "Work on " + bead
+}
+
+// treeBefore is what a rig's working tree already held, read before the run.
+//
+// Errors are swallowed to nil, and that is the UNSAFE direction here, so it is
+// worth saying why it is still right: a nil snapshot means the landing treats
+// everything dirty as the run's work, which is what it did before any of this
+// existed. The alternative -- refusing to land when the tree cannot be read --
+// loses the agent's work entirely. A stray file in a pull request is visible
+// and removable; work that never left the node is neither.
+func (d *dispatcher) treeBefore(rig string) []landing.Change {
+	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
+	if _, err := os.Stat(dir); err != nil {
+		return nil
+	}
+	changes, err := landing.Changes(landing.Exec(dir, d.cellRoot))
+	if err != nil {
+		d.log.Warn("reading the working tree before a run", "rig", rig, "error", err)
+		return nil
+	}
+	if len(changes) > 0 {
+		// Worth a line in the log: a tree that is dirty before a run started
+		// means a previous landing did not finish, or somebody edited by hand.
+		paths := make([]string, 0, len(changes))
+		for _, c := range changes {
+			paths = append(paths, c.Path)
+		}
+		d.log.Info("the working tree was already dirty; these will not be landed",
+			"rig", rig, "paths", strings.Join(paths, " "))
+	}
+	return changes
 }

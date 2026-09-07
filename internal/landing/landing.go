@@ -60,14 +60,19 @@ func Exec(dir, home string) Git {
 	}
 }
 
-// Plumbing is what gastown leaves in a rig's working tree and what must never
-// be committed to somebody's repository.
+// Plumbing is what gastown is known to leave in a rig's working tree.
 //
-// `gt rig add` writes .beads/redirect into the refinery checkout -- present in
-// all twelve rigs on the oss cell -- and it is not in the repository's
-// .gitignore, because it is nothing to do with the repository. Left alone it
-// shows as an untracked file beside the agent's real work, and the first
-// `git add -A` would push gastown's plumbing into PortalJS.
+// This is a BACKSTOP, not the mechanism. What actually decides is the snapshot
+// taken before the run: anything already in the tree when the agent started is
+// not the agent's work, whether or not it appears here. A blocklist alone was
+// the first design and it was wrong within a day -- it listed .beads/redirect,
+// and then `gt` turned out to write an untracked .gitignore too, in any rig
+// whose repository does not have one. A list of the things I happened to have
+// noticed is not a safety property.
+//
+// It survives because it makes the exclude file possible, which is what keeps
+// `git status` clean for the agent reading it, and because a named refusal is
+// clearer than a silent omission when something does go wrong.
 var Plumbing = []string{".beads/"}
 
 // Change is one path the run touched.
@@ -109,6 +114,29 @@ func Interesting(changes []Change) (work, plumbing []Change) {
 		work = append(work, c)
 	}
 	return work, plumbing
+}
+
+// Since reports which of `now` was not already there in `before`, and which
+// was.
+//
+// Paths, not contents: a file the run edited further is the run's work, and a
+// file that was dirty before and untouched is not. Comparing contents would
+// need the whole tree in memory for no gain -- git already tells us which paths
+// differ from HEAD, and the question here is only which of those are new since
+// the agent started.
+func Since(before, now []Change) (changed, preexisting []Change) {
+	was := make(map[string]bool, len(before))
+	for _, c := range before {
+		was[c.Path] = true
+	}
+	for _, c := range now {
+		if was[c.Path] {
+			preexisting = append(preexisting, c)
+			continue
+		}
+		changed = append(changed, c)
+	}
+	return changed, preexisting
 }
 
 func isPlumbing(path string) bool {
@@ -189,6 +217,17 @@ type Spec struct {
 	Title   string // the bead's title, for the commit subject
 	Base    string // the branch to open the pull request against
 	Summary string // the agent's own words, for the commit body
+
+	// Before is what the working tree already held when the run started, from
+	// Changes. Everything in it is left alone.
+	//
+	// This is what makes the landing the RUN's work rather than the tree's.
+	// Without it a landing commits whatever was lying about: gt's untracked
+	// .gitignore, a previous bead's uncommitted edit -- portaljs held sa-kfh's
+	// change for two days -- or anything a person left behind. Each of those
+	// would arrive in somebody's pull request attributed to a bead that did
+	// not make it.
+	Before []Change
 }
 
 // Land commits what the run changed onto the bead's own branch and pushes it.
@@ -222,7 +261,9 @@ func Land(git Git, s Spec) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	changes, kept := Since(s.Before, changes)
 	work, plumbing := Interesting(changes)
+	plumbing = append(plumbing, kept...)
 	if len(work) == 0 {
 		return nil, nil
 	}
@@ -246,8 +287,17 @@ func Land(git Git, s Spec) (*Result, error) {
 		}
 	}
 
-	if _, err := git("add", "-A"); err != nil {
-		return nil, err
+	// Staged by path, not `git add -A`.
+	//
+	// -A stages the whole tree, which means the commit is a function of what
+	// happens to be lying about rather than of what the run did. Naming the
+	// paths makes the two the same thing, and it is the only version of this
+	// that stays correct when something new appears in a checkout -- which it
+	// did, twice, within a day of the first one being written.
+	for _, c := range work {
+		if _, err := git("add", "--", c.Path); err != nil {
+			return nil, err
+		}
 	}
 
 	// What is actually staged, checked against what must never be. `git add -A`

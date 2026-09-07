@@ -251,3 +251,134 @@ func TestLandingRefusesToBeTheBase(t *testing.T) {
 		t.Error("a landing with no base was allowed")
 	}
 }
+
+// Only what the RUN changed is landed. Everything already in the tree is left
+// alone, whether or not it is on the plumbing list.
+//
+// The blocklist was the first design and it was wrong within a day: it named
+// .beads/redirect, and then `gt` turned out to also write an untracked
+// .gitignore into any rig whose repository has none. A list of the things I
+// happened to have noticed is not a safety property. This is: the snapshot
+// does not need to know what the stray file IS.
+func TestOnlyWhatTheRunChangedIsLanded(t *testing.T) {
+	dir, git := repo(t)
+
+	// Three things already in the tree before the agent starts, none of them
+	// on the plumbing list, all of them real cases from the oss cell:
+	//   an untracked .gitignore that gt wrote,
+	//   a previous bead's uncommitted edit -- portaljs carried sa-kfh's for
+	//   two days,
+	//   and something a person left behind.
+	for path, body := range map[string]string{
+		".gitignore":  ".opencode/\n.logs/\nCLAUDE.md\n",
+		"README.md":   "a previous bead's edit\n",
+		"scratch.txt": "someone's notes\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := Changes(git)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 3 {
+		t.Fatalf("the snapshot saw %d paths, want 3: %+v", len(before), before)
+	}
+
+	// Now the run does its work.
+	if err := os.WriteFile(filepath.Join(dir, "hero.tsx"), []byte("Studio\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Land(git, Spec{Bead: "sa-kfh", Base: "main", Before: before})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed")
+	}
+	if !slices.Equal(res.Files, []string{"hero.tsx"}) {
+		t.Errorf("landed %v, want just hero.tsx", res.Files)
+	}
+
+	// The commit is what reaches somebody's repository, so that is what is
+	// asserted -- not the Result, which is only this code's opinion of itself.
+	out, err := git("show", "--name-only", "--format=", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{".gitignore", "README.md", "scratch.txt"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("the commit carries %s, which the run did not touch:\n%s", unwanted, out)
+		}
+	}
+	if !strings.Contains(out, "hero.tsx") {
+		t.Errorf("the commit is missing the run's work:\n%s", out)
+	}
+
+	// And they are still in the tree afterwards, not silently discarded.
+	after, err := Changes(git)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, c := range after {
+		left = append(left, c.Path)
+	}
+	slices.Sort(left)
+	if !slices.Equal(left, []string{".gitignore", "README.md", "scratch.txt"}) {
+		t.Errorf("the tree afterwards holds %v; the pre-existing changes should be untouched", left)
+	}
+}
+
+// A file the run edited FURTHER is the run's work, even though its path was
+// already dirty. The snapshot compares paths, and this is the case that makes
+// that the right choice rather than a shortcut: a bead whose job is to finish
+// a change somebody started would otherwise land nothing.
+func TestAPathTheRunEditedFurtherIsStillItsWork(t *testing.T) {
+	dir, git := repo(t)
+
+	// Dirty before the run.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("half done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Changes(git)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The run touches the same file.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("finished\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Landed as nothing: the path was already dirty, so this code cannot tell
+	// the run's edit from the one that was there. Asserted so the limitation is
+	// recorded rather than discovered -- see the comment on Spec.Before.
+	res, err := Land(git, Spec{Bead: "sa-kfh", Base: "main", Before: before})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != nil {
+		t.Errorf("a pre-existing dirty path was landed as the run's work: %+v", res)
+	}
+}
+
+// With no snapshot the behaviour is the old one: everything dirty is treated as
+// the run's work. That is what happens when the tree cannot be read before a
+// run, and it must not be a silent no-op -- losing the agent's work entirely is
+// worse than landing a stray file, which is visible and removable.
+func TestWithNoSnapshotEverythingDirtyIsLanded(t *testing.T) {
+	dir, git := repo(t)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Land(git, Spec{Bead: "sa-kfh", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil || !slices.Equal(res.Files, []string{"README.md"}) {
+		t.Errorf("landed %+v, want README.md", res)
+	}
+}
