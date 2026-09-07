@@ -1,0 +1,54 @@
+# Watching dependencies for published advisories.
+#
+# This replaces the `npm audit` step removed from CI on 4 September. That gate
+# failed three times in one morning -- 503, 503, then a bare "Bad Request" --
+# on a lockfile it had already reported clean, and a gate that fails for
+# reasons unrelated to the change is a gate people learn to re-run without
+# reading. Removing it was right; leaving apps/web unwatched was not.
+#
+# Dependabot has the property the audit step lacked: it reports OUT OF BAND, so
+# a registry outage produces no pull request rather than a red build, and
+# nothing anybody has to re-run.
+#
+# SECURITY UPDATES ONLY, which is what `open-pull-requests-limit: 0` means here
+# -- it caps version-update pull requests at none, and security updates are
+# explicitly not subject to it. So this restores exactly the coverage that was
+# lost and adds no version churn. If routine updates are wanted later, raising
+# the limit is the whole change.
+version: 2
+updates:
+  # The interface's packages. This is the coverage that went missing: the web
+  # application is served from the control API binary to every authenticated
+  # user, so a vulnerable package here reaches a browser.
+  #
+  # Dev dependencies are included for the same reason the audit step included
+  # them: they do not reach the browser, but they run in CI with repository
+  # access, and a compromised build tool is a supply-chain problem either way.
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 0
+    labels: [dependencies, security]
+
+  # Go, as a second pair of eyes rather than the first. govulncheck already
+  # runs in the security job and is the better signal -- it reports only
+  # vulnerabilities that are actually reachable from this code, where
+  # Dependabot reports the advisory whether or not the affected function is
+  # called. Keeping both means an advisory in a package govulncheck cannot
+  # analyse is still seen.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 0
+    labels: [dependencies, security]
+
+  # The actions themselves, which nothing watched at all. They run with the
+  # repository token, so a compromised action is a compromised build.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    labels: [dependencies, security]
