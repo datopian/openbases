@@ -109,7 +109,27 @@ func TestAWorkJobNamesTheCheckout(t *testing.T) {
 	if strings.Contains(bare, "checked out at") {
 		t.Errorf("a job with no checkout still claims one:\n%s", bare)
 	}
-	if !strings.HasSuffix(strings.TrimSpace(bare), "in a comment.") {
-		t.Errorf("the instruction does not end cleanly:\n%s", bare)
+	// The property this protects is that the sentence does not trail off into
+	// a path that is not there -- not that it ends with any particular word,
+	// which is what it used to assert and which broke the moment a paragraph
+	// was added after it.
+	if strings.Contains(bare, "checked out at .") || strings.Contains(bare, "work there") {
+		t.Errorf("a job with no checkout still points at one:\n%s", bare)
+	}
+
+	// And every work job is told that landing is not its job, with or without
+	// a checkout. sa-kfh's second run spent forty model calls discovering that
+	// `git` was refused, then left its bead open because the change had not
+	// reached the repository -- correct reasoning from an incomplete brief.
+	for _, j := range []Job{
+		{Kind: KindWork, Bead: "sa-kfh", Cell: "oss", Checkout: "/srv/x"},
+		{Kind: KindWork, Bead: "sa-kfh", Cell: "oss"},
+	} {
+		got := j.Instructions()
+		for _, want := range []string{"Do NOT try to commit", "automatically", "close the bead"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the instructions do not say %q:\n%s", want, got)
+			}
+		}
 	}
 }

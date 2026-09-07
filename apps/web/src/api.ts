@@ -187,7 +187,15 @@ export interface BeadDetail {
    * how people stop trusting the status field.
    */
   outcome:
-    "done" | "blocked" | "failed" | "queued" | "running" | "never_dispatched";
+    | "done"
+    // Ran, produced a change that is in a pull request, and left the bead
+    // open. Distinct from `blocked`: the work exists and awaits review.
+    | "landed"
+    | "blocked"
+    | "failed"
+    | "queued"
+    | "running"
+    | "never_dispatched";
   run: {
     job: string;
     status: string;
