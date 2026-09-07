@@ -335,6 +335,12 @@ jobs:
       - name: a dispatch routes to a rig that holds the work, or refuses
         run: psql -v ON_ERROR_STOP=1 -f test/integration/dispatch_routing.sql
 
+      # Where an agent's work went. Before the landing path, a run that changed
+      # code closed its bead with the change stranded in a working tree on the
+      # node, and nothing in the interface said so.
+      - name: a landing is attributed from the rig and never onto the base
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/landing_a_change.sql
+
       # And the other direction: given a cell, the rigs it should have. A wrong
       # answer here is either a rig nobody can route to or two rigs holding one
       # repository, and the prefix case caught a real collision on the oss cell.

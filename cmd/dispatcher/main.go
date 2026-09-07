@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/datopian/workgraph/internal/landing"
 	"github.com/datopian/workgraph/internal/version"
 	"github.com/datopian/workgraph/internal/work"
 )
@@ -180,6 +182,26 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// on the project page it belongs to.
 	if p := strings.TrimSpace(job.Project); p != "" {
 		d.labelNewBeads(ctx, jobRig, before, p)
+	}
+
+	// Put whatever the run changed on a branch and open a pull request for it.
+	//
+	// Before this, a run that changed code closed its bead with the change
+	// stranded in the rig's working tree: sa-kfh renamed a hero tab label,
+	// closed correctly, and left `M site/components/home/LandingHero.tsx` on
+	// the node with no commit and nothing in the interface saying so.
+	//
+	// After the run rather than by the agent, because the agent cannot run git
+	// at all -- its tools are Read, Grep, Glob, Edit, Write and `Bash(bd:*)`,
+	// and the deny list names `git push`. An agent that could push could
+	// force-push main.
+	//
+	// Attempted whether or not the run succeeded. A run that changed code and
+	// then failed still changed code, and stranding that is the bug being
+	// fixed; the pull request body says which it was, so a reviewer is not
+	// misled about how finished it is.
+	if job.Kind == work.KindWork {
+		d.landWork(ctx, *job, jobRig, out, runErr == nil)
 	}
 
 	d.report(ctx, job.ID, work.Result{OK: runErr == nil, Output: out})
@@ -753,4 +775,219 @@ func parseGitHubRemote(url string) (owner, name string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// landWork commits what a run changed, pushes it, and opens a pull request.
+//
+// Every failure here is reported and swallowed. The run has already happened
+// and its result is about to be recorded; turning a landing problem into a
+// failed job would misreport the work, and the changes stay in the working
+// tree either way, which is where they were before any of this existed.
+func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string, ok bool) {
+	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
+	if _, err := os.Stat(dir); err != nil {
+		// A rig with no refinery working tree holds no code to change. The
+		// witness and mayor are like this.
+		return
+	}
+	git := landing.Exec(dir, d.cellRoot)
+
+	base := d.defaultBranch(git, rig)
+	if base == "" {
+		d.log.Warn("cannot tell which branch to open against; not landing",
+			"bead", job.Bead, "rig", rig)
+		return
+	}
+
+	// Read once and reused for the commit and the pull request, so a title
+	// that changes between the two cannot happen.
+	title := d.beadTitle(ctx, rig, job.Bead)
+	summary := agentSummary(job.Bead, out)
+
+	res, err := landing.Land(git, landing.Spec{
+		Bead:    job.Bead,
+		Title:   title,
+		Base:    base,
+		Summary: summary,
+	})
+	if err != nil {
+		d.log.Error("landing a change", "bead", job.Bead, "rig", rig, "error", err)
+		return
+	}
+	if res == nil {
+		// Nothing to land. The ordinary case for a bead whose answer was that
+		// no code change was needed -- sa-4yn was exactly that -- so this is
+		// deliberately not a warning.
+		d.log.Info("nothing to land", "bead", job.Bead, "rig", rig)
+		return
+	}
+	d.log.Info("pushed a branch", "bead", job.Bead, "branch", res.Branch,
+		"commit", res.Commit, "files", strings.Join(res.Files, " "),
+		"skipped", strings.Join(res.Skipped, " "))
+
+	url, err := d.openPullRequest(ctx, job, rig, res, base, summary, title, ok)
+	if err != nil {
+		d.log.Error("opening a pull request", "bead", job.Bead,
+			"branch", res.Branch, "error", err)
+		return
+	}
+	d.log.Info("pull request", "bead", job.Bead, "url", url)
+
+	// On the bead, so the agent's own record says where the work went. The
+	// interface reads this too, through work_refs.last_comment.
+	cmd := exec.CommandContext(ctx, "bd", "comment", job.Bead,
+		"Landed as "+url+" (branch "+res.Branch+", commit "+res.Commit+").")
+	cmd.Dir = d.cellRoot + "/town/" + d.rigOwning(job.Bead, rig)
+	cmd.Env = append(os.Environ(), "HOME="+d.cellRoot)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		d.log.Warn("commenting the pull request onto the bead", "bead", job.Bead,
+			"error", err, "output", strings.TrimSpace(string(b)))
+	}
+}
+
+// openPullRequest asks the control plane to open it. The node cannot: opening
+// one needs the App key, and the key stays on the control node.
+func (d *dispatcher) openPullRequest(ctx context.Context, job work.Job, rig string,
+	res *landing.Result, base, summary, title string, ok bool) (string, error) {
+
+	// What the reviewer needs to know first is whether the agent thought it
+	// had finished, because a pull request from an unfinished run looks
+	// identical to one from a finished one.
+	state := "The agent closed the bead."
+	if !ok {
+		state = "The run FAILED. The change is here because it exists, not because it is finished."
+	} else if job.Bead != "" {
+		state = "The agent completed its run. See the bead for whether it closed it."
+	}
+	body := "Bead `" + job.Bead + "`.\n\n" + state + "\n\n" +
+		"Files: `" + strings.Join(res.Files, "`, `") + "`\n\n" +
+		"Opened by a Workgraph agent run. Nobody has reviewed this."
+	if s := strings.TrimSpace(summary); s != "" {
+		body += "\n\n---\n\n" + s
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"cell": d.cell, "rig": rig, "bead": job.Bead,
+		"head": res.Branch, "base": base,
+		"title": subject(title, job.Bead),
+		"body":  body,
+		"job":   job.ID,
+	})
+	if err != nil {
+		return "", err
+	}
+	raw, err := d.call(ctx, http.MethodPost, "/v1/node/pull-requests", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	var answer struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		return "", err
+	}
+	if answer.URL == "" {
+		return "", errors.New("the control plane returned no pull request URL")
+	}
+	return answer.URL, nil
+}
+
+// defaultBranch is the branch the repository itself considers default.
+//
+// Never assumed to be main. Half the repositories a cell now holds are not
+// ours -- ckan/ckan's default branch is `master` -- and a pull request opened
+// against a branch that does not exist is refused by GitHub after the work has
+// already been pushed.
+//
+// Two sources, in this order, because neither alone is enough. Measured on the
+// oss cell: `git symbolic-ref refs/remotes/origin/HEAD` fails in every one of
+// the twelve rigs, because `gt rig add` clones without recording a remote
+// HEAD, so git alone would skip landing everywhere. And config.json is gt's
+// record of what it detected at clone time, which is right today and stale if
+// the repository is ever renamed -- so git is asked first, as the live answer.
+func (d *dispatcher) defaultBranch(git landing.Git, rig string) string {
+	if out, err := git("symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		if _, branch, found := strings.Cut(strings.TrimSpace(out), "/"); found && branch != "" {
+			return branch
+		}
+	}
+	raw, err := os.ReadFile(d.cellRoot + "/town/" + rig + "/config.json")
+	if err != nil {
+		return ""
+	}
+	var config struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(config.DefaultBranch)
+}
+
+// beadTitle reads the bead's title, for the commit subject.
+func (d *dispatcher) beadTitle(ctx context.Context, rig, bead string) string {
+	rows, err := d.readBeads(ctx, d.rigOwning(bead, rig))
+	if err != nil {
+		return ""
+	}
+	for _, r := range rows {
+		if r.Bead == bead {
+			return r.Title
+		}
+	}
+	return ""
+}
+
+// rigOwning is the rig whose graph holds a bead, which is not always the rig
+// the work ran in: a bead filed in one rig can be about another's code.
+func (d *dispatcher) rigOwning(bead, fallback string) string {
+	prefix, _, found := strings.Cut(strings.TrimSpace(bead), "-")
+	if !found || prefix == "" {
+		return fallback
+	}
+	for _, rig := range d.rigs() {
+		raw, err := os.ReadFile(d.cellRoot + "/town/" + rig + "/config.json")
+		if err != nil {
+			continue
+		}
+		var config struct {
+			Type  string `json:"type"`
+			Beads struct {
+				Prefix string `json:"prefix"`
+			} `json:"beads"`
+		}
+		if err := json.Unmarshal(raw, &config); err != nil {
+			continue
+		}
+		if config.Type == "rig" && config.Beads.Prefix == prefix {
+			return rig
+		}
+	}
+	return fallback
+}
+
+// agentSummary is what the agent said, pulled out of the runner's output.
+//
+// wg-runner prints "<bead>: <status> in <duration>" and then the agent's own
+// words, so everything after that line is the summary. Parsing an output format
+// is fragile, which is why a failure to find the marker returns nothing rather
+// than a guess: an empty pull request body is honest and a body containing the
+// runner's log lines is not.
+func agentSummary(bead, out string) string {
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, bead+": ") && strings.Contains(line, " in ") {
+			return strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+		}
+	}
+	return ""
+}
+
+// subject is the pull request title: the bead's title when it has one, and the
+// bead id when it does not.
+func subject(title, bead string) string {
+	if t := strings.TrimSpace(title); t != "" {
+		return t + " (" + bead + ")"
+	}
+	return "Work on " + bead
 }

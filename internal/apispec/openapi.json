@@ -67,7 +67,8 @@
           "slug_taken",
           "not_found",
           "origin_refused",
-          "no_rig_for_project"
+          "no_rig_for_project",
+          "rig_holds_no_repository"
         ],
         "description": "Stable codes. token_scope_insufficient and role_grant_missing are deliberately distinct: one means this credential may not, the other means you may not, and they have different fixes."
       }
@@ -2607,6 +2608,144 @@
             }
           }
         }
+      }
+    },
+    "/v1/node/pull-requests": {
+      "post": {
+        "summary": "Open the pull request for work an agent landed",
+        "operationId": "post_v1_node_pull_requests",
+        "description": "Execution-node path (ADR-0019), service credential only. The node has pushed a branch and asks for the pull request; it is opened here because opening one needs the GitHub App key, and a node that could open pull requests itself would need that key on the node. The repository is NOT taken from the request -- it is looked up from the rig, so a node cannot ask for a pull request against a repository its rig does not hold. Idempotent: a branch that already has an open pull request returns that one with `reused: true`, because a re-dispatched bead pushes another commit to the same branch and must not open a second.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "cell",
+                  "rig",
+                  "bead",
+                  "head",
+                  "base",
+                  "title"
+                ],
+                "properties": {
+                  "cell": {
+                    "type": "string"
+                  },
+                  "rig": {
+                    "type": "string"
+                  },
+                  "bead": {
+                    "type": "string"
+                  },
+                  "head": {
+                    "type": "string",
+                    "description": "The branch the node pushed."
+                  },
+                  "base": {
+                    "type": "string",
+                    "description": "The branch to merge into. Must differ from head."
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "job": {
+                    "type": "string",
+                    "description": "The work_queue job that produced the change."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The pull request, opened or already open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A required field is missing, or head and base are the same branch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The rig holds no repository (`rig_holds_no_repository`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "GitHub could not be reached, or refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A repeat under the same key replays the recorded success rather than acting twice. This endpoint is also idempotent without one: the branch is the natural key, so a retry finds the pull request already open and returns it with `reused: true`."
+          }
+        ]
       }
     }
   }

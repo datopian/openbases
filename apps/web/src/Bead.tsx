@@ -16,6 +16,8 @@ import { age, api, asList, type BeadDetail } from "./api";
 
 const css = {
   muted: { color: "#666" } as const,
+  // The same blue the rest of the interface uses for a link out.
+  link: { color: "#0b5cad", textDecoration: "none", fontWeight: 600 } as const,
   card: {
     border: "1px solid #e3e3e3",
     borderRadius: "8px",
@@ -170,6 +172,9 @@ export function Bead({ id, onBack }: { id: string; onBack: () => void }) {
 
   const o = outcomeLabel(d.outcome);
   const models = asList(d.spend?.by_model);
+  // Tolerated as absent: an older control plane does not send this field, and
+  // a page that throws on it shows nothing at all rather than one section less.
+  const prs = d.pull_requests ?? [];
 
   return (
     <>
@@ -223,6 +228,39 @@ export function Bead({ id, onBack }: { id: string; onBack: () => void }) {
         <p style={{ ...css.muted, fontSize: "0.85rem" }}>
           The agent left no comment, so there is no stated reason. The run log
           below is the only record.
+        </p>
+      )}
+
+      {/* Where the work went, directly after what the agent said, because
+          "did it land?" is the next question somebody asks and the answer used
+          to require reading a working tree on the execution node.
+
+          An empty list is stated rather than hidden: for a bead whose work
+          needed no code change it is the correct answer, and saying nothing
+          leaves a reader unable to tell that from a landing that failed. */}
+      <h2 style={css.h2}>Where it landed</h2>
+      {prs.length === 0 && (
+        <p style={{ ...css.muted, fontSize: "0.85rem" }}>
+          {d.outcome === "done"
+            ? "No branch was pushed. Either the work needed no code change, or the run changed nothing."
+            : "No branch was pushed."}
+        </p>
+      )}
+      {prs.map((pr) => (
+        <div key={pr.url} style={css.card}>
+          <a href={pr.url} target="_blank" rel="noreferrer" style={css.link}>
+            {pr.repository}#{pr.number}
+          </a>
+          <div style={{ ...css.muted, fontSize: "0.75rem", marginTop: "0.35rem" }}>
+            <code>{pr.head}</code> → <code>{pr.base}</code>
+            {pr.opened ? ` · opened ${age(pr.opened)}` : ""}
+          </div>
+        </div>
+      ))}
+      {prs.length > 1 && (
+        <p style={{ ...css.muted, fontSize: "0.75rem" }}>
+          More than one, because this bead was worked more than once. The
+          newest is first.
         </p>
       )}
 

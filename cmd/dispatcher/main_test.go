@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -235,4 +236,79 @@ func TestTheConfiguredRigIsAlwaysIncluded(t *testing.T) {
 
 func quietLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// The base branch is the repository's own, never assumed to be main.
+//
+// Measured on the oss cell: `git symbolic-ref refs/remotes/origin/HEAD` fails
+// in all twelve rigs, because `gt rig add` clones without recording a remote
+// HEAD -- so git alone skips landing everywhere. And ckan/ckan's default branch
+// is `master`, so a hardcoded "main" opens a pull request against a branch that
+// does not exist, after the work has already been pushed.
+func TestTheBaseBranchComesFromTheRepositoryNotFromAGuess(t *testing.T) {
+	root := t.TempDir()
+	write := func(rig, body string) {
+		if err := os.MkdirAll(filepath.Join(root, "town", rig), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "town", rig, "config.json"),
+			[]byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("ckan", `{"type":"rig","name":"ckan","default_branch":"master"}`)
+	write("portaljs", `{"type":"rig","name":"portaljs","default_branch":"main"}`)
+	write("nameless", `{"type":"rig","name":"nameless"}`)
+
+	d := &dispatcher{cellRoot: root, log: quietLog()}
+
+	// git has no answer, which is the real state of every rig on the cell.
+	silent := func(args ...string) (string, error) { return "", errors.New("no remote HEAD") }
+	if got := d.defaultBranch(silent, "ckan"); got != "master" {
+		t.Errorf("ckan's base is %q, want master; a pull request onto main would be refused", got)
+	}
+	if got := d.defaultBranch(silent, "portaljs"); got != "main" {
+		t.Errorf("portaljs's base is %q, want main", got)
+	}
+	// Nothing knows: refuse rather than guess. Landing is skipped, and the
+	// change stays in the tree where it can still be recovered.
+	if got := d.defaultBranch(silent, "nameless"); got != "" {
+		t.Errorf("a rig with no recorded branch answered %q, want a refusal", got)
+	}
+
+	// git's live answer wins over gt's record, which is what goes stale.
+	live := func(args ...string) (string, error) { return "origin/develop\n", nil }
+	if got := d.defaultBranch(live, "ckan"); got != "develop" {
+		t.Errorf("git said develop and the answer was %q", got)
+	}
+}
+
+// The agent's own words are pulled out of the runner's output, and a format
+// that does not match yields nothing rather than a guess. A pull request body
+// containing the runner's log lines would be worse than an empty one.
+func TestTheAgentsSummaryIsSeparatedFromTheRunnerLog(t *testing.T) {
+	out := `time=2026-09-07T05:27:26.487Z level=INFO msg=starting bead=sa-kfh
+time=2026-09-07T05:28:10.231Z level=INFO msg="run completed" bead=sa-kfh duration=44s
+sa-kfh: completed in 44s
+Renamed the visible hero tab label from "Visual builder" to "Studio".
+Left the two internal code comments untouched.`
+
+	got := agentSummary("sa-kfh", out)
+	if !strings.HasPrefix(got, `Renamed the visible hero tab label`) {
+		t.Errorf("the summary starts wrongly:\n%s", got)
+	}
+	if strings.Contains(got, "level=INFO") {
+		t.Errorf("the summary carries runner log lines:\n%s", got)
+	}
+	if !strings.Contains(got, "internal code comments") {
+		t.Errorf("the summary is truncated:\n%s", got)
+	}
+
+	if s := agentSummary("sa-kfh", "no marker here at all"); s != "" {
+		t.Errorf("an unrecognised format produced %q, want nothing", s)
+	}
+	// Another bead's marker is not this bead's summary.
+	if s := agentSummary("sa-kfh", "sa-4yn: completed in 1s\nsomething else"); s != "" {
+		t.Errorf("another bead's output was read as this one's: %q", s)
+	}
 }
