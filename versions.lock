@@ -129,6 +129,24 @@ runtimes:
         file: "node-v22.23.2-linux-x64.tar.xz"
         sha256: "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
 
+  # The browser the agents reach through wg-browse.
+  #
+  # chrome-headless-shell rather than the distribution's chromium: Ubuntu 24.04
+  # offers `chromium` only as a snap transitional package, and a snap on a
+  # headless server means snapd, mount units, and a confinement model that
+  # fights a systemd slice.
+  #
+  # The digest is COMPUTED, not published. Chrome for Testing's manifest carries
+  # URLs and no checksums, so this was read from the downloaded zip on
+  # 2026-09-07 -- which is exactly why the date is recorded.
+  chrome-headless-shell:
+    version: "152.0.7977.82"
+    repository: "GoogleChromeLabs/chrome-for-testing"
+    artefacts:
+      linux_amd64:
+        file: "chrome-headless-shell-linux64.zip"
+        sha256: "0ca12ea26b502a83e32db334a17883c315348845efc071d908de7a6d94a97eff"
+
   opencode:
     version: "v1.18.23"
     repository: "anomalyco/opencode"

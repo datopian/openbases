@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""A browser an agent may use, and only in the ways it should.
+
+An agent has no shell: its tools are read, search, edit and `bd`. That makes a
+whole class of work unanswerable. sa-r5k asked for a hero tab to be confirmed
+"pixel-for-pixel unchanged", and the agent verified everything it could from the
+source, declared the criteria satisfied, and had no way to look at the page --
+which is the one thing the bead actually asked for.
+
+    wg-browse shot   <url> <out.png>   render it and save a screenshot
+    wg-browse text   <url>             the rendered text, after scripts run
+    wg-browse console <url>            the console messages and failed requests
+
+# Why this is a narrow command and not a browser
+
+Handing an agent a browser hands it HTTP GET from inside the execution node, as
+the cell user. That is a bigger grant than it sounds, and the node proves it:
+
+    $ curl http://169.254.169.254/hetzner/v1/metadata   ->  200
+
+Cloud instance metadata answers from this machine. So does anything else on the
+private network. An agent that can fetch a URL can read those, and an agent
+reading a repository it was asked to change is a plausible route for someone
+else's text to choose the URL.
+
+So the address is resolved and checked BEFORE the browser is started, and the
+resolution is then PINNED with --host-resolver-rules so the name cannot resolve
+to something else a moment later. Refused: link-local (cloud metadata) and the
+private ranges. Allowed: public addresses, and loopback -- because the whole
+point is to look at a dev server the run just started, and a browser that
+cannot reach localhost cannot do the job.
+"""
+
+import argparse
+import ipaddress
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+
+CHROME = "{{ chrome_headless_shell_binary }}"
+
+# How long the browser may run. A page that never settles must not hold the rig
+# until the job deadline kills the whole run.
+TIMEOUT = 60
+
+
+def resolved(host):
+    """Every address a host resolves to, or an empty list."""
+    try:
+        return sorted({info[4][0] for info in socket.getaddrinfo(host, None)})
+    except OSError:
+        return []
+
+
+def refuse(address):
+    """Why this address may not be fetched, or None."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return f"{address} is not an address"
+    if ip.is_loopback:
+        # Deliberately allowed. A run that starts a dev server and looks at it
+        # is the reason this exists.
+        return None
+    if ip.is_link_local:
+        return (f"{address} is link-local, which is where cloud instance "
+                "metadata lives")
+    # Before is_private, because Python counts 0.0.0.0 and the reserved ranges
+    # as private and the resulting message would say "on a private network"
+    # about an address that is not on any network. Both are refused either way;
+    # the reason an operator reads should be the true one.
+    if ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        return f"{address} is not a routable public address"
+    if ip.is_private:
+        return f"{address} is on a private network, which is not yours to read"
+    return None
+
+
+def check(url):
+    """Validate a URL and return (host, pinned_address)."""
+    parts = urllib.parse.urlparse(url)
+    if parts.scheme not in ("http", "https"):
+        raise SystemExit(f"wg-browse: {parts.scheme or 'that'} is not a scheme "
+                         "this fetches; use http or https")
+    if not parts.hostname:
+        raise SystemExit("wg-browse: no host in that URL")
+
+    addresses = resolved(parts.hostname)
+    if not addresses:
+        raise SystemExit(f"wg-browse: {parts.hostname} does not resolve")
+
+    # EVERY address, not the first. A name that resolves to both a public
+    # address and a private one is a name that can be steered to the private
+    # one, and checking only the first would let it through half the time.
+    for address in addresses:
+        why = refuse(address)
+        if why:
+            raise SystemExit(f"wg-browse: refusing {parts.hostname} — {why}")
+    return parts.hostname, addresses[0]
+
+
+def run(url, extra, out_dir):
+    """Start the browser with the resolution pinned, and return its output."""
+    host, address = check(url)
+    argv = [
+        CHROME,
+        "--headless",
+        "--disable-gpu",
+        # No sandbox because there is no way to grant the cell user the
+        # namespaces Chrome's own sandbox needs, and this already runs inside a
+        # systemd slice with a memory ceiling and a process cap. Stated rather
+        # than passed silently: it is the weakest line here.
+        "--no-sandbox",
+        # Pinned to the address that was just checked, so the name cannot
+        # resolve elsewhere between the check and the fetch. The metadata
+        # address is refused outright as well, in case anything reaches it by
+        # another route.
+        f"--host-resolver-rules=MAP {host} {address},"
+        "MAP 169.254.169.254 ~NOTFOUND,MAP metadata.google.internal ~NOTFOUND",
+        "--user-data-dir=" + out_dir,
+        "--window-size=1280,900",
+        # Nothing is being logged in to, and a run that leaves a profile behind
+        # is a run whose next page starts with the last one's cookies.
+        "--incognito",
+        "--no-first-run",
+        "--disable-extensions",
+        "--hide-scrollbars",
+        "--virtual-time-budget=8000",
+    ] + extra + [url]
+
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"wg-browse: {url} did not finish rendering in {TIMEOUT}s")
+    return done
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="wg-browse", add_help=True)
+    parser.add_argument("action", choices=["shot", "text", "console"])
+    parser.add_argument("url")
+    parser.add_argument("out", nargs="?")
+    args = parser.parse_args()
+
+    if not os.path.exists(CHROME):
+        raise SystemExit(f"wg-browse: no browser at {CHROME}")
+
+    with tempfile.TemporaryDirectory(prefix="wg-browse-") as work:
+        if args.action == "shot":
+            if not args.out:
+                raise SystemExit("wg-browse shot needs somewhere to write the image")
+            done = run(args.url, ["--screenshot=" + os.path.abspath(args.out)], work)
+            if not os.path.exists(args.out):
+                raise SystemExit("wg-browse: the browser wrote no image\n"
+                                 + (done.stderr or "").strip()[-800:])
+            print(f"{args.out} ({os.path.getsize(args.out)} bytes) from {args.url}")
+            return 0
+
+        if args.action == "text":
+            done = run(args.url, ["--dump-dom"], work)
+            dom = done.stdout
+            if not dom.strip():
+                raise SystemExit("wg-browse: the browser returned nothing\n"
+                                 + (done.stderr or "").strip()[-800:])
+            # Scripts and styles removed, tags stripped, whitespace collapsed.
+            # The agent asked what the page SAYS; handing back minified
+            # JavaScript is handing back the thing it was trying to avoid
+            # reading in the source.
+            text = re.sub(r"(?is)<(script|style|noscript)\b.*?</\1>", " ", dom)
+            text = re.sub(r"(?s)<[^>]+>", " ", text)
+            text = re.sub(r"&nbsp;?", " ", text)
+            print(re.sub(r"[ \t]*\n\s*", "\n", re.sub(r"[ \t]{2,}", " ", text)).strip())
+            return 0
+
+        done = run(args.url, ["--dump-dom", "--enable-logging=stderr", "--v=0"], work)
+        # Only the lines a person would act on. Chrome's stderr at this level is
+        # mostly its own startup chatter, and printing all of it would bury the
+        # page's own errors in it.
+        interesting = [
+            line for line in (done.stderr or "").splitlines()
+            if re.search(r"(?i)\b(error|failed|refused|uncaught|CONSOLE)\b", line)
+        ]
+        if not interesting:
+            print(f"no console errors or failed requests on {args.url}")
+            return 0
+        print("\n".join(interesting[-60:]))
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

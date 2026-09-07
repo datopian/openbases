@@ -445,6 +445,13 @@ jobs:
       - name: the Access bypass guard fails when it should
         run: bash test/acceptance/access_bypass_guard.sh
 
+      # A browser hands an agent HTTP GET from inside the execution node, and
+      # that node answers 200 on http://169.254.169.254/hetzner/v1/metadata.
+      # This is the check standing between an agent and cloud instance
+      # metadata, so it is tested rather than trusted.
+      - name: the browse command refuses metadata and private networks
+        run: python3 test/acceptance/browse_addresses.py
+
       # A deploy script whose failures are unreadable is a deploy script that
       # gets re-run rather than read. This one reported the wrong line twice on
       # one afternoon, in opposite directions; both real outputs are fixtures.

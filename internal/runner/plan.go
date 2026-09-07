@@ -255,8 +255,22 @@ var DefaultTools = map[string][]string{
 		// is the bead tool and nothing else — no `git push`, no `curl`, no
 		// `rm -rf`, and no shelling out to reach any of them.
 		"Bash(bd:*)",
+		// A browser, through one command that decides what may be fetched.
+		//
+		// sa-r5k was asked to confirm a hero tab was "pixel-for-pixel
+		// unchanged", verified everything it could from the source, declared
+		// the criteria satisfied, and had no way to look at the page — which
+		// was the one thing the bead actually asked for.
+		//
+		// `wg-browse` and NOT the browser. Handing an agent a browser hands it
+		// HTTP GET from inside the execution node, and this node answers 200
+		// on http://169.254.169.254/hetzner/v1/metadata. wg-browse resolves
+		// the host, refuses link-local and private addresses, and pins the
+		// resolution so the name cannot change between the check and the
+		// fetch.
+		"Bash(wg-browse:*)",
 	},
-	"crew": {"Read", "Grep", "Glob", "Edit", "Write", "Bash(bd:*)"},
+	"crew": {"Read", "Grep", "Glob", "Edit", "Write", "Bash(bd:*)", "Bash(wg-browse:*)"},
 }
 
 // DefaultEffort mirrors gastown_role_effort. Effort matters more than the model
@@ -590,10 +604,13 @@ func renderOpenCodeConfig(base, token, model string, limits ModelLimits,
 		"grep":  "allow",
 		"edit":  "allow",
 		"write": "allow",
-		"bash": map[string]string{
-			"*":    "deny",
-			"bd *": "allow",
-		},
+		// Derived from the same allowlist, so the two runtimes cannot drift.
+		// This was written out by hand as {"*": "deny", "bd *": "allow"},
+		// which meant adding a command to DefaultTools granted it under the
+		// claude runtime and silently not under opencode — and opencode is the
+		// default now, so the drift would have been the live behaviour: an
+		// agent told it has a browser, with no permission to run it.
+		"bash": bashPermissions(tools),
 		// Everything outside the run directory and the rig is denied. Claude
 		// Code has no equivalent of this and relies on the sandbox; here it is
 		// stated, which is strictly better.
@@ -646,6 +663,29 @@ func renderOpenCodeConfig(base, token, model string, limits ModelLimits,
 		return "", err
 	}
 	return string(out) + "\n", nil
+}
+
+// bashPermissions turns the role's allowlist into OpenCode's bash block.
+//
+// OpenCode matches with the LAST pattern winning, so the catch-all deny goes in
+// first and each allowed prefix after it. `Bash(bd:*)` becomes `bd *`.
+func bashPermissions(tools []string) map[string]string {
+	perm := map[string]string{"*": "deny"}
+	for _, tool := range tools {
+		rest, ok := strings.CutPrefix(tool, "Bash(")
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSuffix(rest, ")")
+		// `bd:*` is Claude Code's spelling of "the bd command with any
+		// arguments"; OpenCode wants `bd *`.
+		rest = strings.TrimSuffix(rest, ":*")
+		if rest == "" {
+			continue
+		}
+		perm[rest+" *"] = "allow"
+	}
+	return perm
 }
 
 func hasTool(tools []string, want string) bool {

@@ -54,6 +54,10 @@ compare "opencode version" "$(lock_version opencode)" "$(ansible_value opencode_
 # command and the version has to be the one that repository expects. Guarded
 # here for the same reason as the rest: an unguarded pin is one that drifts.
 compare "node version"    "$(lock_version node)"     "$(ansible_value node_version)"
+# The browser the agents reach through wg-browse. Guarded for the same reason:
+# an unguarded pin is one that drifts, and this one is a browser that runs
+# other people's pages.
+compare "browser version" "$(lock_version chrome-headless-shell)" "$(ansible_value chrome_headless_shell_version)"
 compare "claude-code version" "$(lock_version claude_code)" "$(ansible_value claude_code_version)"
 
 compare "gastown sha256"  "$(lock_sha gastown linux_amd64)"  "$(ansible_value gastown_sha256_linux_amd64)"
@@ -61,6 +65,7 @@ compare "beads sha256"    "$(lock_sha beads linux_amd64)"    "$(ansible_value be
 compare "dolt sha256"     "$(lock_sha dolt linux_amd64)"     "$(ansible_value dolt_sha256_linux_amd64)"
 compare "opencode sha256" "$(lock_sha opencode linux_amd64)" "$(ansible_value opencode_sha256_linux_amd64)"
 compare "node sha256"     "$(lock_sha node linux_amd64)"     "$(ansible_value node_sha256_linux_x64)"
+compare "browser sha256"  "$(lock_sha chrome-headless-shell linux_amd64)" "$(ansible_value chrome_headless_shell_sha256)"
 
 if [ "$fail" -ne 0 ]; then
   echo
