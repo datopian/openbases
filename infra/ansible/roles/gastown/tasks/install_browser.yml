@@ -23,9 +23,22 @@
 # shared libraries" without them, which reads as a broken download rather than a
 # missing dependency. Installed whether or not the browser is, so a node that
 # has the binary and lost a library is repaired.
-- name: Install the libraries Chrome links against
+#
+# BEFORE the install block, not inside it, and unzip is why. Chrome for Testing
+# publishes a zip; the node had no unzip, and ansible's unarchive fell back to
+# tar and reported
+#
+#   bzip2: (stdin) is not a bzip2 file
+#   Unable to find required 'unzip' or 'zipinfo' binary
+#
+# which reads as a corrupt download rather than a missing tool. Putting it here
+# means the dependency is present before anything needs it, on every run.
+- name: Install what the browser needs to be unpacked and to run
   ansible.builtin.apt:
     name:
+      # The archive tool for a zip. Every other binary this role installs is a
+      # tarball, which is why nothing needed it until now.
+      - unzip
       - libnss3
       - libnspr4
       - libatk1.0-0t64
