@@ -71,6 +71,30 @@ type dispatchArgs struct {
 	Rig string `json:"rig,omitempty" jsonschema:"Optional. The rig to run in, when dispatch says several hold this project's repositories. It must be one of the rigs it named."`
 }
 
+type newProjectArgs struct {
+	Slug string `json:"slug" jsonschema:"A short lowercase identifier, for example jackson-open-data. This is permanent and appears in bead labels."`
+	Name string `json:"name" jsonschema:"The human-readable name, for example Jackson Open Data."`
+	// Mandatory, and not a field a caller may omit.
+	//
+	// The schema's backup_owner_differs constraint makes full-cycle ownership
+	// impossible to vest in one person, so there is no default this could
+	// invent. A tool that guessed here would create a project whose
+	// accountability was decided by a language model.
+	BackupOwner  string `json:"backup_owner" jsonschema:"REQUIRED. The email address of the backup owner. Must be a different person from the primary owner - the registry refuses a project where one person holds both roles. Ask the person which colleague it should be rather than choosing."`
+	PrimaryOwner string `json:"primary_owner,omitempty" jsonschema:"Optional. The primary owner's email address. Defaults to whoever is calling, which is usually right."`
+	Portfolio    string `json:"portfolio,omitempty" jsonschema:"Optional. The slug of the portfolio this belongs under, for example bizdev."`
+	Objective    string `json:"objective,omitempty" jsonschema:"Optional. One sentence on what this project is for."`
+	Visibility   string `json:"visibility,omitempty" jsonschema:"Optional: internal (the default), public, or restricted. A restricted project also needs a cell."`
+	Cell         string `json:"cell,omitempty" jsonschema:"Optional. The execution cell where this project's work runs, for example oss. Required when visibility is restricted."`
+}
+
+type attachArgs struct {
+	Slug string `json:"slug" jsonschema:"The project's slug."`
+	// A list, because attaching six repositories should not be six round
+	// trips and because the endpoint reports per repository.
+	Repositories []string `json:"repositories" jsonschema:"Repositories as owner/name, for example [\"datopian/portaljs\"]. Several may be given at once; each is reported separately, so some can succeed while others are refused."`
+}
+
 type noArgs struct{}
 
 // Route is one tool's HTTP shape, kept as data so a test can assert the
@@ -101,6 +125,18 @@ var Routes = []Route{
 	{Tool: "workgraph_work_list", Method: http.MethodGet, Path: "/v1/work", ReadOnly: true},
 	{Tool: "workgraph_bead", Method: http.MethodGet, Path: "/v1/work/{bead}", ReadOnly: true},
 	{Tool: "workgraph_project_list", Method: http.MethodGet, Path: "/v1/projects", ReadOnly: true},
+	// The writes that set a project up. None of them spends money: they change
+	// the registry, and the registry is what later decides where work runs and
+	// who may read it.
+	//
+	// Reads and creates only, which is a deliberate line and not an oversight.
+	// A detach tool was written for symmetry and removed again: it is the
+	// irreversible direction, withdrawing the route work travels on, and
+	// symmetry is not a good enough reason to widen a guardrail somebody set
+	// on purpose. Detaching stays an API call, where the person doing it has
+	// read what they are doing.
+	{Tool: "workgraph_project_create", Method: http.MethodPost, Path: "/v1/projects"},
+	{Tool: "workgraph_repositories_attach", Method: http.MethodPost, Path: "/v1/projects/{slug}/repositories"},
 	{Tool: "workgraph_file_work", Method: http.MethodPost, Path: "/v1/work/plan", SpendsMoney: true},
 	{Tool: "workgraph_dispatch", Method: http.MethodPost, Path: "/v1/work/{bead}/dispatch", SpendsMoney: true},
 }
@@ -166,6 +202,31 @@ var (
 		},
 	}
 
+	toolProjectCreate = &sdk.Tool{
+		Name: "workgraph_project_create",
+		Description: "Create a project. Needs a slug, a name, and the email of a " +
+			"BACKUP OWNER who is a different person from the primary owner — the " +
+			"registry refuses a project where one person holds both, so ask who " +
+			"it should be rather than choosing. The primary owner defaults to " +
+			"whoever is asking. The slug is permanent: it appears in bead labels " +
+			"and decides who can read the work.",
+		Annotations: &sdk.ToolAnnotations{
+			Title: "Create a project", ReadOnlyHint: false, DestructiveHint: ptr(false),
+		},
+	}
+
+	toolRepositoriesAttach = &sdk.Tool{
+		Name: "workgraph_repositories_attach",
+		Description: "Attach repositories to a project, as owner/name. This is what " +
+			"makes work dispatchable against them: a cell gets one rig per " +
+			"attached repository, and a dispatch is routed to the rig holding " +
+			"the code the bead is about. Several at once is fine and each is " +
+			"reported separately.",
+		Annotations: &sdk.ToolAnnotations{
+			Title: "Attach repositories", ReadOnlyHint: false, DestructiveHint: ptr(false),
+		},
+	}
+
 	// The two that spend money. ReadOnlyHint false and DestructiveHint true so
 	// a client PROMPTS before running them, and SPENDS MONEY in the description
 	// as well — an annotation is a hint a client may ignore, and the
@@ -198,7 +259,9 @@ var (
 // cheapest useful thing is the first thing it sees.
 func Tools() []*sdk.Tool {
 	return []*sdk.Tool{
-		toolInbox, toolAsk, toolWorkList, toolBead, toolProjectList, toolFileWork, toolDispatch,
+		toolInbox, toolAsk, toolWorkList, toolBead, toolProjectList,
+		toolProjectCreate, toolRepositoriesAttach,
+		toolFileWork, toolDispatch,
 	}
 }
 
@@ -261,6 +324,56 @@ func NewServer(o Options) *sdk.Server {
 			body["project"] = p
 		}
 		return plain(ctx, c, shell, obs, "workgraph_file_work", http.MethodPost, "/v1/work/plan", body)
+	})
+
+	sdk.AddTool(s, toolProjectCreate, func(ctx context.Context, _ *sdk.CallToolRequest, a newProjectArgs) (*sdk.CallToolResult, any, error) {
+		body := map[string]any{}
+		for field, value := range map[string]string{
+			"slug":          a.Slug,
+			"name":          a.Name,
+			"backup_owner":  a.BackupOwner,
+			"primary_owner": a.PrimaryOwner,
+			"portfolio":     a.Portfolio,
+			"objective":     a.Objective,
+			"visibility":    a.Visibility,
+			"cell":          a.Cell,
+		} {
+			if v := strings.TrimSpace(value); v != "" {
+				body[field] = v
+			}
+		}
+		// Refused here rather than by the server, because the message a model
+		// can act on is the one that names the missing field. The server
+		// refuses these too — this is not the check, it is the better wording
+		// of it.
+		for _, required := range []string{"slug", "name", "backup_owner"} {
+			if _, ok := body[required]; !ok {
+				return errorResult("a project needs a " + required +
+					"; the backup owner must be a different person from the primary " +
+					"owner, so ask which colleague it should be rather than choosing one"), nil, nil
+			}
+		}
+		return plain(ctx, c, shell, obs, "workgraph_project_create", http.MethodPost,
+			"/v1/projects", body)
+	})
+
+	sdk.AddTool(s, toolRepositoriesAttach, func(ctx context.Context, _ *sdk.CallToolRequest, a attachArgs) (*sdk.CallToolResult, any, error) {
+		slug := strings.TrimSpace(a.Slug)
+		if slug == "" {
+			return errorResult("a project slug is required"), nil, nil
+		}
+		repos := make([]string, 0, len(a.Repositories))
+		for _, r := range a.Repositories {
+			if r = strings.TrimSpace(r); r != "" {
+				repos = append(repos, r)
+			}
+		}
+		if len(repos) == 0 {
+			return errorResult("name at least one repository, as owner/name"), nil, nil
+		}
+		return plain(ctx, c, shell, obs, "workgraph_repositories_attach", http.MethodPost,
+			"/v1/projects/"+url.PathEscape(slug)+"/repositories",
+			map[string]any{"repositories": repos})
 	})
 
 	sdk.AddTool(s, toolDispatch, func(ctx context.Context, _ *sdk.CallToolRequest, a dispatchArgs) (*sdk.CallToolResult, any, error) {

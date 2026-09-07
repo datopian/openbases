@@ -57,6 +57,36 @@ wg login                 # once
 codex mcp add workgraph --command wg --args mcp
 ```
 
+## What the tools can do
+
+Nine tools, the same set over both transports — a hosted connector and
+`wg mcp` on a laptop are built from one table, so nothing is available in one
+client and missing in the other.
+
+| Tool | For |
+|---|---|
+| `workgraph_inbox` | what needs this person |
+| `workgraph_ask` | the chief of staff's fixed question set |
+| `workgraph_work_list` | what is in flight and what it cost |
+| `workgraph_bead` | one bead: outcome, the agent's own words, model, cost, pull request |
+| `workgraph_project_list` | projects this person can see |
+| `workgraph_project_create` | a new project, with owners |
+| `workgraph_repositories_attach` | make repositories dispatchable |
+| `workgraph_file_work` | a brief becomes beads (spends money) |
+| `workgraph_dispatch` | run one bead (spends money) |
+
+Creating a project needs a **backup owner who is a different person** from the
+primary owner: the registry refuses a project where one person holds both, so
+there is no default a client could supply. And attach repositories afterwards —
+a project with none cannot be dispatched to, because a cell gets one rig per
+attached repository and a dispatch routes to the rig holding the relevant code.
+
+Detaching a repository, and setting a repository's check command, are
+deliberately **not** tools. Detaching withdraws the route work travels on, and
+a check command is executed on the execution node after an agent has been able
+to edit the repository it comes from. Both stay API calls, where the person
+doing it has read what they are doing.
+
 `wg mcp` serves the same six tools from the same code, so nothing is lost except
 the ability to use it from a machine without `wg`.
 

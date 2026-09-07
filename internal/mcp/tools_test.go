@@ -20,8 +20,22 @@ import (
 
 // Curated, not generated. Two dozen tools would give a model no judgement, and
 // this test is what stops "expose everything" happening by increment.
+//
+// Raised from 8 to 9 on 2026-09-07, for project setup: creating a project and
+// attaching repositories are what make work dispatchable at all, and doing
+// them was the one part of the loop that still required a browser or a CLI.
+//
+// Nine because that is what those two tools cost, not because nine is a better
+// number. The alternatives were both worse. Merging workgraph_bead into
+// workgraph_work_list was considered and rejected — the comment above toolBead
+// already argues that case, and it was written by somebody who had thought
+// about it: the list is read to scan and the detail is read to understand one
+// thing. Dropping a tool to make room would have removed something people use
+// to add something they asked for.
+//
+// A tenth needs the same argument made again, in writing, here.
 func TestToolSetStaysSmall(t *testing.T) {
-	if len(Tools()) > 8 {
+	if len(Tools()) > 9 {
 		t.Fatalf("%d tools. The list is the prompt: past a handful, a model chooses worse "+
 			"rather than doing more. Add to the CLI instead.", len(Tools()))
 	}
@@ -400,4 +414,187 @@ func TestAMissingBeadIsAReadableRefusal(t *testing.T) {
 	if !strings.Contains(text(res), "no such bead") {
 		t.Errorf("the server's words did not survive: %q", text(res))
 	}
+}
+
+// Setting a project up is now possible from a chat client, which is the point:
+// creating a project and attaching repositories are what make work
+// dispatchable at all, and until now they were the one part of the loop that
+// needed a browser or a CLI.
+func TestAProjectCanBeSetUpFromAClient(t *testing.T) {
+	t.Run("creating one reaches the right route with the right body", func(t *testing.T) {
+		stub := &stubCaller{status: 201, resp: `{"slug":"jackson-open-data"}`}
+		res := call(t, stub, "workgraph_project_create", map[string]any{
+			"slug":          "jackson-open-data",
+			"name":          "Jackson Open Data",
+			"backup_owner":  "colleague@datopian.com",
+			"primary_owner": "me@datopian.com",
+			"portfolio":     "bizdev",
+			"cell":          "oss",
+		})
+		if res.IsError {
+			t.Fatalf("refused a complete request: %s", text(res))
+		}
+		if stub.method != http.MethodPost || stub.path != "/v1/projects" {
+			t.Errorf("called %s %s", stub.method, stub.path)
+		}
+		body, ok := stub.body.(map[string]any)
+		if !ok {
+			t.Fatalf("body is %T", stub.body)
+		}
+		for field, want := range map[string]string{
+			"slug": "jackson-open-data", "name": "Jackson Open Data",
+			"backup_owner": "colleague@datopian.com", "primary_owner": "me@datopian.com",
+			"portfolio": "bizdev", "cell": "oss",
+		} {
+			if body[field] != want {
+				t.Errorf("body[%q] = %v, want %q", field, body[field], want)
+			}
+		}
+		// Fields nobody gave are ABSENT rather than empty strings. An empty
+		// visibility would be sent as "" and refused by the schema, which the
+		// caller would read as their own mistake.
+		if _, present := body["visibility"]; present {
+			t.Errorf("visibility was sent though nobody set it: %v", body)
+		}
+		if _, present := body["objective"]; present {
+			t.Errorf("objective was sent though nobody set it: %v", body)
+		}
+	})
+
+	// The backup owner cannot be defaulted. The schema's backup_owner_differs
+	// makes full-cycle ownership impossible to vest in one person, so a tool
+	// that invented one would be deciding accountability by language model.
+	//
+	// Two layers refuse it, and which one speaks is worth knowing rather than
+	// assuming. The SDK validates the generated JSON schema before the handler
+	// runs, so a MISSING field is refused there — tersely, naming the property.
+	// A field that is present but blank passes the schema and is refused by the
+	// handler, which is the one that can explain.
+	t.Run("a missing field is refused by the schema, naming it", func(t *testing.T) {
+		for _, missing := range []string{"slug", "name", "backup_owner"} {
+			args := map[string]any{
+				"slug": "x", "name": "X", "backup_owner": "b@datopian.com",
+			}
+			delete(args, missing)
+			stub := &stubCaller{status: 201, resp: `{}`}
+			res := call(t, stub, "workgraph_project_create", args)
+			if !res.IsError {
+				t.Errorf("accepted a request with no %s", missing)
+				continue
+			}
+			if !strings.Contains(text(res), missing) {
+				t.Errorf("the refusal does not name %s: %s", missing, text(res))
+			}
+			if stub.method != "" {
+				t.Errorf("called the API despite a missing %s", missing)
+			}
+		}
+	})
+
+	t.Run("a blank field is refused by the handler, which explains why", func(t *testing.T) {
+		stub := &stubCaller{status: 201, resp: `{}`}
+		res := call(t, stub, "workgraph_project_create", map[string]any{
+			"slug": "x", "name": "X", "backup_owner": "   ",
+		})
+		if !res.IsError {
+			t.Fatalf("accepted a blank backup owner: %s", text(res))
+		}
+		for _, want := range []string{"backup_owner", "different person", "ask"} {
+			if !strings.Contains(text(res), want) {
+				t.Errorf("the refusal does not say %q: %s", want, text(res))
+			}
+		}
+		if stub.method != "" {
+			t.Error("called the API with a blank backup owner")
+		}
+	})
+
+	// And the explanation reaches the model BEFORE it calls, which is where it
+	// actually changes behaviour: a model that reads "missing property
+	// backup_owner" after the fact will invent an address, while one that read
+	// the field description first will ask.
+	t.Run("the field description tells the model to ask rather than choose", func(t *testing.T) {
+		// Asked of a CONNECTED CLIENT, not of Tools(). The SDK generates the
+		// input schema from the argument struct when the tool is registered,
+		// so the declarations Tools() returns carry an empty schema and a test
+		// reading them would assert nothing about what a model receives.
+		schema := advertisedSchema(t, "workgraph_project_create")
+		for _, want := range []string{"different person", "Ask the person", "REQUIRED"} {
+			if !strings.Contains(schema, want) {
+				t.Errorf("the schema a model reads does not say %q:\n%s", want, schema)
+			}
+		}
+	})
+
+	t.Run("attaching repositories sends them all in one call", func(t *testing.T) {
+		stub := &stubCaller{status: 200, resp: `{"results":[]}`}
+		res := call(t, stub, "workgraph_repositories_attach", map[string]any{
+			"slug":         "portaljs",
+			"repositories": []any{"datopian/portaljs", " datopian/cloud.portaljs.com ", ""},
+		})
+		if res.IsError {
+			t.Fatalf("refused: %s", text(res))
+		}
+		if stub.path != "/v1/projects/portaljs/repositories" {
+			t.Errorf("called %s", stub.path)
+		}
+		body := stub.body.(map[string]any)
+		got, _ := body["repositories"].([]string)
+		// Trimmed, and the empty one dropped rather than sent for the server
+		// to refuse.
+		if len(got) != 2 || got[0] != "datopian/portaljs" || got[1] != "datopian/cloud.portaljs.com" {
+			t.Errorf("sent %v", got)
+		}
+	})
+
+	t.Run("attaching nothing is refused before the call", func(t *testing.T) {
+		for _, args := range []map[string]any{
+			{"slug": "portaljs", "repositories": []any{}},
+			{"slug": "portaljs", "repositories": []any{"  "}},
+			{"slug": "", "repositories": []any{"datopian/portaljs"}},
+		} {
+			stub := &stubCaller{status: 200, resp: `{}`}
+			if res := call(t, stub, "workgraph_repositories_attach", args); !res.IsError {
+				t.Errorf("accepted %v", args)
+			} else if stub.method != "" {
+				t.Errorf("called the API for %v", args)
+			}
+		}
+	})
+}
+
+// advertisedSchema is the input schema a connected client is given for a tool.
+func advertisedSchema(t *testing.T, tool string) string {
+	t.Helper()
+	ctx := context.Background()
+	st, ct := sdk.NewInMemoryTransports()
+	server := NewServer(Options{Caller: &stubCaller{status: 200, resp: "{}"}, Version: "test"})
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatalf("connecting the server: %v", err)
+	}
+	defer ss.Close()
+	client := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("connecting the client: %v", err)
+	}
+	defer cs.Close()
+
+	list, err := cs.ListTools(ctx, &sdk.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("listing tools: %v", err)
+	}
+	for _, tl := range list.Tools {
+		if tl.Name != tool {
+			continue
+		}
+		encoded, err := json.Marshal(tl.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(encoded)
+	}
+	t.Fatalf("%s is not advertised to a client", tool)
+	return ""
 }
