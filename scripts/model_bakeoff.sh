@@ -77,8 +77,33 @@ workers-ai/@cf/qwen/qwen3-30b-a3b-fp8:32768
 # The control. If this fails a screen, the screen is wrong.
 CONTROL="anthropic/claude-sonnet-5:200000"
 
+
+
 say() { printf '%s\n' "$*"; }
 rule() { printf '%s\n' "----------------------------------------------------------------"; }
+
+# An optional filter, so one candidate can be screened without paying for six.
+#
+#   wg-bakeoff glm-5.3            # that candidate and the control
+#   wg-bakeoff                    # everything
+#
+# The control is never filtered out. A screen without it cannot distinguish a
+# model that failed from a harness that was broken, which is exactly what
+# happened the first time this was run on a laptop: five identical failures,
+# including the control, and the harness was the fault.
+if [ "$#" -gt 0 ]; then
+  filtered=""
+  for candidate in $CANDIDATES; do
+    case "$candidate" in *"$1"*) filtered="$filtered$candidate
+";; esac
+  done
+  if [ -z "$filtered" ]; then
+    say "no candidate matches '$1'; the list is:"
+    for candidate in $CANDIDATES; do say "  ${candidate%%:*}"; done
+    exit 2
+  fi
+  CANDIDATES="$filtered"
+fi
 
 # run <bead> <model> <runtime> <instructions> -> writes the run's output, returns rc
 run_agent() {
