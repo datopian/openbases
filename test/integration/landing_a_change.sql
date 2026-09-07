@@ -130,6 +130,43 @@ BEGIN
     RAISE EXCEPTION 'the detail names the repository as %', got;
   END IF;
 
+  -- A bead that ran, landed a change, and is still open reads as `landed`,
+  -- not `blocked`. Those need different words: one asks somebody to unblock
+  -- an agent, the other asks them to review a diff. sa-kfh was reported as
+  -- blocked while its change was open on datopian/portaljs#1662.
+  INSERT INTO work_queue (kind, cell, rig, bead, status, claimed_at, finished_at)
+  VALUES ('work', 'land-cell', 'landrig', 'ld-1', 'done', now(), now());
+  UPDATE work_refs SET status = 'open' WHERE bead_id = 'ld-1';
+  PERFORM set_config('workgraph.user_id', u::text, true);
+  SELECT system_bead_detail('ld-1') ->> 'outcome' INTO got;
+  IF got <> 'landed' THEN
+    RAISE EXCEPTION 'a bead whose work is in a pull request reads as %', got;
+  END IF;
+
+  -- And a CLOSED bead with a pull request is `done`, which is the better
+  -- answer. The landed case must not shadow it.
+  UPDATE work_refs SET status = 'closed' WHERE bead_id = 'ld-1';
+  SELECT system_bead_detail('ld-1') ->> 'outcome' INTO got;
+  IF got <> 'done' THEN
+    RAISE EXCEPTION 'a closed bead with a pull request reads as %', got;
+  END IF;
+
+  -- An open bead with NO pull request is still blocked, because it is. Its
+  -- own bead rather than ld-1 with its rows deleted: the RLS section below
+  -- counts ld-1's pull requests, and a test that quietly removes the state a
+  -- later assertion depends on fails somewhere other than where it is wrong.
+  PERFORM system_project_bead('land-cell', 'ld-3', 'Could not proceed', 'task', 'open',
+          ARRAY['wg-project-land-proj']);
+  INSERT INTO work_queue (kind, cell, rig, bead, status, claimed_at, finished_at)
+  VALUES ('work', 'land-cell', 'landrig', 'ld-3', 'done', now(), now());
+  SELECT system_bead_detail('ld-3') ->> 'outcome' INTO got;
+  IF got <> 'blocked' THEN
+    RAISE EXCEPTION 'an open bead with no pull request reads as %', got;
+  END IF;
+
+  -- ld-1 is left CLOSED, which is how the case above leaves it and what the
+  -- RLS section below expects to still find two pull requests for.
+
   -- A bead that landed nothing says so with an empty list rather than a null,
   -- so a reader does not have to distinguish "no pull requests" from "this
   -- field is missing".

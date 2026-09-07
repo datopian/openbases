@@ -63,9 +63,14 @@ const css = {
 /**
  * How each outcome reads, and what it means.
  *
- * `blocked` gets the plainest wording of the six, because it is the one that
- * was previously indistinguishable from success and the one a reader is most
+ * `blocked` gets the plainest wording, because it is the one that was
+ * previously indistinguishable from success and the one a reader is most
  * likely to misjudge.
+ *
+ * `landed` exists because `blocked` was being shown for work that was in an
+ * open pull request — sa-kfh's change sat on datopian/portaljs#1662 while this
+ * page said the agent had not finished it. Those need different words: one
+ * asks somebody to unblock the agent, the other asks them to review a diff.
  */
 function outcomeLabel(o: BeadDetail["outcome"]): {
   text: string;
@@ -78,6 +83,14 @@ function outcomeLabel(o: BeadDetail["outcome"]): {
         text: "Done",
         note: "the run finished and the bead is closed",
         colour: "#1a7f37",
+      };
+    case "landed":
+      return {
+        text: "In review",
+        note:
+          "the change is in a pull request and the bead is still open. The work exists — " +
+          "see below for where it went.",
+        colour: "#0b5cad",
       };
     case "blocked":
       return {

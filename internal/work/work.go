@@ -133,10 +133,35 @@ func (j Job) Instructions() string {
 					"and if what the bead describes is not in that checkout, say so "+
 					"rather than looking elsewhere on the machine.", c)
 		}
+		// Landing is NOT the agent's job, and saying so is the difference
+		// between a run that finishes and one that spends its budget on a wall.
+		//
+		// sa-kfh's second run made the rename correctly and then reported:
+		//
+		//	I couldn't complete the landing step: every `git` and `gt`
+		//	invocation in this session (even read-only ones like `git status`)
+		//	is immediately rejected with "This command requires approval"
+		//
+		// which is exactly right -- the tool policy grants Read, Grep, Glob,
+		// Edit, Write and `Bash(bd:*)` and nothing else -- and it left the
+		// bead open on the reasonable grounds that the work had not reached
+		// the repository. Forty model calls and 83 cents, double the run that
+		// simply made the change, and a bead the interface then labelled
+		// `blocked` when its work was in a pull request.
+		//
+		// The agent was not wrong about anything. It had not been told that
+		// the branch and the pull request happen after the run, without it.
 		return fmt.Sprintf(
 			"Work the bead %s. Read it first, do what it asks, and close it when the work "+
 				"is done and not before. If you cannot complete it, leave it open and say why "+
-				"in a comment.%s", j.Bead, where)
+				"in a comment.%s\n\n"+
+				"Do NOT try to commit, branch, push, or open a pull request, and do not try to "+
+				"run git or gt at all -- you have no access to them and asking will not get it. "+
+				"Editing the files IS the whole of your job: whatever you change is committed to "+
+				"a branch named after this bead and opened as a pull request for you, "+
+				"automatically, after your run finishes. So close the bead once the change is "+
+				"made; you do not need to see it merged, and waiting for that is not something "+
+				"you can do.", j.Bead, where)
 	}
 	return ""
 }
