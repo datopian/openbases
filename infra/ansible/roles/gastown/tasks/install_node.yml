@@ -1,0 +1,93 @@
+---
+# Install a pinned Node, prefix and all.
+#
+# Not through install_binary.yml, which installs ONE executable: node needs its
+# whole tree. npm is a symlink into lib/node_modules/npm/bin, so copying
+# /usr/local/bin/npm out of an unpacked tarball produces a dangling link and a
+# command that reports "cannot find module" rather than a version.
+#
+# The distribution's nodejs stays installed and is simply shadowed: /usr/local
+# precedes /usr in the default PATH, and leaving the apt package in place means
+# nothing that already depends on it breaks.
+
+- name: Check which Node is installed
+  ansible.builtin.command: /usr/local/bin/node --version
+  register: node_installed
+  changed_when: false
+  failed_when: false
+  # A read-only probe, so it must run in check mode too -- see the same note in
+  # install_binary.yml (wg-4h3).
+  check_mode: false
+
+- name: "Report that Node {{ node_version }} would be installed"
+  ansible.builtin.debug:
+    msg: "Node {{ node_version }} is not installed; a real run would install it"
+  when:
+    - ansible_check_mode
+    - node_version not in (node_installed.stdout | default(''))
+  changed_when: true
+
+- name: "Install Node {{ node_version }}"
+  when:
+    - not ansible_check_mode
+    - node_version not in (node_installed.stdout | default(''))
+  block:
+    - name: Create a staging directory for Node
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: -node-install
+      register: node_staging
+
+    - name: Download and install Node
+      block:
+        # xz rather than gz: it is what nodejs.org publishes a checksum for in
+        # SHASUMS256.txt, and verifying the artefact we actually unpack matters
+        # more than the convenience of tar.gz.
+        - name: Download Node
+          ansible.builtin.get_url:
+            url: "https://nodejs.org/dist/{{ node_version }}/node-{{ node_version }}-linux-x64.tar.xz"
+            dest: "{{ node_staging.path }}/node.tar.xz"
+            checksum: "sha256:{{ node_sha256_linux_x64 }}"
+            mode: "0644"
+
+        - name: Unpack Node into its own versioned prefix
+          ansible.builtin.unarchive:
+            src: "{{ node_staging.path }}/node.tar.xz"
+            dest: /usr/local/lib
+            remote_src: true
+            owner: root
+            group: root
+            # The tarball unpacks as node-vX.Y.Z-linux-x64, so each version
+            # lands beside the last rather than overwriting it. A rollback is
+            # then a symlink change rather than a download.
+            creates: "/usr/local/lib/node-{{ node_version }}-linux-x64/bin/node"
+
+        # Symlinks rather than copies, so npm's own link into
+        # lib/node_modules/npm/bin still resolves.
+        - name: Put Node on the PATH
+          ansible.builtin.file:
+            src: "/usr/local/lib/node-{{ node_version }}-linux-x64/bin/{{ item }}"
+            dest: "/usr/local/bin/{{ item }}"
+            state: link
+            force: true
+          loop: [node, npm, npx]
+
+        # The version is asserted rather than assumed: an unpacked tarball with
+        # a working `node` that reports something else means the wrong artefact
+        # was verified, and a check would then run on a Node nobody chose.
+        - name: Confirm the installed Node is the pinned one
+          ansible.builtin.command: /usr/local/bin/node --version
+          register: node_now
+          changed_when: false
+
+        - name: Refuse a Node that is not the pinned version
+          ansible.builtin.assert:
+            that: node_version in node_now.stdout
+            fail_msg: >-
+              /usr/local/bin/node reports {{ node_now.stdout }}, not
+              {{ node_version }}
+      always:
+        - name: Clean up the Node download
+          ansible.builtin.file:
+            path: "{{ node_staging.path }}"
+            state: absent
