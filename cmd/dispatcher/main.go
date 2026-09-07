@@ -180,6 +180,11 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// carried sa-kfh's uncommitted change for two days -- either would
 	// otherwise arrive in a pull request attributed to a bead that did not
 	// make it.
+	// And the checkout is brought up to date first, so the run works against
+	// what is in the repository now rather than whatever was there when the rig
+	// was created or last landed.
+	d.refresh(jobRig)
+
 	tree := d.treeBefore(jobRig)
 
 	d.log.Info("running", "job", job.ID, "kind", job.Kind, "bead", job.Bead)
@@ -1038,4 +1043,33 @@ func (d *dispatcher) treeBefore(rig string) []landing.Change {
 			"rig", rig, "paths", strings.Join(paths, " "))
 	}
 	return changes
+}
+
+// refresh fast-forwards a rig's base branch before a run.
+//
+// Non-fatal in every direction. A stale checkout produces a pull request based
+// on an old commit, which GitHub shows as needing a rebase and a person can
+// see; refusing to run produces nothing and a queue that looks stuck. The
+// first is recoverable and visible, so it is the one to prefer -- but it is
+// logged at warn either way, because a rig that stops refreshing goes on
+// producing plausible pull requests against a base that drifts further every
+// time.
+func (d *dispatcher) refresh(rig string) {
+	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
+	if _, err := os.Stat(dir); err != nil {
+		return
+	}
+	git := landing.Exec(dir, d.cellRoot)
+	base := d.defaultBranch(git, rig)
+	if base == "" {
+		return
+	}
+	moved, why := landing.Refresh(git, base)
+	switch {
+	case why != "":
+		d.log.Warn("the checkout was not refreshed; the run works against a stale base",
+			"rig", rig, "base", base, "reason", why)
+	case moved:
+		d.log.Info("refreshed the checkout", "rig", rig, "base", base)
+	}
 }

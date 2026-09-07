@@ -203,6 +203,68 @@ func Exclude(git Git) error {
 	return os.WriteFile(path, []byte(body), 0o644)
 }
 
+// Refresh brings the checkout's base branch up to date with the remote.
+//
+// Without this a rig works once and then drifts. datopian/portaljs#1662 was
+// merged and the rig's own main stayed at the commit before it, still reading
+// "Visual builder" in the file the pull request had just changed -- so the next
+// bead would branch from a stale base, produce a pull request against an old
+// commit, and an agent asked to build on that merged work would not find it.
+//
+// Fast-forward only, and only from a clean tree on the base branch. Every other
+// state is left alone and reported:
+//
+//	a dirty tree means a run's work or somebody's edit is in there, and
+//	throwing that away to be tidy is not a trade worth making;
+//
+//	a checkout on some other branch means a landing did not finish, and
+//	moving it would hide that;
+//
+//	a base that has diverged from the remote cannot fast-forward, and merging
+//	or rebasing it here would invent a resolution nobody asked for.
+//
+// Returns whether it moved, and the reason it did not when it did not.
+func Refresh(git Git, base string) (moved bool, why string) {
+	if strings.TrimSpace(base) == "" {
+		return false, "no base branch is known"
+	}
+	head, err := git("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return false, err.Error()
+	}
+	if strings.TrimSpace(head) != base {
+		return false, fmt.Sprintf("the checkout is on %s, not %s", strings.TrimSpace(head), base)
+	}
+
+	// Tracked changes only. An untracked file -- gt's .beads/ and .gitignore
+	// are in every rig -- does not stop a fast-forward and never conflicts
+	// with one, so refusing on their account would mean never refreshing.
+	dirty, err := git("diff", "--name-only")
+	if err != nil {
+		return false, err.Error()
+	}
+	if strings.TrimSpace(dirty) != "" {
+		return false, "the tree has uncommitted changes: " + strings.Join(strings.Fields(dirty), " ")
+	}
+
+	if _, err := git("fetch", "--quiet", "origin", base); err != nil {
+		return false, err.Error()
+	}
+	before, err := git("rev-parse", "HEAD")
+	if err != nil {
+		return false, err.Error()
+	}
+	// --ff-only, so a diverged base fails here rather than being merged.
+	if _, err := git("merge", "--ff-only", "FETCH_HEAD"); err != nil {
+		return false, "cannot fast-forward: " + err.Error()
+	}
+	after, err := git("rev-parse", "HEAD")
+	if err != nil {
+		return false, err.Error()
+	}
+	return strings.TrimSpace(before) != strings.TrimSpace(after), ""
+}
+
 // Result is what a landing produced.
 type Result struct {
 	Branch  string
