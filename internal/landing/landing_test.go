@@ -89,8 +89,11 @@ func TestGastownsPlumbingIsNeverCommitted(t *testing.T) {
 		t.Errorf("skipped %v, want .beads/", got.Skipped)
 	}
 
-	// The commit itself, which is the thing that reaches the repository.
-	out, err := git("show", "--name-only", "--format=", "HEAD")
+	// The commit itself, which is the thing that reaches the repository. Named
+	// by BRANCH rather than HEAD: the tree is returned to the base branch after
+	// a landing, so HEAD is main again and asserting on it would check the
+	// wrong commit -- and pass, because main has no plumbing in it either.
+	out, err := git("show", "--name-only", "--format=", got.Branch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +104,9 @@ func TestGastownsPlumbingIsNeverCommitted(t *testing.T) {
 		t.Errorf("the commit does not contain the agent's work:\n%s", out)
 	}
 
-	// And it reached the remote, on its own branch and not on main.
+	// And it reached the remote, on its own branch and NOT on main. Asserted
+	// as main being where it was, which is the property that matters: an
+	// agent's work must never arrive on the default branch.
 	remote, err := git("ls-remote", "--heads", "origin")
 	if err != nil {
 		t.Fatal(err)
@@ -109,10 +114,66 @@ func TestGastownsPlumbingIsNeverCommitted(t *testing.T) {
 	if !strings.Contains(remote, "refs/heads/bead/sa-kfh") {
 		t.Errorf("the branch is not on the remote:\n%s", remote)
 	}
-	mainSHA, _ := git("rev-parse", "origin/main")
-	headSHA, _ := git("rev-parse", "HEAD")
-	if strings.TrimSpace(mainSHA) == strings.TrimSpace(headSHA) {
-		t.Error("the work landed on main")
+	if out, err := git("branch", "--contains", got.Commit, "--all"); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(out, "origin/main") || strings.Contains(out, " main") {
+		t.Errorf("the commit is on main:\n%s", out)
+	}
+
+	// The tree is back on the base branch, so the NEXT bead in this rig does
+	// not branch from this one's work.
+	if head, err := git("rev-parse", "--abbrev-ref", "HEAD"); err != nil {
+		t.Fatal(err)
+	} else if strings.TrimSpace(head) != "main" {
+		t.Errorf("the tree was left on %q; the next bead would build on it", strings.TrimSpace(head))
+	}
+}
+
+// Each bead's branch starts from the base, not from the previous bead's work.
+//
+// This is the branch-graph version of the pre-run snapshot, and it compounds
+// rather than staying constant: left on the first bead's branch, every later
+// run in that rig branches from it and every pull request carries the earlier
+// beads' commits as well as its own. The first real landing left the sandbox
+// rig on `bead/sa-pv2` exactly this way.
+func TestEachBeadsBranchStartsFromTheBase(t *testing.T) {
+	dir, git := repo(t)
+
+	if err := os.WriteFile(filepath.Join(dir, "first.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := Land(git, Spec{Bead: "sa-one", Base: "main"})
+	if err != nil || first == nil {
+		t.Fatalf("first landing: %v %+v", err, first)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "second.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Land(git, Spec{Bead: "sa-two", Base: "main"})
+	if err != nil || second == nil {
+		t.Fatalf("second landing: %v %+v", err, second)
+	}
+
+	// The second branch must not contain the first bead's commit.
+	out, err := git("branch", "--contains", first.Commit, "--all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "bead/sa-two") {
+		t.Errorf("sa-two's branch carries sa-one's commit:\n%s", out)
+	}
+
+	// And the second pull request would show one file, not two.
+	files, err := git("show", "--name-only", "--format=", second.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(files, "first.txt") {
+		t.Errorf("sa-two's commit carries sa-one's file:\n%s", files)
+	}
+	if !strings.Contains(files, "second.txt") {
+		t.Errorf("sa-two's commit is missing its own work:\n%s", files)
 	}
 }
 
@@ -304,7 +365,7 @@ func TestOnlyWhatTheRunChangedIsLanded(t *testing.T) {
 
 	// The commit is what reaches somebody's repository, so that is what is
 	// asserted -- not the Result, which is only this code's opinion of itself.
-	out, err := git("show", "--name-only", "--format=", "HEAD")
+	out, err := git("show", "--name-only", "--format=", res.Branch)
 	if err != nil {
 		t.Fatal(err)
 	}
