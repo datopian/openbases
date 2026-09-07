@@ -209,6 +209,10 @@ type Result struct {
 	Commit  string
 	Files   []string
 	Skipped []string // plumbing that was deliberately not committed
+	// Warning is set when the work landed but something afterwards did not,
+	// so the caller reports a success that is not quite clean rather than
+	// either hiding it or calling the landing a failure.
+	Warning string
 }
 
 // Spec is one landing.
@@ -274,17 +278,27 @@ func Land(git Git, s Spec) (*Result, error) {
 		return nil, fmt.Errorf("excluding gastown's plumbing: %w", err)
 	}
 
-	// On the bead's branch. Already there when a previous run landed and the
-	// tree was left on it; created from the current HEAD otherwise.
-	if head, err := git("rev-parse", "--abbrev-ref", "HEAD"); err != nil {
-		return nil, err
-	} else if strings.TrimSpace(head) != branch {
-		if _, err := git("checkout", "-b", branch); err != nil {
-			// The branch may exist from an earlier landing whose push failed.
-			if _, err2 := git("checkout", branch); err2 != nil {
-				return nil, fmt.Errorf("cannot reach branch %s: %w", branch, err)
-			}
-		}
+	// The bead's branch, at wherever the run worked.
+	//
+	// -B rather than -b, so this is the same operation whether the branch is
+	// new or left over from an earlier landing. `checkout -b` fails on an
+	// existing branch, and the obvious fallback -- plain `checkout` -- fails
+	// too when the tree is dirty in a file the branch has a different version
+	// of, which is precisely the state a re-dispatch is in. Both were tried.
+	//
+	// No start point is given, so the branch is created at the current HEAD and
+	// the run's uncommitted work carries over. That cannot conflict, which is
+	// the property that makes this the one form that always works.
+	//
+	// The consequence, stated plainly: a re-dispatch RESETS the bead's branch
+	// to the run that just happened, rather than adding to what a previous run
+	// left. The pull request then shows this bead's change relative to the
+	// default branch as the latest run produced it, which is the reviewable
+	// thing -- a branch accumulating two runs' partial attempts is not. It
+	// relies on the bead describing an outcome rather than a step, which is
+	// what acceptance criteria are for and what the runner gives the agent.
+	if _, err := git("checkout", "-B", branch); err != nil {
+		return nil, fmt.Errorf("cannot reach branch %s: %w", branch, err)
 	}
 
 	// Staged by path, not `git add -A`.
@@ -327,24 +341,53 @@ func Land(git Git, s Spec) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := git("push", "--set-upstream", "origin", branch); err != nil {
+	// --force-with-lease, because a re-dispatch resets the branch and the
+	// remote then has a commit this one does not descend from. With-lease
+	// rather than --force: it refuses if the remote moved for any reason other
+	// than our own last push, so somebody else's commit on the bead's branch
+	// stops this rather than being overwritten.
+	if _, err := git("push", "--force-with-lease", "--set-upstream", "origin", branch); err != nil {
 		return nil, fmt.Errorf("pushing %s: %w", branch, err)
 	}
 
-	files := make([]string, 0, len(work))
-	for _, c := range work {
-		files = append(files, c.Path)
+	// Back to the base branch, so the NEXT bead in this rig starts from the
+	// repository's own default rather than from this bead's work.
+	//
+	// Left on the bead's branch -- which is where the first real landing left
+	// the sandbox rig -- every subsequent run in that rig would branch from it,
+	// and each pull request would carry the previous bead's commits as well as
+	// its own. That is the same contamination the pre-run snapshot prevents in
+	// the working tree, one level up in the branch graph, and it compounds
+	// rather than staying constant.
+	//
+	// After the push, deliberately: a failure here has already been preceded by
+	// the work reaching the remote, so it is reported and does not fail the
+	// landing. The cost is a rig whose next landing has an odd base, which is
+	// visible in that pull request; the cost of the other order would be work
+	// that never left the node.
+	if _, err := git("checkout", base); err != nil {
+		return &Result{
+			Branch: branch, Commit: strings.TrimSpace(sha),
+			Files: paths(work), Skipped: paths(plumbing),
+			Warning: fmt.Sprintf("the working tree is still on %s: %v", branch, err),
+		}, nil
 	}
-	skipped := make([]string, 0, len(plumbing))
-	for _, c := range plumbing {
-		skipped = append(skipped, c.Path)
-	}
+
 	return &Result{
 		Branch:  branch,
 		Commit:  strings.TrimSpace(sha),
-		Files:   files,
-		Skipped: skipped,
+		Files:   paths(work),
+		Skipped: paths(plumbing),
 	}, nil
+}
+
+// paths is the Change paths, in order.
+func paths(changes []Change) []string {
+	out := make([]string, 0, len(changes))
+	for _, c := range changes {
+		out = append(out, c.Path)
+	}
+	return out
 }
 
 // Branch is the branch a bead's work lands on.

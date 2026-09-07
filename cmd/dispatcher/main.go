@@ -834,6 +834,13 @@ func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string
 	d.log.Info("pushed a branch", "bead", job.Bead, "branch", res.Branch,
 		"commit", res.Commit, "files", strings.Join(res.Files, " "),
 		"skipped", strings.Join(res.Skipped, " "))
+	if res.Warning != "" {
+		// The work landed and something afterwards did not. Reported at warn
+		// rather than folded into the line above, because it needs somebody to
+		// look: a rig left on a bead's branch gives the next landing an odd
+		// base.
+		d.log.Warn("the landing was not clean", "bead", job.Bead, "warning", res.Warning)
+	}
 
 	url, err := d.openPullRequest(ctx, job, rig, res, base, summary, title, ok)
 	if err != nil {
