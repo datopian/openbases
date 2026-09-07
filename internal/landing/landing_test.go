@@ -443,3 +443,161 @@ func TestWithNoSnapshotEverythingDirtyIsLanded(t *testing.T) {
 		t.Errorf("landed %+v, want README.md", res)
 	}
 }
+
+// A rig catches up with the remote before a run, or says why not.
+//
+// Without this a rig works once and then drifts: datopian/portaljs#1662 was
+// merged and the rig's own main stayed at the commit before it, still reading
+// "Visual builder" in the very file the pull request had changed.
+func TestARigCatchesUpWithTheRemote(t *testing.T) {
+	dir, git := repo(t)
+	root := filepath.Dir(dir)
+
+	// Somebody merges something, the way #1662 was merged.
+	other := filepath.Join(root, "other")
+	run := func(d string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = d
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	run(root, "clone", filepath.Join(root, "origin.git"), other)
+	if err := os.WriteFile(filepath.Join(other, "hero.tsx"), []byte("Studio\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(other, "add", "hero.tsx")
+	run(other, "commit", "-m", "rename the hero tab")
+	run(other, "push", "origin", "main")
+
+	// The rig has not seen it.
+	if _, err := os.Stat(filepath.Join(dir, "hero.tsx")); err == nil {
+		t.Fatal("the rig already has the merged file")
+	}
+
+	moved, why := Refresh(git, "main")
+	if why != "" {
+		t.Fatalf("the refresh was refused: %s", why)
+	}
+	if !moved {
+		t.Error("the refresh reported no movement, but the remote had moved")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hero.tsx")); err != nil {
+		t.Error("the merged file is still missing after a refresh")
+	}
+
+	// Again, with nothing new: no movement, and not an error.
+	moved, why = Refresh(git, "main")
+	if why != "" || moved {
+		t.Errorf("a second refresh reported moved=%v why=%q", moved, why)
+	}
+}
+
+// A refresh never throws away work, and says which state stopped it. Each of
+// these is a real state a rig gets into, and destroying a tree to be tidy is
+// not a trade worth making.
+func TestARefreshRefusesRatherThanDiscarding(t *testing.T) {
+	t.Run("a dirty tree", func(t *testing.T) {
+		dir, git := repo(t)
+		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("edited\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		moved, why := Refresh(git, "main")
+		if moved || !strings.Contains(why, "uncommitted") {
+			t.Errorf("moved=%v why=%q; want a refusal naming the uncommitted change", moved, why)
+		}
+		// And the edit survives.
+		body, err := os.ReadFile(filepath.Join(dir, "README.md"))
+		if err != nil || !strings.Contains(string(body), "edited") {
+			t.Error("the refresh discarded an uncommitted change")
+		}
+	})
+
+	t.Run("untracked files do not block it", func(t *testing.T) {
+		dir, git := repo(t)
+		// gt leaves both of these in every rig, so refusing on their account
+		// would mean never refreshing at all.
+		if err := os.MkdirAll(filepath.Join(dir, ".beads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for path, body := range map[string]string{
+			".beads/redirect": "../../.beads\n",
+			".gitignore":      ".opencode/\n",
+		} {
+			if err := os.WriteFile(filepath.Join(dir, path), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, why := Refresh(git, "main"); why != "" {
+			t.Errorf("untracked plumbing blocked the refresh: %s", why)
+		}
+	})
+
+	t.Run("a checkout on another branch", func(t *testing.T) {
+		_, git := repo(t)
+		if _, err := git("checkout", "-b", "bead/sa-kfh"); err != nil {
+			t.Fatal(err)
+		}
+		moved, why := Refresh(git, "main")
+		if moved || !strings.Contains(why, "bead/sa-kfh") {
+			t.Errorf("moved=%v why=%q; want a refusal naming the branch", moved, why)
+		}
+	})
+
+	t.Run("no base branch", func(t *testing.T) {
+		_, git := repo(t)
+		if moved, why := Refresh(git, ""); moved || why == "" {
+			t.Errorf("moved=%v why=%q; want a refusal", moved, why)
+		}
+	})
+
+	t.Run("a diverged base is not merged", func(t *testing.T) {
+		dir, git := repo(t)
+		root := filepath.Dir(dir)
+
+		// A commit on the remote and a different one here: fast-forward is
+		// impossible, and merging or rebasing would invent a resolution
+		// nobody asked for.
+		other := filepath.Join(root, "diverged")
+		run := func(d string, args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = d
+			cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+				"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+			}
+		}
+		run(root, "clone", filepath.Join(root, "origin.git"), other)
+		if err := os.WriteFile(filepath.Join(other, "theirs.txt"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run(other, "add", "theirs.txt")
+		run(other, "commit", "-m", "theirs")
+		run(other, "push", "origin", "main")
+
+		if err := os.WriteFile(filepath.Join(dir, "ours.txt"), []byte("y\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := git("add", "ours.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := git("commit", "-m", "ours"); err != nil {
+			t.Fatal(err)
+		}
+
+		moved, why := Refresh(git, "main")
+		if moved || !strings.Contains(why, "fast-forward") {
+			t.Errorf("moved=%v why=%q; want a refusal about fast-forwarding", moved, why)
+		}
+		// Our commit is still here.
+		if out, err := git("log", "--oneline", "-1"); err != nil {
+			t.Fatal(err)
+		} else if !strings.Contains(out, "ours") {
+			t.Errorf("the refresh moved off our own commit:\n%s", out)
+		}
+	})
+}
