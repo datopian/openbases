@@ -86,29 +86,72 @@
   loop_control:
     label: "{{ item.name }}"
 
+# Only cells that actually have a town. A cell without one has no graph to
+# serve, and starting a server there fails on every boot for a reason that has
+# nothing to do with the cell being unhealthy.
+- name: Find which cells have a town
+  ansible.builtin.stat:
+    path: "{{ cells_root }}/{{ item.name }}/town"
+  register: cell_towns
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 # ---------------------------------------------------------------------------
 # Resource limits, derived from the node (WP-I3)
 # ---------------------------------------------------------------------------
 #
 # Computed once from discovered facts so a limit can never again exceed the
 # hardware it is meant to bound. See the role defaults for what went wrong.
-- name: Derive per-cell limits from this node's capacity
+# Which cells are actually working, which is what the split should follow.
+#
+# An equal split assumes equal load, and on this node that assumption was
+# plainly false: oss has a town, a dispatcher and every agent run, while
+# client-nged and client-cdt have no town, no dispatcher, and were measured at
+# 0 MB. The three-way split gave oss 932 MB and reserved 1863 MB for two cells
+# using nothing -- and 932 MB is the ceiling that OOM-killed `npm ci` in the
+# portaljs rig at 724 MB, and that leaves no room for a browser beside an
+# OpenCode process measured at 474 MB.
+#
+# So a cell with no town gets the floor -- it needs enough to be provisioned
+# into, not enough to run agents -- and the cells that do the work share what
+# is left.
+- name: Work out which cells carry load
   ansible.builtin.set_fact:
+    cells_with_a_town: >-
+      {{ cell_towns.results | selectattr('stat.exists') | map(attribute='item.name') | list }}
+
+- name: Derive per-cell limits from this node's capacity and where the load is
+  ansible.builtin.set_fact:
+    # CPU stays an equal share. It is a QUOTA rather than a reservation: an
+    # idle cell's quota costs nothing, CPUWeight decides the remainder anyway,
+    # and the assertion below has to hold that the total cannot exceed the
+    # machine. Memory is the one that had to change, because an unused
+    # MemoryMax withholds capacity whether or not anything is running.
     cell_cpu_percent: >-
       {{ [ (((ansible_processor_vcpus | int) * 100 - cell_system_reserve_cpu_percent)
             / (execution_cells | length)) | round | int,
            cell_min_cpu_percent ] | max }}
+    # What a working cell gets: everything left after the system reserve and
+    # after the floor for each idle cell.
     cell_memory_mb: >-
-      {{ [ (((ansible_memtotal_mb | int) - cell_system_reserve_memory_mb)
-            / (execution_cells | length)) | round | int,
+      {{ [ (((ansible_memtotal_mb | int) - cell_system_reserve_memory_mb
+             - (cell_min_memory_mb | int)
+               * ((execution_cells | length) - (cells_with_a_town | length)))
+            / [ (cells_with_a_town | length), 1 ] | max) | round | int,
            cell_min_memory_mb ] | max }}
+    # And what an idle one gets.
+    cell_idle_memory_mb: "{{ cell_min_memory_mb | int }}"
 
 - name: Report the derived limits, so a surprising number is visible in the log
   ansible.builtin.debug:
     msg: >-
       {{ ansible_processor_vcpus }} vCPU and {{ ansible_memtotal_mb }} MiB across
-      {{ execution_cells | length }} cell(s):
-      CPUQuota={{ cell_cpu_percent }}% MemoryMax={{ cell_memory_mb }}M per cell
+      {{ execution_cells | length }} cell(s), {{ cells_with_a_town | length }}
+      with a town ({{ cells_with_a_town | join(', ') | default('none', true) }}):
+      CPUQuota={{ cell_cpu_percent }}% per cell,
+      MemoryMax={{ cell_memory_mb }}M for a cell with a town and
+      {{ cell_idle_memory_mb }}M for one without
 
 # A limit above the machine's capacity is not a limit. This is the check that
 # would have caught MemoryMax=8192M on a 3819 MiB node before it shipped.
@@ -116,10 +159,23 @@
   ansible.builtin.assert:
     that:
       - (cell_memory_mb | int) < (ansible_memtotal_mb | int)
+      # The SUM across every cell, which is what the machine actually has to
+      # satisfy. Checking one cell was enough while the split was equal; with a
+      # weighted split, a per-cell number can look modest while the total
+      # overcommits the node -- and an overcommitted total is the same bug as
+      # the 8192M ceiling this check was written for, arrived at by addition.
+      - ((cell_memory_mb | int) * (cells_with_a_town | length)
+         + (cell_idle_memory_mb | int)
+           * ((execution_cells | length) - (cells_with_a_town | length)))
+        <= ((ansible_memtotal_mb | int) - (cell_system_reserve_memory_mb | int))
       - ((cell_cpu_percent | int) * (execution_cells | length)) <= ((ansible_processor_vcpus | int) * 100)
     fail_msg: >-
-      Derived limits exceed the node: {{ cell_memory_mb }}M per cell on a
-      {{ ansible_memtotal_mb }}M machine, or {{ cell_cpu_percent }}% x
+      Derived limits exceed the node: {{ cell_memory_mb }}M for each of
+      {{ cells_with_a_town | length }} working cell(s) plus
+      {{ cell_idle_memory_mb }}M for each of
+      {{ (execution_cells | length) - (cells_with_a_town | length) }} idle one(s)
+      on a {{ ansible_memtotal_mb }}M machine reserving
+      {{ cell_system_reserve_memory_mb }}M, or {{ cell_cpu_percent }}% x
       {{ execution_cells | length }} cells on {{ ansible_processor_vcpus }} vCPU.
       A ceiling above capacity can never fire.
     success_msg: "derived limits fit within the node's capacity"
@@ -127,13 +183,19 @@
 - name: Install the per-cell slice agents actually run in
   ansible.builtin.template:
     src: wgcell.slice.j2
-    dest: "/etc/systemd/system/wgcell-{{ item.name }}.slice"
+    dest: "/etc/systemd/system/wgcell-{{ item.item.name }}.slice"
     owner: root
     group: root
     mode: "0644"
-  loop: "{{ execution_cells }}"
+  vars:
+    cell: "{{ item.item }}"
+    cell_has_a_town: "{{ item.stat.exists }}"
+  # Over the stat results rather than the cell list, so the template knows
+  # whether THIS cell carries load. Every other per-cell unit in this role
+  # already loops this way.
+  loop: "{{ cell_towns.results }}"
   loop_control:
-    label: "{{ item.name }}"
+    label: "{{ item.item.name }}"
   notify: Reload systemd
 
 - name: Start the per-cell slices
@@ -141,6 +203,10 @@
     name: "wgcell-{{ item.name }}.slice"
     state: started
     daemon_reload: true
+  # daemon_reload here as well as the handler: a slice whose MemoryMax changed
+  # needs systemd to re-read the unit before the new ceiling applies, and the
+  # handler fires at the END of the play -- after the agents this is meant to
+  # give room to have already been started.
   loop: "{{ execution_cells }}"
   loop_control:
     label: "{{ item.name }}"
@@ -298,17 +364,6 @@
     mode: "0755"
   when: runner_local_binary | length > 0
   tags: [binaries, code]
-
-# Only cells that actually have a town. A cell without one has no graph to
-# serve, and starting a server there fails on every boot for a reason that has
-# nothing to do with the cell being unhealthy.
-- name: Find which cells have a town
-  ansible.builtin.stat:
-    path: "{{ cells_root }}/{{ item.name }}/town"
-  register: cell_towns
-  loop: "{{ execution_cells }}"
-  loop_control:
-    label: "{{ item.name }}"
 
 - name: Install the rig Dolt unit for each cell with a town
   ansible.builtin.template:
