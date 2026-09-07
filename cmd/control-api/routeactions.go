@@ -154,8 +154,10 @@ var routeActions = map[string]routeAction{
 	// application user at all — internal/domain/resolver.go leaves UserID empty
 	// deliberately, so a user-scoped action check would refuse every one of
 	// them. Their authorisation is the Access application, not this table.
-	"POST /v1/node/work/claim":                        {Public: true, Why: "cells service token, path-bound Access application"},
-	"POST /v1/node/work/{id}/result":                  {Public: true, Why: "cells service token, path-bound Access application"},
+	"POST /v1/node/work/claim":       {Public: true, Why: "cells service token, path-bound Access application"},
+	"POST /v1/node/work/{id}/result": {Public: true, Why: "cells service token, path-bound Access application"},
+	// What a run is using, reported by the node when it starts.
+	"POST /v1/node/work/{id}/plan":                    {Public: true, Why: "cells service token, path-bound Access application"},
 	"POST /v1/node/work/project":                      {Public: true, Why: "cells service token, path-bound Access application"},
 	"POST /v1/agent-health":                           {Public: true, Why: "cells service token, path-bound Access application"},
 	"GET /v1/budget/check":                            {Public: true, Why: "cells service token, path-bound Access application"},

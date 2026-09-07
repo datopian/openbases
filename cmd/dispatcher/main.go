@@ -26,6 +26,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/datopian/workgraph/internal/check"
 	"github.com/datopian/workgraph/internal/landing"
+	"github.com/datopian/workgraph/internal/runner"
 	"github.com/datopian/workgraph/internal/version"
 	"github.com/datopian/workgraph/internal/work"
 )
@@ -49,6 +51,12 @@ func main() {
 		cellRoot = flag.String("cell-root", "", "the cell's home, e.g. /srv/cells/oss")
 		rig      = flag.String("rig", getenv("WG_RIG", "sandbox"), "default rig")
 		runner   = flag.String("runner", "/usr/local/bin/wg-runner", "path to the agent runner")
+		// The same default and the same environment variable the runner uses,
+		// so the two read one file. A dispatcher pointed at a different
+		// catalogue would report a harness the run did not use, which is worse
+		// than reporting none.
+		catalogue = flag.String("catalogue", getenv("WG_MODEL_CATALOGUE", "/etc/workgraph/models.json"),
+			"role and model tables, read to report what a run uses")
 		interval = flag.Duration("interval", 10*time.Second, "how often to look for work")
 		deadline = flag.Duration("deadline", 15*time.Minute, "how long one job may take")
 		once     = flag.Bool("once", false, "do a single pass and exit")
@@ -69,7 +77,8 @@ func main() {
 	d := &dispatcher{
 		api: strings.TrimSuffix(*apiURL, "/"), clientID: id, clientSecret: secret,
 		cell: *cell, cellRoot: *cellRoot, rig: *rig, runner: *runner,
-		deadline: *deadline, log: log,
+		catalogue: *catalogue,
+		deadline:  *deadline, log: log,
 		http: &http.Client{Timeout: 60 * time.Second},
 	}
 
@@ -99,9 +108,12 @@ func main() {
 type dispatcher struct {
 	api, clientID, clientSecret string
 	cell, cellRoot, rig, runner string
-	deadline                    time.Duration
-	http                        *http.Client
-	log                         *slog.Logger
+	// catalogue is the role/model table the runner reads, so the dispatcher can
+	// report what a run will use without reimplementing the lookup.
+	catalogue string
+	deadline  time.Duration
+	http      *http.Client
+	log       *slog.Logger
 }
 
 // pass projects the cell's beads upward, then claims and runs at most one job.
@@ -187,6 +199,15 @@ func (d *dispatcher) pass(ctx context.Context) {
 	d.refresh(jobRig)
 
 	tree := d.treeBefore(jobRig)
+
+	// Tell the control plane what this run is using, before it starts.
+	//
+	// Reported here rather than left to be inferred later: the only other
+	// evidence of which model did the work is usage_records, which the cost
+	// importer fills hourly, so a bead in progress showed no model at all and
+	// the harness was recorded nowhere. Somebody watching a run they are
+	// waiting on is exactly who asks.
+	d.reportPlan(ctx, *job)
 
 	d.log.Info("running", "job", job.ID, "kind", job.Kind, "bead", job.Bead)
 	out, runErr := d.run(ctx, *job, "")
@@ -1156,4 +1177,45 @@ func (d *dispatcher) checkDeadline() time.Duration {
 		return 5 * time.Minute
 	}
 	return d.deadline / 2
+}
+
+// reportPlan tells the control plane which harness and model a job will use.
+//
+// Resolved with the runner's own Catalogue rather than by reading the file and
+// applying the precedence rule again here. That rule -- the catalogue per key,
+// the built-in table otherwise -- exists in one place, and a second copy of it
+// in the dispatcher would disagree with the runner on the day somebody changed
+// one of them, and would disagree silently, because both would still produce a
+// plausible-looking answer.
+//
+// Every failure is swallowed to a log line. This is observability: a run that
+// happens without being described is worth more than no run, and the endpoint
+// answers `recorded: false` for a job it no longer holds rather than failing.
+//
+// Swallowed, but LOUDLY, and the catalogue is the reason. An unset path used to
+// read as "no catalogue" and fall back to the built-in table, which says claude
+// and sonnet — so a misconfigured dispatcher would have reported the wrong
+// harness and model on every run rather than reporting none. LoadCatalogue
+// refuses an empty path now, and this logs it rather than proceeding.
+func (d *dispatcher) reportPlan(ctx context.Context, job work.Job) {
+	catalogue, err := runner.LoadCatalogue(d.catalogue)
+	if err != nil {
+		d.log.Warn("reading the model catalogue to report what a run uses",
+			"path", d.catalogue, "error", err)
+		return
+	}
+	harness, model := catalogue.PlannedFor(job.Role())
+	if harness == "" && model == "" {
+		return
+	}
+	payload, err := json.Marshal(map[string]any{"runtime": harness, "model": model})
+	if err != nil {
+		return
+	}
+	if _, err := d.call(ctx, http.MethodPost,
+		"/v1/node/work/"+url.PathEscape(job.ID)+"/plan", bytes.NewReader(payload)); err != nil {
+		d.log.Warn("reporting what a run uses", "job", job.ID, "error", err)
+		return
+	}
+	d.log.Info("run plan", "job", job.ID, "harness", harness, "model", model)
 }

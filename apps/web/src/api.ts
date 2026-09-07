@@ -200,6 +200,10 @@ export interface BeadDetail {
     job: string;
     status: string;
     rig: string | null;
+    /** The harness and model, reported by the node when the run starts. Null
+     * for runs that predate the columns, and for a job that never started. */
+    harness: string | null;
+    model: string | null;
     created: string | null;
     claimed: string | null;
     finished: string | null;
@@ -223,6 +227,10 @@ export interface BeadDetail {
     opened: string | null;
   }[];
   spend: {
+    /** True when this run's usage has not been imported yet. Cost arrives from
+     * the gateway on an hourly timer, so a zero here means "not counted", not
+     * "free" — and those are different answers to "what did that cost". */
+    awaiting_import?: boolean;
     cents: string | number;
     calls: number;
     by_model:

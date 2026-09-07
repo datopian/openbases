@@ -278,11 +278,35 @@ export function Bead({ id, onBack }: { id: string; onBack: () => void }) {
       )}
 
       <h2 style={css.h2}>Model and cost</h2>
+
+      {/* What is running it, which is answerable straight away — the node
+          reports the harness and model when it starts. The table below comes
+          from the hourly cost import, so for a run in flight it is empty while
+          this line is already correct. */}
+      {(d.run?.harness || d.run?.model) && (
+        <p style={{ margin: "0 0 0.6rem" }}>
+          <code>{d.run.harness ?? "unknown harness"}</code>
+          {d.run.model ? (
+            <>
+              {" running "}
+              <code>{d.run.model}</code>
+            </>
+          ) : null}
+          {d.outcome === "running" ? " — in flight now" : ""}
+        </p>
+      )}
+      {d.run && !d.run.harness && !d.run.model && (
+        <p style={{ ...css.muted, fontSize: "0.85rem" }}>
+          This run did not report which harness and model it used. Runs from
+          before that was recorded show nothing here.
+        </p>
+      )}
+
       {models.length === 0 && (
         <p style={{ ...css.muted, fontSize: "0.85rem" }}>
-          No spend recorded{d.spend?.newest_record ? "" : " yet"}. Usage arrives
-          from the AI Gateway on an hourly import, so a run that finished in the
-          last hour often shows nothing — which is not the same as free.
+          {d.spend?.awaiting_import
+            ? "No cost counted for this run yet. Usage arrives from the AI Gateway on an hourly import, so this is not the same as free."
+            : "No spend recorded. Usage arrives from the AI Gateway on an hourly import, so a run that finished in the last hour often shows nothing — which is not the same as free."}
         </p>
       )}
       {models.length > 0 && (

@@ -2,8 +2,10 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Catalogue is the model and role configuration a deployment can change without
@@ -45,6 +47,21 @@ type Catalogue struct {
 // having tried to configure something and got it wrong — and silently running
 // on defaults there is how a deployment believes it changed a model and did not.
 func LoadCatalogue(path string) (*Catalogue, error) {
+	// An UNSET path is a configuration fault, not an absent file, and the two
+	// must not collapse into the same answer.
+	//
+	// os.IsNotExist is true for "", so an empty path returned (nil, nil) —
+	// "no catalogue" — and the caller then used the built-in table. That table
+	// says claude and anthropic/claude-sonnet-5, which stopped being what runs
+	// when the default became OpenCode on GLM. So a caller that forgot to set
+	// the path would not have failed; it would have reported the wrong harness
+	// and the wrong model, confidently, on every run. The dispatcher did
+	// exactly that for the length of one commit.
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("no model catalogue path was given; an unset path is not the " +
+			"same as an absent file, and treating it as one reports the built-in defaults " +
+			"as though they were what is running")
+	}
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -96,6 +113,27 @@ func (c *Catalogue) Validate() error {
 // The lookups below take the catalogue where it has an answer and the built-in
 // table otherwise, per key rather than per table — so a catalogue that names one
 // role does not blank the others.
+
+// PlannedFor reports the runtime and model a role will run on, as strings.
+//
+// Exported so the dispatcher can tell the control plane what a run is using
+// WHILE it runs. Without it the only evidence of which model did the work was
+// usage_records, which the cost importer fills hourly — so a bead in progress
+// showed no model at all, and the harness was recorded nowhere.
+//
+// The same resolvers the runner itself uses, deliberately. Reading the
+// catalogue again in the dispatcher would be a second implementation of the
+// precedence rule (catalogue per key, built-in table otherwise), and the two
+// would disagree on the day somebody changed one.
+func (c *Catalogue) PlannedFor(role string) (runtime, model string) {
+	if rt, ok := c.runtimeFor(role); ok {
+		runtime = string(rt)
+	}
+	if m, ok := c.modelFor(role); ok {
+		model = m
+	}
+	return runtime, model
+}
 
 func (c *Catalogue) runtimeFor(role string) (Runtime, bool) {
 	if c != nil {
