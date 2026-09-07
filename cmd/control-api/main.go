@@ -409,8 +409,30 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		}
 		job.Cell, job.Bead, job.Brief = cell, bead.String, brief.String
 		job.Project = project.String
+
+		// The repository's own build or test command, when somebody has opted
+		// this repository in. It travels with the job because the control
+		// plane knows which repository the rig holds and the node does not --
+		// and through the function rather than a direct read, because this
+		// caller is a node with no app user and RLS would hand it nothing
+		// (0087).
+		//
+		// A failure here is logged and the job goes out unchecked rather than
+		// not at all: a run that produces a change nobody verified is worth
+		// more than no run, and the pull request says it was not checked.
+		if job.Rig != "" {
+			var command sql.NullString
+			if err := db.QueryRowContext(r.Context(),
+				`SELECT system_repository_check($1, $2)`, cell, job.Rig).Scan(&command); err != nil {
+				log.Warn("reading a repository's check command", "cell", cell,
+					"rig", job.Rig, "error", err)
+			} else {
+				job.Check = command.String
+			}
+		}
+
 		log.Info("work claimed", "cell", cell, "job", job.ID, "kind", job.Kind,
-			"bead", job.Bead, "project", job.Project)
+			"bead", job.Bead, "project", job.Project, "checked", job.Check != "")
 		writeJSON(w, http.StatusOK, job)
 	})
 

@@ -83,6 +83,10 @@ var routeActions = map[string]routeAction{
 	"GET /v1/projects/{slug}/repositories":                   {Action: authz.ProjectRead},
 	"POST /v1/projects/{slug}/repositories":                  {Action: authz.ProjectManage},
 	"DELETE /v1/projects/{slug}/repositories/{owner}/{name}": {Action: authz.ProjectManage},
+	// Setting a check command allows a repository's own command to be run on
+	// the cell after an agent edits it, so it needs the same authority as
+	// attaching the repository did.
+	"PUT /v1/projects/{slug}/repositories/{owner}/{name}/check": {Action: authz.ProjectManage},
 	// Reading a project's Workspace events is reading the project. The rows
 	// themselves are then filtered by can_read_source, so this action and the
 	// policy have to agree -- naming a weaker action here would let a token

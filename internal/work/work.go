@@ -39,6 +39,11 @@ type Job struct {
 	// work; it is not a default the runner may choose, which is why it travels
 	// with the job rather than being read from anywhere on the node.
 	Project string `json:"project,omitempty"`
+	// Check is the repository's own build or test command, or empty when
+	// nobody has opted this repository in. It travels with the job because the
+	// control plane knows which repository the rig holds and the node does
+	// not.
+	Check string `json:"check,omitempty"`
 }
 
 // Result is what the node reports back.

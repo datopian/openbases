@@ -335,6 +335,12 @@ jobs:
       - name: a dispatch routes to a rig that holds the work, or refuses
         run: psql -v ON_ERROR_STOP=1 -f test/integration/dispatch_routing.sql
 
+      # An agent has no shell, so the repository's own command is what says
+      # whether its change works. Opt-in per repository, because running it
+      # executes code from the repository as the cell user.
+      - name: a repository's check command is opt-in and readable by a node
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/repository_check.sql
+
       # Where an agent's work went. Before the landing path, a run that changed
       # code closed its bead with the change stranded in a working tree on the
       # node, and nothing in the interface said so.

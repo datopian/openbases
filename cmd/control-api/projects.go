@@ -125,6 +125,42 @@ func registerProjectWrites(
 				writeJSON(w, http.StatusOK, map[string]any{"results": results})
 			}))
 
+	// How a repository is checked.
+	//
+	// A separate endpoint rather than a field on attachment, because it is a
+	// different kind of decision. Attaching a repository says work may be
+	// dispatched against it; setting a check command says a command from that
+	// repository may be EXECUTED on the cell after an agent has edited it --
+	// `npm test` runs whatever package.json says, and the agent can edit
+	// package.json. See internal/check for what that does and does not allow.
+	authed.HandleFunc("PUT /v1/projects/{slug}/repositories/{owner}/{name}/check",
+		withIdempotency(idem, log, "PUT /v1/projects/{slug}/repositories/{owner}/{name}/check",
+			func(w http.ResponseWriter, r *http.Request, wc writeContext) {
+				var body struct {
+					Command string `json:"command"`
+				}
+				if err := json.Unmarshal(wc.body, &body); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+					return
+				}
+				err := store.SetRepositoryCheck(r.Context(), wc.id.UserID,
+					r.PathValue("slug"), r.PathValue("owner"), r.PathValue("name"), body.Command)
+				if err != nil {
+					if status, b := projectErrStatus(err); status != 0 {
+						writeJSON(w, status, b)
+						return
+					}
+					log.Error("setting a repository check", "error", err)
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+					return
+				}
+				status := "set"
+				if strings.TrimSpace(body.Command) == "" {
+					status = "cleared"
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"status": status, "command": body.Command})
+			}))
+
 	authed.HandleFunc("DELETE /v1/projects/{slug}/repositories/{owner}/{name}",
 		withIdempotency(idem, log, "DELETE /v1/projects/{slug}/repositories/{owner}/{name}",
 			func(w http.ResponseWriter, r *http.Request, wc writeContext) {
