@@ -107,6 +107,28 @@ matrix:
 # Digests are the publisher-reported SHA-256 from the GitHub release API, read
 # on 2026-08-27.
 runtimes:
+  # Node, which is here rather than in the matrix for the same reason OpenCode
+  # is: it declares nothing about gt, bd or dolt and moves on its own.
+  #
+  # It is pinned for a different reason from the others, though, and the
+  # difference is worth stating. gt, bd, dolt and OpenCode are pinned because
+  # they run our agents. Node is pinned because it runs OTHER PEOPLE'S code: a
+  # repository check invokes the repository's own build or test command, and
+  # the version has to be the one that repository expects. Debian ships 18;
+  # portaljs declares `node: >=22` and npm refuses it outright. A check failing
+  # on the node's Node version fails for a reason unrelated to the change,
+  # which is the failure mode that took `npm audit` out of CI.
+  #
+  # 22 is the current LTS line (Jod) and what PortalJS's own CI builds against.
+  # Digest from nodejs.org/dist/v22.23.2/SHASUMS256.txt, read on 2026-09-07.
+  node:
+    version: "v22.23.2"
+    repository: "nodejs/node"
+    artefacts:
+      linux_amd64:
+        file: "node-v22.23.2-linux-x64.tar.xz"
+        sha256: "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
+
   opencode:
     version: "v1.18.23"
     repository: "anomalyco/opencode"

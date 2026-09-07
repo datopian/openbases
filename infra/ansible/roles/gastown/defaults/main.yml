@@ -11,6 +11,23 @@ beads_sha256_linux_amd64: "643e602e27f666c8726abff0f22001e2b5883988fa960204bde20
 dolt_version: "v2.0.7"
 dolt_sha256_linux_amd64: "8e09138596763896cbce0632cd6e779fa1df405334c6c148bc314539a3b9795a"
 
+# Node, pinned, because it is now a RUNTIME for repositories we check and not
+# just the thing that runs the agent CLI.
+#
+# Debian ships 18, and five of the twelve repositories on the oss cell need
+# more than that -- portaljs declares `node: >=22` and npm refuses with
+#
+#     npm WARN EBADENGINE required: { node: '>=22' }
+#     npm WARN EBADENGINE current: { node: 'v18.19.1', npm: '9.2.0' }
+#
+# A check that fails on the node's Node version fails for a reason unrelated to
+# the change, which is the failure mode that took `npm audit` out of CI. So the
+# version the repositories expect is installed rather than the one the
+# distribution happens to carry. 22 is the current LTS line and what PortalJS's
+# own CI builds against.
+node_version: "v22.23.2"
+node_sha256_linux_x64: "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
+
 # Gas Town spawns the Claude Code CLI: its start command is
 # `exec claude --dangerously-skip-permissions`. The agent harness is therefore a
 # dependency of the orchestrator, not an implementation detail of the model.
