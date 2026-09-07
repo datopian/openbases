@@ -15,12 +15,31 @@ them, and the attention inbox that says what needs a person.
 ## Step 0: is a Workgraph connector already loaded?
 
 **Look at your own tool list first.** If you can see tools named
-`workgraph_inbox`, `workgraph_ask`, `workgraph_work_list`,
-`workgraph_project_list`, `workgraph_file_work` and `workgraph_dispatch`, then
-Workgraph is already connected and **you should use those tools and stop
-reading this section.** They are the same six operations the rest of this skill
-describes, they carry the person's own identity, and they need no credential of
-yours (ADR-0028).
+`workgraph_inbox`, `workgraph_ask`, `workgraph_work_list`, `workgraph_bead`,
+`workgraph_project_list`, `workgraph_project_create`,
+`workgraph_repositories_attach`, `workgraph_file_work` and
+`workgraph_dispatch`, then Workgraph is already connected and **you should use
+those tools and stop reading this section.** They are the same operations the
+rest of this skill describes, they carry the person's own identity, and they
+need no credential of yours (ADR-0028).
+
+Setting a project up is on that path now, which it was not before:
+`workgraph_project_create` then `workgraph_repositories_attach`. That order
+matters and is not arbitrary — a project with no repository attached cannot be
+dispatched to at all, because a cell gets one rig per attached repository and a
+dispatch is routed to the rig holding the code the bead is about. A project
+created and left without repositories looks finished and is not.
+
+Two things `workgraph_project_create` will not do for the person, and should
+not be worked around:
+
+- **The backup owner is required and must be a different person** from the
+  primary owner. The registry refuses a project where one person holds both, so
+  full-cycle ownership cannot be vested in one individual. Ask whose name it
+  should be. Do not put the requester's own address in both fields, and do not
+  guess a colleague from context.
+- **The slug is permanent.** It appears in bead labels and is what decides who
+  can read the work later. Read it back to the person before creating.
 
 There is no login command on that path and you must not look for one. The
 connector was authorised by the person in their browser; if a tool call comes
