@@ -176,6 +176,53 @@ BEGIN
   RAISE NOTICE 'landing visibility: member yes, outsider no, nobody no';
 END $$;
 
+-- And the lookup the pull request endpoint makes, as the caller that actually
+-- makes it: a NODE, which is a service credential with no app user at all.
+--
+-- This is the case nothing covered, and it cost the first landing its pull
+-- request. execution_rigs has RLS forced and its policy is
+-- `current_app_user() IS NOT NULL`, so a direct read by a node matches nothing
+-- and a rig recorded as holding datopian/workgraph-agent-sandbox reports as
+-- holding no repository. The earlier sections all passed because they call
+-- SECURITY DEFINER functions, which is exactly what the endpoint did not do.
+
+DO $$
+DECLARE v_owner text; v_name text; n integer;
+BEGIN
+  -- No app user: this is a node, not a person.
+  PERFORM set_config('workgraph.user_id', '', true);
+
+  -- The direct read the endpoint used to do. Asserted to see NOTHING, so that
+  -- if the policy is ever loosened this test says so rather than quietly
+  -- agreeing with a weaker rule.
+  SELECT count(*) INTO n FROM execution_rigs;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'a service caller reads execution_rigs directly (% rows); '
+      'the endpoint''s inline query would appear to work and the policy has changed', n;
+  END IF;
+
+  -- And the function, which is how it must be asked.
+  SELECT owner, name INTO v_owner, v_name FROM system_rig_repository('land-cell', 'landrig');
+  IF v_owner IS DISTINCT FROM 'datopian' OR v_name IS DISTINCT FROM 'land-repo' THEN
+    RAISE EXCEPTION 'a node cannot see the repository its rig holds (got %/%)', v_owner, v_name;
+  END IF;
+
+  -- A rig holding half a repository holds none, because an owner with no name
+  -- matches no project and looks identical to a rig that holds nothing.
+  SELECT count(*) INTO n FROM system_rig_repository('land-cell', 'bare');
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'a rig holding no repository reported one';
+  END IF;
+
+  -- And a rig on another cell is not this cell's, even by the same name.
+  SELECT count(*) INTO n FROM system_rig_repository('land-other', 'landrig');
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'a rig on another cell was reported as this cell''s';
+  END IF;
+
+  RAISE NOTICE 'a node can ask which repository its rig holds, through the function and not otherwise';
+END $$;
+
 RESET ROLE;
 
 ROLLBACK;
