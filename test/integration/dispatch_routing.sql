@@ -140,6 +140,42 @@ BEGIN
     NULL;
   END;
 
+  -- A bead id that exists NOWHERE is refused rather than dispatched.
+  --
+  -- Two situations used to give the same answer: a bead with no project
+  -- (ordinary, company-wide work, routed to the cell's default rig) and an id
+  -- that matches nothing at all (a typo). The second was accepted, claimed,
+  -- given to an agent and billed -- observed when an unquoted shell variable
+  -- turned `dispatch $BEAD oss` into `dispatch oss`, and a bead named `oss`
+  -- ran against nothing.
+  --
+  -- Asserted through work_refs rather than through the handler, because the
+  -- handler's own decision is tested in Go; what matters here is that the two
+  -- states are distinguishable in the data at all.
+  SELECT count(*) INTO n FROM work_refs WHERE bead_id = 'rt-nonexistent';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'the fixture is wrong: rt-nonexistent should not be projected';
+  END IF;
+  -- rt-company is the case the guard must PRESERVE: projected, belonging to no
+  -- project, and legitimately routed to the cell's default rig. If the guard
+  -- caught this it would break company-wide work, which is the whole reason
+  -- the two states have to be told apart rather than both refused.
+  SELECT count(*) INTO n FROM work_refs WHERE bead_id = 'rt-company';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rt-company should be projected, and is % rows', n;
+  END IF;
+  IF (SELECT project_id FROM work_refs WHERE bead_id = 'rt-company') IS NOT NULL THEN
+    RAISE EXCEPTION 'rt-company has a project, so it is not the company-wide case';
+  END IF;
+  -- The distinguishing query the router runs. Projected-with-no-project is a
+  -- different fact from never-projected, and both must be answerable.
+  IF NOT EXISTS (SELECT 1 FROM work_refs WHERE bead_id = 'rt-company') THEN
+    RAISE EXCEPTION 'a bead with no project is not visible as projected';
+  END IF;
+  IF EXISTS (SELECT 1 FROM work_refs WHERE bead_id = 'rt-nonexistent') THEN
+    RAISE EXCEPTION 'an id that was never projected appears projected';
+  END IF;
+
   RAISE NOTICE 'dispatch routing: unrelated rig refused, matching rig found, two candidates both offered, empty and company beads not routed';
 END $$;
 
