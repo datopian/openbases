@@ -53,6 +53,13 @@ type Job struct {
 	// needs no deploy in between -- and the node then needs to know what to
 	// clone. Empty when the rig already exists, which is the common case.
 	CloneURL string `json:"clone_url,omitempty"`
+	// Prefix is the bead id prefix this rig must be created with.
+	//
+	// Sent with the clone URL because it is the same fact and has the same
+	// source: system_rigs_wanted derives both, and a rig created with a prefix
+	// gt chose for itself would produce bead ids that disagree with the ones
+	// already recorded -- permanently, since a bead id is never rewritten.
+	Prefix string `json:"prefix,omitempty"`
 }
 
 // Result is what the node reports back.
