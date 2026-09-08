@@ -33,3 +33,18 @@ dispatcher_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/disp
 # The Workspace subscription reconciler (WP-H1). Its timer is enabled only when
 # the binary, the key, the delegation subject and the topic are all present.
 control_api_local_workspace_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/workspaced'], errors='ignore') | default('', true) }}"
+# The worker. Missing until 2026-09-08, and the omission was silent: the install
+# task guards on `control_api_local_worker_binary | length > 0`, the defaults set
+# it to "", and nothing set it to anything else -- so the task skipped on every
+# deploy and reported ok. The binary on staging was from 22 August, which means
+# every change to cmd/worker and internal/reconcile for two and a half weeks was
+# merged, deployed, and never running.
+#
+# Found while checking why deliveries were not being parked: the migration had
+# applied, the code was on main, and the log line still had the old shape.
+control_api_local_worker_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/worker'], errors='ignore') | default('', true) }}"
+# The reconcile timer, missing the same way and found by the check written for
+# the worker -- which is the argument for the check. Its binary on staging was
+# also from 22 August, and its timer was active the whole time, so the schedule
+# ran faithfully against code two and a half weeks old.
+control_api_local_reconcile_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/reconcile'], errors='ignore') | default('', true) }}"

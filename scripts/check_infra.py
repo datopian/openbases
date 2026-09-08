@@ -519,6 +519,43 @@ def check_example_env_is_complete_and_not_ours() -> None:
                         f"({needle!r}) outside a comment: {line.strip()[:80]}")
 
 
+def check_every_installed_binary_has_a_source() -> None:
+    """A binary install guarded on an unset variable never runs.
+
+    The pattern in control_api and its siblings is: `copy` the binary, with
+    `when: <var> | length > 0` so a machine without a build does not fail. The
+    variable is meant to be assigned in group_vars/all/binaries.yml with a
+    first_found lookup into the build directory.
+
+    control_api_local_worker_binary was never assigned. The default was "", the
+    guard was therefore always false, the task skipped on every deploy and
+    reported ok, and the worker binary on staging was from 22 August -- so every
+    change to cmd/worker and internal/reconcile for two and a half weeks was
+    merged, deployed and never running. Nothing failed, which is what made it
+    survive.
+
+    So: every variable used as the source of a binary install must have a real
+    assignment, not just an empty default.
+    """
+    binaries = ROOT / "infra" / "ansible" / "group_vars" / "all" / "binaries.yml"
+    if not binaries.exists():
+        problems.append("infra/ansible/group_vars/all/binaries.yml is missing")
+        return
+    assigned = set(re.findall(r"^([a-z_]+):\s*\S", binaries.read_text(), re.M))
+
+    roles = ROOT / "infra" / "ansible" / "roles"
+    for task_file in sorted(roles.glob("*/tasks/*.yml")):
+        text = task_file.read_text()
+        # `src: "{{ some_local_binary }}"` -- the shape every binary install uses.
+        for var in re.findall(r'src:\s*"\{\{\s*([a-z_]*local[a-z_]*binary)\s*\}\}"', text):
+            if var not in assigned:
+                problems.append(
+                    f"{task_file.relative_to(ROOT)} installs a binary from {var}, "
+                    f"which group_vars/all/binaries.yml never assigns. Its default "
+                    f"is empty, so the install is guarded off and skips silently on "
+                    f"every deploy while reporting ok")
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -533,6 +570,7 @@ def main() -> int:
         check_service_required_vars_are_not_env_lookups,
         check_every_binary_install_carries_the_code_tag,
         check_example_env_is_complete_and_not_ours,
+        check_every_installed_binary_has_a_source,
     ):
         check()
 
