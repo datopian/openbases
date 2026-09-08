@@ -66,13 +66,31 @@ BEGIN
     VALUES (v_node, p_slug, p_system_username, p_trust_domain,
             coalesce(p_max_concurrent_agents, 2), p_cpu_quota_percent, p_memory_limit_mb,
             coalesce(p_shared, false))
-    ON CONFLICT (slug) DO UPDATE
-       SET execution_node_id = EXCLUDED.execution_node_id,
-           system_username   = EXCLUDED.system_username,
-           trust_domain      = EXCLUDED.trust_domain,
-           cpu_quota_percent = EXCLUDED.cpu_quota_percent,
-           memory_limit_mb   = EXCLUDED.memory_limit_mb,
-           shared            = EXCLUDED.shared;
+    ON CONFLICT (slug) DO UPDATE SET
+        execution_node_id     = EXCLUDED.execution_node_id,
+        system_username       = EXCLUDED.system_username,
+        trust_domain          = EXCLUDED.trust_domain,
+        max_concurrent_agents = EXCLUDED.max_concurrent_agents,
+        cpu_quota_percent     = EXCLUDED.cpu_quota_percent,
+        memory_limit_mb       = EXCLUDED.memory_limit_mb,
+        shared                = EXCLUDED.shared
+        -- Same reasoning as the node: a deployment must be able to say it
+        -- changed nothing. Every column is compared, so a limit re-derived on a
+        -- resized node reports a change and an unchanged one does not.
+        --
+        -- `shared` is in the comparison as well as the SET. Left out of the
+        -- comparison, flipping a cell from shared to not -- which moves where
+        -- every unnamed project lands -- would report "unchanged" and scroll
+        -- past in a deploy log.
+        WHERE (execution_cells.execution_node_id, execution_cells.system_username,
+               execution_cells.trust_domain, execution_cells.max_concurrent_agents,
+               execution_cells.cpu_quota_percent, execution_cells.memory_limit_mb,
+               execution_cells.shared)
+          IS DISTINCT FROM
+              (EXCLUDED.execution_node_id, EXCLUDED.system_username,
+               EXCLUDED.trust_domain, EXCLUDED.max_concurrent_agents,
+               EXCLUDED.cpu_quota_percent, EXCLUDED.memory_limit_mb,
+               coalesce(EXCLUDED.shared, false));
 
     GET DIAGNOSTICS v_changed = ROW_COUNT;
     RETURN v_changed > 0;
