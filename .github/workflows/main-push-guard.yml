@@ -14,7 +14,11 @@ permissions:
   contents: read
   pull-requests: read
 
-# Runs on Datopian's own runner rather than GitHub's hosted fleet, for the same
+# Runs on Datopian's own runner rather than GitHub's hosted fleet because
+# it is push-only, so no fork can trigger it. (ci.yml moved to the hosted fleet on
+# 2026-09-08; its old cost argument is no longer the reason -- see there.)
+# Historical note, kept because it is still true of private repositories:
+# for the same
 # reason ci.yml does: a hosted runner is billed per minute, a busy month hits the
 # spending limit, and every hosted job then fails in about four seconds with
 # nothing useful in the log. This workflow was left behind when ci.yml moved, and

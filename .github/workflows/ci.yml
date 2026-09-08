@@ -7,22 +7,32 @@ on:
 
 # Runs on Datopian's own runner rather than GitHub's hosted fleet.
 #
-# GitHub bills hosted runners per minute, so cost rises with use and a busy
-# month hits a spending limit and blocks every repository — which is what
-# happened here: $35 over 143 job-hours, then CI stopped mid-work. The runner
-# is a Hetzner box at a flat EUR 10.49/month whatever it runs, so a budget can
-# no longer switch CI off.
+# Runs on GitHub's hosted arm64 fleet, and the reason changed on 2026-09-08.
 #
-# `ubuntu-latest` cannot be redirected to it: GitHub always routes that label
-# to its own fleet and it cannot be shadowed, so every job has to say
-# self-hosted explicitly.
+# This used to be self-hosted, on cost: hosted runners are billed per minute,
+# and a busy month once hit a spending limit and stopped CI mid-work at $35
+# over 143 job-hours, while the Hetzner box is a flat EUR 10.49 whatever it
+# runs. That argument no longer applies. The repository is public, and GitHub
+# does not bill standard hosted runners for public repositories at all, so the
+# budget that could switch CI off is gone.
 #
-# The runner is arm64. Everything this workflow needs publishes an arm64 build
-# — the pinned gt, bd and dolt all declare linux_arm64 in versions.lock, and
-# pgvector/pgvector ships arm64 for pg16 — and scripts/lockfile.sh already
-# selects by uname. A step that pulls an amd64-only binary will fail here.
+# What replaced it is a security reason, and it is the stronger one. An
+# org-level runner group refuses public repositories by default
+# (allows_public_repositories=false), because a pull request from a fork can
+# otherwise execute its own workflow on the runner -- which here is a box with
+# access to the deployment. Making the repository public therefore queued every
+# job indefinitely, and the two ways out were to allow fork code onto our own
+# machines or to stop needing them for pull requests. This is the second.
 #
-# See github.com/datopian/self-hosted-runner-hetzner
+# The workflows that stay self-hosted are the ones no fork can trigger:
+# staging-deploy and main-push-guard are push-only, external-probe and
+# toolchain-upgrade are scheduled. They also need to reach the nodes.
+#
+# arm64 is kept deliberately. Everything here publishes an arm64 build -- the
+# pinned gt, bd and dolt all declare linux_arm64 in versions.lock, and
+# pgvector/pgvector ships arm64 for pg16 -- and scripts/lockfile.sh selects by
+# uname. A step that pulls an amd64-only binary will fail here, which is the
+# same constraint as before and is why this is not `ubuntu-latest`.
 
 permissions:
   contents: read
@@ -34,7 +44,7 @@ concurrency:
 jobs:
   go:
     name: go
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -58,7 +68,7 @@ jobs:
 
   web:
     name: web
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04-arm
     defaults:
       run:
         working-directory: apps/web
@@ -75,7 +85,7 @@ jobs:
 
   database:
     name: database
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04-arm
     services:
       postgres:
         # pgvector is required by 0007_projections.sql. The stock postgres image
@@ -372,7 +382,7 @@ jobs:
 
   toolchain:
     name: toolchain
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -416,7 +426,7 @@ jobs:
 
   infrastructure:
     name: infrastructure
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -471,7 +481,7 @@ jobs:
 
   security:
     name: security
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
         with:

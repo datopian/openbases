@@ -48,7 +48,11 @@ concurrency:
 jobs:
   smoke:
     name: shared production zones still serving
-    runs-on: self-hosted
+    # Hosted arm64, like ci.yml: this runs on pull_request, and an org runner
+    # group refuses public repositories rather than let fork code onto our own
+    # machines. It only makes outbound Cloudflare API calls, so it needs
+    # nothing the hosted fleet lacks.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
