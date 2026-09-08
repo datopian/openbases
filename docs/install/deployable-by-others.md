@@ -183,7 +183,51 @@ grant, and stop. Interactive, or from a file for unattended installs.
 This is the seam the guardrail already assumes exists: records about the real world belong in the
 deployment's database, put there by an install step, not by a migration.
 
-### Stage 3 — configuration that is ours
+### Stage 3 — configuration that is ours — **DONE**
+
+Delivered 2026-09-08, in two halves.
+
+**`infra/tofu/envs/example/`** is a copy of `envs/staging` with our values removed, plus a README
+naming what you need before starting (a Cloudflare zone, an R2 bucket for state, a Hetzner project,
+a GitHub App, your own age key). It carries `terraform.tfvars.example` and `backend.hcl.example` and
+deliberately no `terraform.tfvars`, so `tofu apply` there refuses until somebody makes the file on
+purpose. `infra/ansible/inventory/example.yml` and `group_vars/example.yml.disabled` cover the
+Ansible side — the execution cells especially, whose committed names are the clients they isolate.
+
+`check_infra.py` keeps it honest: it fails if a variable is declared without appearing in the
+example, if a stray `terraform.tfvars` appears, or if one of our values reappears in a config file
+there. All three verified by making them fail. It scans configuration only — the README names
+Datopian on purpose, because "these secrets are encrypted to our keys, create your own" is the
+sentence that stops someone trying to use them.
+
+That check found a leftover the copy would otherwise have shipped: `ai_gateway_store_id` **defaulted
+to Datopian's AI Gateway log store**, so a third party's first plan would have pointed at our
+resource. A default is the easiest kind of leftover to miss, because nothing about the file looks
+filled in. The example now has no default for it.
+
+**Workspace ingestion is off unless declared.** OpenTofu already gated the `google-events` module on
+`google_project_id` being non-empty, and Ansible already enabled the workspace timer only with a
+subject and a topic — so the infrastructure half existed. What was missing was that the code treated
+absence as breakage, correctly for us and wrongly for anybody else:
+
+- `internal/workspace`'s reconciler refuses an empty source list rather than deleting every
+  subscription, because it cannot tell "never configured" from "configuration disappeared". Right,
+  and it made `workgraph-workspace.service` fail on every run of a deployment that simply does not
+  use Drive and Meet. `workspaced` now takes `-ingest` (from `WG_WORKSPACE_INGEST`) and exits 0 with
+  a clear line when it is off.
+- The monitor reported "no Google Workspace source is allow-listed" as a failure. It now takes the
+  declaration through `Collector.WorkspaceIngest`, alongside `ExpectCells` and `Gateways` where
+  declared expectations already live, and reports ingestion as off — still reporting, rather than the
+  check disappearing, because a check that vanishes leaves nothing to distinguish "deliberately off"
+  from "nobody runs this any more".
+
+Ansible derives that flag from the two settings that already decide whether the timer runs, rather
+than adding a second switch: two switches for one fact is how a deployment ends up with the timer
+correctly off and the monitor permanently red. Verified against the real staging inventory, where it
+derives `true`, so Datopian's own alerting is unchanged.
+
+The original text follows.
+
 
 The infrastructure is in better shape than the database. OpenTofu already takes hostnames, the
 Cloudflare account, the Workspace domain and the server types as variables in

@@ -453,6 +453,72 @@ def check_every_binary_install_carries_the_code_tag() -> None:
                 )
 
 
+def check_example_env_is_complete_and_not_ours() -> None:
+    """infra/tofu/envs/example must document every knob, and hold none of ours.
+
+    The example is the only worked configuration an outside deployment has. Two
+    ways it rots, both silent:
+
+    A variable is added to the environment and not to the example, so somebody
+    installing reads a file that no longer describes what they must set.
+
+    A value of OURS survives in it. That already happened: the copy inherited
+    `ai_gateway_store_id`'s default, which is Datopian's AI Gateway log store,
+    so a third party's plan would have pointed at our resource. A default is
+    the easiest kind of leftover to miss, because nothing about the file looks
+    filled in.
+    """
+    env = ROOT / "infra" / "tofu" / "envs" / "example"
+    if not env.is_dir():
+        problems.append("infra/tofu/envs/example is missing; an outside "
+                        "deployment has no worked configuration to copy")
+        return
+
+    variables = (env / "variables.tf")
+    tfvars = (env / "terraform.tfvars.example")
+    for f in (variables, tfvars, env / "backend.hcl.example", env / "main.tf"):
+        if not f.exists():
+            problems.append(f"{f.relative_to(ROOT)} is missing from the example environment")
+            return
+
+    declared = set(re.findall(r'variable\s+"([^"]+)"', variables.read_text()))
+    given = set(re.findall(r"^([a-z_]+)\s*=", tfvars.read_text(), re.M))
+    for name in sorted(declared - given):
+        problems.append(
+            f"{name} is declared in envs/example/variables.tf but not in "
+            f"terraform.tfvars.example; somebody copying the example would not "
+            f"know they can set it")
+    for name in sorted(given - declared):
+        problems.append(
+            f"{name} is set in envs/example/terraform.tfvars.example but is not "
+            f"a variable there; it would be ignored")
+
+    # A real terraform.tfvars in the example directory would be applied by
+    # accident, and would be somebody's real configuration in a public repo.
+    if (env / "terraform.tfvars").exists():
+        problems.append(
+            "infra/tofu/envs/example/terraform.tfvars exists; the example must "
+            "carry only terraform.tfvars.example so `tofu apply` there refuses")
+
+    # CONFIGURATION only. The README in this directory names us on purpose --
+    # "infra/secrets/*.enc.yaml are encrypted to Datopian's keys, create your
+    # own" is the sentence that stops somebody trying to use them, and a check
+    # that forbade it would delete the explanation to protect the example from
+    # a value it does not contain.
+    ours = ("datopian", "openbases.com", "10ba352dd98c4f2db387148e7313e451")
+    config = (".tf", ".tfvars", ".example", ".hcl")
+    for f in sorted(env.iterdir()):
+        if not f.is_file() or not f.name.endswith(config):
+            continue
+        text = f.read_text()
+        for needle in ours:
+            for line in text.splitlines():
+                if needle in line.lower() and not line.lstrip().startswith("#"):
+                    problems.append(
+                        f"{f.relative_to(ROOT)} still carries one of our values "
+                        f"({needle!r}) outside a comment: {line.strip()[:80]}")
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -466,6 +532,7 @@ def main() -> int:
         check_spend_limit_not_in_terraform,
         check_service_required_vars_are_not_env_lookups,
         check_every_binary_install_carries_the_code_tag,
+        check_example_env_is_complete_and_not_ours,
     ):
         check()
 

@@ -41,6 +41,15 @@ type Collector struct {
 	// process's own user, which is only the right answer when the monitor runs
 	// as the service user.
 	GraphUser string
+	// WorkspaceIngest declares whether this deployment ingests Drive and Meet.
+	//
+	// Declared rather than discovered, like ExpectCells and Gateways above, and
+	// for the same reason: with no sources present, "not set up" and "set up
+	// and broken" look identical from the database. Datopian's deployments
+	// declare it true, so an empty source list stays the alert it should be. A
+	// deployment that does not use Workspace declares false and is told so,
+	// rather than carrying a red check nobody can clear.
+	WorkspaceIngest bool
 }
 
 // ProbeAPI asks the control API whether it can serve traffic.
@@ -256,10 +265,15 @@ func (c Collector) Run(ctx context.Context, now time.Time, t Thresholds) []Findi
 		findings = append(findings, EvaluateCostImport(imports, now, t))
 	}
 
+	// Observed even when ingest is off, so the finding can say "off" rather
+	// than the check disappearing. A check that vanishes when a feature is
+	// disabled leaves nothing to distinguish "deliberately off" from "nobody
+	// runs this any more".
 	if sources, err := c.ObserveWorkspaceSources(ctx); err != nil {
 		findings = append(findings, gatherFailed(ClassWorkspaceSources, err))
 	} else {
-		findings = append(findings, EvaluateWorkspaceSources(sources, now, t))
+		findings = append(findings,
+			EvaluateWorkspaceSources(sources, c.WorkspaceIngest, now, t))
 	}
 
 	findings = append(findings, EvaluateBackup(c.ReadBackupReceipts(), now))

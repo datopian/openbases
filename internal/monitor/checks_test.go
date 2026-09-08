@@ -18,7 +18,7 @@ func TestALapsedWorkspaceSubscriptionIsReported(t *testing.T) {
 		{Name: "All", Kind: "drive", Enabled: true, State: "active", ExpiresAt: at.Add(7 * 24 * time.Hour)},
 		{Name: "Innovation Team Sync", Kind: "meet", Enabled: true, State: "active", ExpiresAt: at.Add(5 * 24 * time.Hour)},
 	}
-	if f := EvaluateWorkspaceSources(healthy, at, th); f.Failing {
+	if f := EvaluateWorkspaceSources(healthy, true, at, th); f.Failing {
 		t.Errorf("healthy subscriptions reported failing: %s", f.Summary)
 	}
 
@@ -31,7 +31,7 @@ func TestALapsedWorkspaceSubscriptionIsReported(t *testing.T) {
 		"not renewed": {Name: "All", Enabled: true, State: "active",
 			ExpiresAt: at.Add(th.SubscriptionRenewalGrace - time.Minute)},
 	} {
-		f := EvaluateWorkspaceSources([]WorkspaceSource{s}, at, th)
+		f := EvaluateWorkspaceSources([]WorkspaceSource{s}, true, at, th)
 		if !f.Failing {
 			t.Errorf("%s was reported healthy", name)
 		}
@@ -44,7 +44,7 @@ func TestALapsedWorkspaceSubscriptionIsReported(t *testing.T) {
 	f := EvaluateWorkspaceSources([]WorkspaceSource{
 		{Name: "All", Enabled: true, State: "failed",
 			LastError: "google returned 403: {\n  \"error\": {\n    \"code\": 403"},
-	}, at, th)
+	}, true, at, th)
 	if strings.Contains(f.Summary, "\n") {
 		t.Errorf("the summary carries a multi-line error: %q", f.Summary)
 	}
@@ -59,7 +59,7 @@ func TestWorkspaceSilenceIsNotAFailure(t *testing.T) {
 	f := EvaluateWorkspaceSources([]WorkspaceSource{
 		{Name: "Innovation Team Sync", Kind: "meet", Enabled: true, State: "active",
 			ExpiresAt: at.Add(6 * 24 * time.Hour)},
-	}, at, DefaultThresholds())
+	}, true, at, DefaultThresholds())
 	if f.Failing {
 		t.Errorf("a source that has delivered nothing was reported failing: %s", f.Summary)
 	}
@@ -70,12 +70,12 @@ func TestWorkspaceSilenceIsNotAFailure(t *testing.T) {
 // applied or the table read through a path RLS hides.
 func TestNoWorkspaceSourceAtAllIsAFailure(t *testing.T) {
 	at := time.Now()
-	if f := EvaluateWorkspaceSources(nil, at, DefaultThresholds()); !f.Failing {
+	if f := EvaluateWorkspaceSources(nil, true, at, DefaultThresholds()); !f.Failing {
 		t.Error("an empty allow-list was reported healthy")
 	}
 	if f := EvaluateWorkspaceSources([]WorkspaceSource{
 		{Name: "All", Enabled: false},
-	}, at, DefaultThresholds()); !f.Failing {
+	}, true, at, DefaultThresholds()); !f.Failing {
 		t.Error("every source disabled was reported healthy")
 	}
 }
@@ -251,5 +251,48 @@ func TestAProbeThatCouldNotRunSaysSoRatherThanBlamingTheFile(t *testing.T) {
 	if !strings.Contains(f.Summary, "could not test") {
 		t.Errorf("the summary should say the probe failed, not that the file is unreadable, got %q",
 			f.Summary)
+	}
+}
+
+// A deployment that does not ingest Workspace is not broken, and must not
+// carry a failing check from its first hour. Drive and Meet need a GCP
+// project, domain-wide delegation and Pub/Sub, and nothing else depends on
+// them, so an install that skips all that is a normal install.
+//
+// The check still REPORTS, rather than disappearing: a check that vanishes
+// when a feature is off leaves nothing to distinguish "deliberately off" from
+// "nobody runs this any more".
+func TestWorkspaceSourcesOffIsNotAFailure(t *testing.T) {
+	at := time.Now()
+	th := DefaultThresholds()
+
+	f := EvaluateWorkspaceSources(nil, false, at, th)
+	if f.Failing {
+		t.Error("ingestion declared off is reported as a failure")
+	}
+	if f.Summary == "" {
+		t.Error("the check went silent instead of saying ingestion is off")
+	}
+	if f.Observed["ingest"] != false {
+		t.Errorf("the finding does not record that ingest is off: %v", f.Observed)
+	}
+
+	// Sources left behind after switching ingestion off are worth seeing, so
+	// the count is reported even though nothing is failing.
+	f = EvaluateWorkspaceSources([]WorkspaceSource{
+		{Name: "All", Kind: "drive"},
+	}, false, at, th)
+	if f.Failing {
+		t.Error("ingestion off with a leftover source should not fail")
+	}
+	if f.Observed["sources"] != 1 {
+		t.Errorf("the leftover source is not reported: %v", f.Observed)
+	}
+
+	// And with ingestion ON, an empty list is still the alert it was: that is
+	// the case where "not set up" and "broken" are indistinguishable, and the
+	// deployment has declared which one it is.
+	if f := EvaluateWorkspaceSources(nil, true, at, th); !f.Failing {
+		t.Error("ingestion declared on with no sources must still fail")
 	}
 }

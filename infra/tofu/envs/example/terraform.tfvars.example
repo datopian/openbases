@@ -1,0 +1,68 @@
+# Copy to terraform.tfvars and fill in. Nothing here has a usable default:
+# every value names something in YOUR accounts.
+#
+# Named .example so `tofu apply` in this directory refuses until the file has
+# been created deliberately.
+
+# ---------------------------------------------------------------------------
+# Cloudflare. Both ids are on the dashboard; the zone is the DNS zone the
+# hostnames below live in.
+#
+# Use a zone you can grant DNS Write on. It does not have to be your main
+# company domain, and there is a reason to avoid it: the deploy token needs
+# write access to the whole zone, and a company zone usually carries the mail
+# records.
+# ---------------------------------------------------------------------------
+cloudflare_account_id = "REPLACE"
+cloudflare_zone_id    = "REPLACE"
+
+# The web interface, and the API. Both must be inside the zone above.
+hostname     = "work.example.com"
+api_hostname = "api.example.com"
+
+# SSH goes through Cloudflare Access rather than an open port; these are the
+# hostnames the tunnel answers on. Neither node has inbound SSH.
+ssh_hostname           = "ssh.example.com"
+ssh_hostname_execution = "ssh-exec.example.com"
+
+# Who may reach the deployment at all, before any application role applies.
+# Access refuses everybody else at the edge.
+access_allowed_emails = ["you@example.com"]
+
+# ---------------------------------------------------------------------------
+# Hetzner
+# ---------------------------------------------------------------------------
+hcloud_location       = "hel1"
+execution_server_type = "cx23"
+
+# Your own SSH keys, by id, and the addresses allowed to use them. Keys are
+# uploaded to Hetzner first; ids come from `hcloud ssh-key list`.
+admin_ssh_key_ids = []
+admin_ssh_cidrs   = []
+
+# ---------------------------------------------------------------------------
+# AI spend. A gateway budget is the only thing standing between a loop in an
+# agent and a large invoice, so set it before dispatching work.
+# ---------------------------------------------------------------------------
+ai_monthly_budget = 50
+ai_budget_shares  = {}
+
+# Assigned by Cloudflare when the gateway's log store is created. There is no
+# default: ours is in envs/staging and pointing at it would be wrong.
+ai_gateway_store_id = "REPLACE"
+
+# ---------------------------------------------------------------------------
+# Google Workspace ingestion — OPTIONAL, and off when this is empty.
+#
+# Leave it empty unless you want Drive and Meet ingested. It is the largest
+# external setup in the system: a GCP project, domain-wide delegation for a
+# service account, and a Pub/Sub topic. Nothing else depends on it.
+#
+# Empty here means the google-events module creates nothing (`count = 0`), the
+# workspace timer is never enabled, and the monitor reports ingestion as off
+# rather than failing.
+# ---------------------------------------------------------------------------
+google_project_id = ""
+
+# Only read when google_project_id is set.
+google_region = "europe-west1"

@@ -437,8 +437,26 @@ type WorkspaceSource struct {
 // the reconciler's own renewal window. Each of those means a pass that should
 // have renewed it did not run or did not succeed — and the consequence is not a
 // backlog. Events that arrive with no live subscription are never sent at all.
-func EvaluateWorkspaceSources(sources []WorkspaceSource, now time.Time, t Thresholds) Finding {
+func EvaluateWorkspaceSources(sources []WorkspaceSource, ingest bool, now time.Time, t Thresholds) Finding {
 	f := Finding{Class: ClassWorkspaceSources, Observed: map[string]any{}}
+
+	// A deployment that does not ingest Workspace is not broken.
+	//
+	// `ingest` is declared configuration, not something observable: with no
+	// sources in the database, "never set up" and "set up and now broken" are
+	// the same picture. Without this a deployment that simply does not use
+	// Drive and Meet — which needs a GCP project, domain-wide delegation and
+	// Pub/Sub — would carry a permanently failing check from its first hour,
+	// and a check nobody can clear is a check everybody learns to ignore.
+	//
+	// Still reported rather than skipped, and it reports the source count, so
+	// "off" is visible and sources left behind after switching it off are too.
+	if !ingest {
+		f.Summary = "Google Workspace ingestion is off for this deployment"
+		f.Observed["ingest"] = false
+		f.Observed["sources"] = len(sources)
+		return f
+	}
 
 	// Declared, like backup streams: a discovered check reports on the
 	// subscriptions that exist, so an empty allow-list — migrations not applied,

@@ -61,6 +61,21 @@ monitor_mounts: "/,/var/lib/postgresql"
 # between staging and production, and a threshold that needs a release to change
 # is one that gets worked around instead.
 monitor_disk_percent: 85
+
+# Whether this deployment ingests Google Drive and Meet.
+#
+# DERIVED from the two settings that already decide whether the workspace timer
+# runs at all (control_api/tasks/main.yml enables it only with a subject and a
+# topic), deliberately rather than a second switch. Two switches for one fact is
+# how a deployment ends up with the timer correctly off and the monitor
+# permanently red, and a check nobody can clear is a check everybody mutes.
+#
+# With no sources in the database, "never set up" and "set up and broken" are
+# the same picture, so the monitor cannot work this out for itself -- which is
+# why it is declared here and passed in.
+monitor_workspace_ingest: >-
+  {{ (control_api_google_subject | default('') | length > 0)
+     and (control_api_google_topic | default('') | length > 0) }}
 # Three reconciliation periods. workgraph-reconcile.timer fires every 15 minutes,
 # so a delivery arriving just after a pass waits nearly that long as a matter of
 # course; a threshold at or near the period alerts on healthy operation.

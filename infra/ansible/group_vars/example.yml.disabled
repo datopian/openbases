@@ -1,0 +1,41 @@
+# Example group_vars for a deployment that is not Datopian's.
+#
+# NOT loaded: ansible loads group_vars by GROUP NAME, and there is no group
+# called "example", so this file is inert wherever it sits. The `.disabled`
+# suffix makes that obvious to a reader rather than relying on it.
+#
+# Copy the parts you need into group_vars/all/ or group_vars/execution.yml.
+# What follows is only the settings whose committed values are ours.
+
+# ---------------------------------------------------------------------------
+# Execution cells. One per TRUST DOMAIN, never per employee (ADR-0002): each
+# cell gets its own Linux user, home and resource limits and cannot read
+# another cell's files or credentials.
+#
+# Ours are named for the client whose work they isolate (client-nged,
+# client-cdt). Yours should be too, and a deployment that only does open
+# source work needs exactly one.
+#
+# The limits are ceilings, not reservations. Sizing them above the node's real
+# memory is how a cell gets OOM-killed mid-run: `npm ci` on a large repository
+# has been observed peaking above 1.7 GB and being killed at less.
+# ---------------------------------------------------------------------------
+execution_cells:
+  - name: oss
+    trust_domain: oss
+    cpu_quota_percent: 200
+    memory_limit_mb: 8192
+    max_processes: 512
+
+# ---------------------------------------------------------------------------
+# Google Workspace ingestion — OPTIONAL and off unless configured.
+#
+# Leave both empty and: the google-events tofu module creates nothing, the
+# workspace timer is never enabled, and the monitor reports ingestion as off
+# rather than failing. Nothing else in the system depends on it.
+#
+# Setting it up means a GCP project, a service account with domain-wide
+# delegation, and a Pub/Sub topic. See docs/runbooks/google-workspace-consent.md.
+# ---------------------------------------------------------------------------
+control_api_google_subject: ""
+control_api_google_topic: ""
