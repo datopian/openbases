@@ -67,9 +67,49 @@ needs no change to a single migration.
 
 ## What to build
 
-### Stage 1 — a tenant-neutral install, plus the test that keeps it one — **DONE**
+### Stage 1 — a tenant-neutral install, plus the test that keeps it one — **DONE, and corrected**
 
-Delivered 2026-09-08. `workgraph-migrate -fresh` reads `db/tenant_seeds.txt`, records those thirteen
+**The first version of stage 1 was wrong in both directions, and stage 2 found it.** Recorded in full
+because the errors are more instructive than the feature.
+
+`0027_execution_registry.sql` and `0052_register_source.sql` were in the manifest and seed nothing at
+all: they define functions. `-fresh` skipped them, so every fresh install was missing
+`system_register_execution_node`, `system_register_execution_cell`, `system_attach_project_to_cell`,
+`system_record_usage`, `system_register_source`, `system_record_source_acl`,
+`system_pending_receipts` and `system_mark_receipt_processed` — an install that came up reporting
+itself clean and could not register a node, which is to say could not run an agent.
+
+The test meant to catch that matched `CREATE FUNCTION` and these say `CREATE OR REPLACE FUNCTION`.
+Nothing else looked, because every assertion was about rows.
+
+`0018_credential_registry_seed.sql` and `0028_cost_import_credential.sql` were MISSING from the
+manifest and seed `credential_registry` at the top level, ten Datopian addresses among them. The
+assertion listed the sixteen tables it expected to be empty and that table was not one of them, so
+"every tenant table is empty" was measured against an incomplete list.
+
+Both were found by cross-checking the manifest against `scripts/disclosure_baseline.txt`, which
+named different files. Two guards disagreeing was worth more than either agreeing with itself, so
+that comparison is now a check: `check_disclosure.py` fails when the two lists diverge, before it
+looks at its baseline, and no baseline entry can silence it.
+
+Three further corrections came out of the same pass:
+
+- Both guards stripped `DO $$ … $$` blocks along with function bodies. A DO block **executes**, so an
+  insert inside one is a seed — `0080_restructure_projects.sql` seeds through one. Both now keep DO
+  blocks and strip only function bodies.
+- The empty-table assertion enumerates what may be populated (`roles`, `role_permissions`,
+  `schema_migrations`) and requires everything else to be empty, rather than listing what may not be.
+  It is the only version that also covers the table somebody adds next year.
+- The assertion now checks that named functions **exist**, which nothing did before. Verified by
+  dropping two of them: it fails and names them.
+
+The baseline had also silently absorbed 45 false positives from the original rule. `check_disclosure.py`
+now reports entries that no longer match anything, because a baseline that only grows stops
+describing anything.
+
+#### What stage 1 delivers, as corrected
+
+`workgraph-migrate -fresh` reads `db/tenant_seeds.txt`, records those thirteen
 as applied without running them, and refuses any database with a migration already applied. Verified
 end to end against a real PostgreSQL with the real binary: thirteen recorded without running,
 seventy-six applied, the assertion passing, and a second `-fresh` on the same database refused with
@@ -99,7 +139,42 @@ tenant table is empty.** Without it, the next seed migration silently reintroduc
 nobody notices until an outside deployment does. `scripts/check_disclosure.py` already refuses a
 *new* seeding migration; this closes the same gap from the other end, against what is already there.
 
-### Stage 2 — creating the tenant
+### Stage 2 — creating the tenant — **DONE**
+
+Delivered 2026-09-08. `wg-init` (`cmd/init`, cross-compiled by `make build-linux`) creates the
+organisation, the first administrator and their `organisation_admin` grant:
+
+```bash
+wg-init -org acme -org-name "Acme Ltd" \
+        -admin-email ops@acme.example -admin-name "Dana Ops"
+```
+
+It runs at install time on a host with database access, like `wg-registry`, and writes through
+`system_bootstrap_organisation` (migration `0091`) — SECURITY DEFINER, because at bootstrap there is
+no app user for RLS to check, by definition. Superuser would also work and is worse: it would put a
+second unconstrained write path into the install story.
+
+Three properties worth stating:
+
+- **It refuses a second organisation.** One company per deployment is the documented stance, and a
+  bootstrap that could quietly add a tenant would contradict it.
+- **It is idempotent.** A repeat run reports `already_initialised` and changes nothing. A deploy-time
+  tool people are afraid to run twice is one they run once, wrongly, and then patch by hand.
+- **It creates no login identity, and none can be created.** A Cloudflare Access subject is issued by
+  the provider on first sign-in and linked to a user by email address then. So the address given here
+  has to be the one the provider asserts — otherwise the administrator is refused and the deployment
+  has nobody who can fix it. The tool says this on every successful run, and CI asserts that it does.
+
+`granted_by` on the bootstrap grant is NULL, deliberately: nobody granted it, the install did.
+Naming the new administrator as their own granter would write the thing `AGENTS.md` rule 9 forbids
+into the audit trail on day one.
+
+Flags rather than prompts, which is a deliberate narrowing of what this document originally promised.
+This step sits in an install script beside the migration, and a tool that stops to ask cannot run
+unattended; an incomplete invocation refuses and names the missing flag.
+
+The original text follows.
+
 
 With no seed, a fresh install has no organisation and nobody can sign in. `wg init` should take an
 organisation name and a first administrator, create the org, the user and the `organisation_admin`

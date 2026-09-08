@@ -8,15 +8,33 @@
 #
 # Every file here must contain no DDL, which cmd/migrate's tests assert.
 #
-# Seven other migrations (0035, 0057, 0058, 0078, 0082, 0083, 0084) contain
-# `INSERT INTO` against the same tables and are NOT in this list, correctly:
-# those statements sit inside CREATE FUNCTION bodies, so they run when the
-# function is called and never when the migration is applied. The test that
-# guards this list strips dollar-quoted bodies for exactly that reason -- a
-# check on SQL text would flag all seven and be ignored within a day.
+# Several other migrations contain `INSERT INTO` against the same tables and are
+# NOT in this list, correctly: those statements sit inside CREATE FUNCTION
+# bodies and run when the function is called, never when the migration is
+# applied. 0084 registers a rig, 0027 registers a cell.
 #
-# Verified by running it: with the thirteen below skipped, all seventy-six
-# remaining migrations apply and every tenant table is empty.
+# A `DO $$ ... $$` block is the opposite and the distinction is easy to lose: it
+# executes immediately, so an insert inside one IS a seed. 0080 seeds through
+# one and belongs here. Both guards -- cmd/migrate's test and
+# scripts/check_disclosure.py -- strip function bodies and KEEP DO blocks.
+#
+# This list was wrong in both directions when it was first written, which is
+# recorded because the errors are instructive:
+#
+#   0027 and 0052 were IN it and seed nothing. They define functions with
+#   `CREATE OR REPLACE FUNCTION`, and the test meant to catch that matched only
+#   `CREATE FUNCTION`. Skipping them removed system_register_execution_node,
+#   system_register_execution_cell, system_attach_project_to_cell and
+#   system_record_usage from every fresh install -- an install that came up
+#   looking clean and could not register a node.
+#
+#   0018 and 0028 were MISSING and seed credential_registry at the top level,
+#   ten Datopian addresses among them. The assertion did not cover that table,
+#   so "every tenant table is empty" was measured against an incomplete list.
+#
+# Both were found by cross-checking this list against
+# scripts/disclosure_baseline.txt, which flagged different files. Two guards
+# disagreeing is worth more than either agreeing with itself.
 #
 # Do not add to this list to make a new seeding migration acceptable. A record
 # about the real world belongs in the deployment's database, put there by an
@@ -24,12 +42,12 @@
 
 0009_pilot_seed.sql
 0016_register_agent_sandbox.sql
-0027_execution_registry.sql
+0018_credential_registry_seed.sql
+0028_cost_import_credential.sql
 0045_seed_event_sources.sql
 0048_seed_cdt_kickoff_space.sql
 0049_pilot_operators.sql
 0050_seed_cdt_project.sql
-0052_register_source.sql
 0066_management_role_grants.sql
 0073_roseville_poc_project.sql
 0074_demo_attendees.sql

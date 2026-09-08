@@ -60,11 +60,26 @@ def clone():
     subprocess.run(["git", "init", "--quiet"], cwd=tmp, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp, check=True,
                    capture_output=True)
+    # Commit, or `git reset` between cases has no HEAD to reset TO and clears
+    # the whole index instead. Every case after the first then ran against a
+    # tree where almost nothing was tracked, and still passed, because the
+    # exit code it expected happened to be produced by a different failure.
+    # A fixture that quietly stops being a fixture is worse than no fixture.
+    subprocess.run(["git", "-c", "user.email=t@example.invalid",
+                    "-c", "user.name=t", "commit", "--quiet", "-m", "fixture"],
+                   cwd=tmp, check=True, capture_output=True)
     return tmp
 
 
-def case(tree, name, write, want):
-    """Apply `write`, assert the exit code, undo it."""
+def case(tree, name, write, want, because=None):
+    """Apply `write`, assert the exit code and the REASON, undo it.
+
+    `because` is a string the failure must mention. Checking only the exit code
+    is how this test spent its first version green while measuring nothing: a
+    broken fixture cleared the index between cases, every later case ran against
+    an almost-empty tree, and the 1 they expected was produced by a different
+    complaint entirely. An exit code is not a reason.
+    """
     path, body, mode = write
     p = pathlib.Path(tree) / path
     before = p.read_text() if p.exists() and mode == "a" else None
@@ -73,8 +88,16 @@ def case(tree, name, write, want):
     # Untracked files are invisible to git ls-files until intent-to-add.
     subprocess.run(["git", "add", "-N", path], cwd=tree, capture_output=True)
 
+    # The fixture has to still BE the fixture. If the tree stops being tracked
+    # the check sees nothing and its silence looks like agreement.
+    listed = subprocess.run(["git", "ls-files"], cwd=tree,
+                            capture_output=True, text=True).stdout.split()
+    intact = len(listed) > 100
+
     got = run(tree)
-    ok = got.returncode == want
+    ok = got.returncode == want and intact
+    if ok and because is not None:
+        ok = because in (got.stdout + got.stderr)
     if before is None:
         p.unlink()
     else:
@@ -82,7 +105,13 @@ def case(tree, name, write, want):
     subprocess.run(["git", "reset", "--quiet"], cwd=tree, capture_output=True)
 
     if not ok:
-        return (f"{name}: exit {got.returncode}, wanted {want}\n"
+        detail = ""
+        if not intact:
+            detail = (f"\n    the fixture tree has only {len(listed)} tracked "
+                      f"file(s); the check was measuring nothing")
+        elif because is not None and because not in (got.stdout + got.stderr):
+            detail = f"\n    the failure never mentions {because!r}"
+        return (f"{name}: exit {got.returncode}, wanted {want}{detail}\n"
                 f"    stdout: {got.stdout.strip()[:200]}\n"
                 f"    stderr: {got.stderr.strip()[:200]}")
     return None
@@ -102,23 +131,32 @@ def main():
         problems.append(case(
             tree, "a drive id in a new file is refused",
             ("internal/workspace/probe_scratch.go",
-             'package workspace\n\nvar probe = "0AZzYyXxWwVvUuTtSs"\n', "w"), 1))
+             'package workspace\n\nvar probe = "0AZzYyXxWwVvUuTtSs"\n', "w"), 1,
+            because="shared-drive id"))
 
         # The case the baseline could hide: the file is already accepted, the
         # identifier is not.
         problems.append(case(
             tree, "a NEW drive id in an already-baselined file is refused",
             ("internal/workspace/lifecycle_test.go",
-             '\n// var probe = "0AQqWwEeRrTtYyUuIi"\n', "a"), 1))
+             '\n// var probe = "0AQqWwEeRrTtYyUuIi"\n', "a"), 1,
+            because="shared-drive id"))
 
         problems.append(case(
             tree, "a Meet space code in a new file is refused",
-            ("docs/scratch_probe.md", "code zzz-yyyy-xxx\n", "w"), 1))
+            ("docs/scratch_probe.md", "code zzz-yyyy-xxx\n", "w"), 1,
+            because="Meet space code"))
 
+        # A new seeding migration trips the manifest cross-check first, and
+        # that is the better message: it names the file and says a fresh
+        # install would contain it. Asserted as the reason rather than the
+        # disclosure wording, because that is what actually fires -- guessing
+        # produced a case that passed on the wrong complaint.
         problems.append(case(
             tree, "a migration seeding a business record is refused",
             ("db/migrations/0099_probe_scratch.sql",
-             "INSERT INTO projects (slug) VALUES ('acme');\n", "w"), 1))
+             "INSERT INTO projects (slug) VALUES ('acme');\n", "w"), 1,
+            because="NOT in db/tenant_seeds.txt"))
 
         # Schema is the whole point of a migration and must stay allowed, or the
         # check is one people route around.

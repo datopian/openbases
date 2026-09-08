@@ -32,6 +32,16 @@ TESTS = ROOT / "test" / "integration"
 # Tests that legitimately run as the owner, with the reason. An entry here is a
 # claim that the file asserts nothing about who may READ a protected table.
 OWNER_ONLY = {
+    "fresh_install_has_no_tenant.sql":
+        "asserts that a `migrate -fresh` install is EMPTY, that the permission "
+        "model (roles, role_permissions) survived the skip, and that the "
+        "functions a skipped migration would have removed exist. None of that "
+        "is a visibility question: an empty table is empty for every role, and "
+        "a function either exists or does not. Owner is also the stronger lens "
+        "here -- under workgraph_app a policy that HID rows would make an "
+        "install still containing Datopian look clean, which is the failure "
+        "this test exists to catch. Who may read role_permissions is covered by "
+        "management_access.sql.",
     "bead_attribution.sql":
         "asserts which project system_project_bead attributes a bead to, and "
         "the constraint requiring a project-scoped graph to name its project. "

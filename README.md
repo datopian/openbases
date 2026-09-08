@@ -64,14 +64,22 @@ This runs Datopian's own work, and a plain `migrate` still creates Datopian's or
 install into a database of your own:
 
 ```bash
-workgraph-migrate -fresh      # schema and the permission model, and nobody in it
+workgraph-migrate -fresh          # schema and the permission model, nobody in it
+wg-init -org acme -org-name "Acme Ltd" \
+        -admin-email ops@acme.example -admin-name "Dana Ops"
 ```
 
-It refuses any database with a migration already applied. What is still missing before an outside
-deployment is realistic — creating your own organisation and first administrator, an example
-environment that is not ours, and an install guide someone has followed end to end — is written
-down, with what each stage costs, in [docs/install/deployable-by-others.md](docs/install/deployable-by-others.md).
-One company per deployment; multi-tenancy is not supported.
+`-fresh` refuses any database with a migration already applied. `wg-init` refuses to create a second
+organisation, and is safe to re-run.
+
+The address you give `wg-init` must be the one your identity provider asserts. No login identity is
+created and none can be: the provider issues the subject on first sign-in and it is matched to this
+user by address. Get it wrong and that administrator cannot sign in.
+
+Still missing before an outside deployment is realistic — an example environment that is not ours,
+and an install guide someone has followed end to end — with what each stage costs, in
+[docs/install/deployable-by-others.md](docs/install/deployable-by-others.md). One company per
+deployment; multi-tenancy is not supported.
 
 ## Run it
 

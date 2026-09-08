@@ -42,6 +42,11 @@ work_binary: /usr/local/bin/wg-work
 # the schema on the node was whatever the last person remembered to run.
 migrate_local_binary: ""
 migrate_binary: /usr/local/bin/wg-migrate
+
+# wg-init, run once by hand at install time. Empty by default like the others:
+# the playbook copies it only when a build has produced it.
+init_local_binary: ""
+init_binary: /usr/local/bin/wg-init
 control_api_reconcile_binary: /usr/local/bin/workgraph-reconcile
 # The App private key on the control node. Deployed only when a local source is
 # given; reconciliation's resync half is skipped without it, while replay still

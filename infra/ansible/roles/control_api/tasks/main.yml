@@ -62,6 +62,25 @@
   when: migrate_local_binary | length > 0
   tags: [binaries, code]
 
+# Shipped but never run by the playbook, deliberately. wg-init creates a
+# deployment's first organisation and administrator, which is a decision with a
+# person's name in it -- not something a deploy should make. This deployment was
+# initialised long ago and the tool would report already_initialised anyway.
+#
+# It is here so that a deployment installed FROM this repository has the one
+# command it needs first. Without it, stage 2 of
+# docs/install/deployable-by-others.md ships a tool that never reaches the host
+# where the database is.
+- name: Install the initialisation tool
+  ansible.builtin.copy:
+    src: "{{ init_local_binary }}"
+    dest: "{{ init_binary }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: init_local_binary | length > 0
+  tags: [binaries, code]
+
 # Credential source files. systemd reads these at start and copies them into a
 # per-service tmpfs; the service user never needs to read them itself, which is
 # why they are root-only rather than group-readable like the env file.

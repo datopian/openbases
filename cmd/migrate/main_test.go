@@ -92,7 +92,15 @@ func TestTenantSeedsCarryNoSchema(t *testing.T) {
 
 	// Matched on statement starts only. "CREATE" appears in prose and inside
 	// function bodies that a seed may legitimately call.
-	ddl := regexp.MustCompile(`(?im)^\s*(CREATE|ALTER|DROP)\s+(TABLE|FUNCTION|VIEW|TYPE|INDEX|POLICY|TRIGGER|EXTENSION|ROLE)\b`)
+	// `OR REPLACE` is load-bearing. Without it this matched only
+	// "CREATE FUNCTION", so 0027_execution_registry.sql -- four
+	// CREATE OR REPLACE FUNCTION definitions and no seed at all -- passed this
+	// test while in the manifest. Every fresh install was therefore missing
+	// system_register_execution_node, system_register_execution_cell,
+	// system_attach_project_to_cell and system_record_usage, and came up
+	// looking clean because nothing checked that a function existed.
+	ddl := regexp.MustCompile(`(?im)^\s*(CREATE|ALTER|DROP)\s+(OR\s+REPLACE\s+)?` +
+		`(TABLE|FUNCTION|PROCEDURE|VIEW|MATERIALIZED|TYPE|INDEX|POLICY|TRIGGER|EXTENSION|ROLE)\b`)
 
 	for _, name := range db.TenantSeedNames() {
 		sql, ok := body[name]
@@ -149,14 +157,40 @@ func TestNoMigrationOutsideTheManifestSeedsARecord(t *testing.T) {
 // dollarQuoted matches a dollar-quoting tag: $$, $function$, $_$.
 var dollarQuoted = regexp.MustCompile(`\$[a-zA-Z_][a-zA-Z_0-9]*\$|\$\$`)
 
-// statementsOnly returns the SQL with dollar-quoted bodies removed, leaving
-// what the migration actually executes when applied.
+// endsWithDO matches text that ends in the DO of a DO block.
+var endsWithDO = regexp.MustCompile(`(?i)\bDO\s*$`)
+
+// statementsOnly returns the SQL that runs when the migration is APPLIED.
+//
+// A CREATE FUNCTION body is removed: it runs when the function is called, and
+// treating it as a seed reported every registration function as a violation.
+//
+// A `DO $$ ... $$` block is KEPT, because it executes immediately, so an insert
+// inside one is a seed like any other. An earlier version stripped both, which
+// made this test blind to exactly the thing it exists to catch —
+// 0080_restructure_projects.sql seeds through a DO block.
 func statementsOnly(sql string) string {
-	parts := dollarQuoted.Split(sql, -1)
 	var b strings.Builder
-	for i := 0; i < len(parts); i += 2 { // outside the quoted pairs
-		b.WriteString(parts[i])
+	pos := 0
+	for {
+		open := dollarQuoted.FindStringIndex(sql[pos:])
+		if open == nil {
+			b.WriteString(sql[pos:])
+			return b.String()
+		}
+		start := pos + open[0]
+		bodyAt := pos + open[1]
+		close := dollarQuoted.FindStringIndex(sql[bodyAt:])
+		if close == nil { // unterminated; keep the remainder rather than lose it
+			b.WriteString(sql[pos:])
+			return b.String()
+		}
+		b.WriteString(sql[pos:start])
 		b.WriteString("\n")
+		if endsWithDO.MatchString(sql[:start]) {
+			b.WriteString(sql[bodyAt : bodyAt+close[0]])
+			b.WriteString("\n")
+		}
+		pos = bodyAt + close[1]
 	}
-	return b.String()
 }
