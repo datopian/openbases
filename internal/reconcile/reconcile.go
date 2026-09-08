@@ -37,6 +37,8 @@ type Result struct {
 	ResyncFailed    int
 	NotInstalled    int // repositories the App installation does not cover
 	StillUnresolved int // receipts that remain unprojectable
+	Parked          int // receipts for repositories no project has attached
+	Discarded       int // parked receipts too old to be worth replaying
 }
 
 func (r Result) LogArgs() []any {
@@ -44,6 +46,7 @@ func (r Result) LogArgs() []any {
 		"replayed", r.Replayed, "replay_failed", r.ReplayFailed,
 		"resynced", r.Resynced, "resync_failed", r.ResyncFailed,
 		"not_installed", r.NotInstalled, "unresolved", r.StillUnresolved,
+		"parked", r.Parked, "discarded", r.Discarded,
 	}
 }
 
@@ -85,6 +88,15 @@ func Replay(ctx context.Context, db *sql.DB, log *slog.Logger, limit int) (Resul
 		return out, err
 	}
 
+	if n, derr := discardStaleParked(ctx, db); derr != nil {
+		// Not fatal: the pass's real work is replaying, and failing the whole
+		// pass because retention could not run would stop projection over
+		// housekeeping.
+		log.Warn("discarding stale parked deliveries failed", "error", derr)
+	} else {
+		out.Discarded = n
+	}
+
 	for _, p := range todo {
 		var err error
 		switch p.event {
@@ -104,10 +116,29 @@ func Replay(ctx context.Context, db *sql.DB, log *slog.Logger, limit int) (Resul
 
 		switch {
 		case errors.Is(err, githubapp.ErrRepositoryNotRegistered):
-			// Deliberately left unprocessed. Registering the repository later
-			// must be able to recover its history, and that is only possible
-			// while the receipt is still pending.
-			out.StillUnresolved++
+			// Parked, not left pending and not discarded.
+			//
+			// The intent this replaces was right and its cost changed: leaving
+			// the receipt pending is what lets a repository attached LATER
+			// recover its history. That held while the App covered a handful of
+			// repositories. It now covers every repository in the
+			// organisation -- deliberately, so a project can attach one without
+			// an admin widening the installation -- and Workgraph has a project
+			// for a dozen of them.
+			//
+			// The result on staging: 409 pending deliveries for repositories no
+			// project has attached, the oldest six days old, re-examined every
+			// five seconds, and a backlog alert that could never clear.
+			//
+			// Parking keeps the recovery and drops the churn. The receipt stays
+			// unprocessed and fully replayable; system_pending_deliveries
+			// retries it hourly instead of every pass and puts it behind fresh
+			// work; and system_webhook_backlog stops counting it, because
+			// nothing is stuck -- no project wants it.
+			if perr := parkDelivery(ctx, db, p.id); perr != nil {
+				return out, perr
+			}
+			out.Parked++
 		case err != nil:
 			log.Warn("replay failed", "delivery", p.id, "event", p.event, "error", err)
 			out.ReplayFailed++
@@ -124,6 +155,31 @@ func Replay(ctx context.Context, db *sql.DB, log *slog.Logger, limit int) (Resul
 func markProcessed(ctx context.Context, db *sql.DB, id string) error {
 	_, err := db.ExecContext(ctx, `SELECT system_mark_delivery_processed($1)`, id)
 	return err
+}
+
+func parkDelivery(ctx context.Context, db *sql.DB, id string) error {
+	_, err := db.ExecContext(ctx, `SELECT system_park_delivery($1)`, id)
+	return err
+}
+
+// ParkedRetentionDays is how long a parked delivery is kept.
+//
+// Generous on purpose: a repository attached within a fortnight of its events
+// recovers their history. Beyond that the content is stale anyway, because
+// attaching a repository resyncs its pull requests from the API and replay only
+// reconstructs the intermediate states.
+const ParkedRetentionDays = 14
+
+// discardStaleParked bounds the growth that parking allows.
+//
+// Parking stops the churn but not the accumulation: without this, deliveries
+// for repositories nobody ever attaches would sit in the table for good. Run
+// once per pass -- a single indexed UPDATE that usually touches nothing.
+func discardStaleParked(ctx context.Context, db *sql.DB) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT system_discard_parked_deliveries($1)`, ParkedRetentionDays).Scan(&n)
+	return n, err
 }
 
 // apiPullRequest is GitHub's REST shape, reshaped into the webhook shape.

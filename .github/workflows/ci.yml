@@ -438,6 +438,16 @@ jobs:
       - name: the router can see a bead that belongs to a project
         run: psql -v ON_ERROR_STOP=1 -f test/integration/routing_sees_a_project_bead.sql
 
+      # The App is installed on every repository in the organisation on
+      # purpose, so webhooks arrive for repositories no project has attached.
+      # Those used to stay pending forever: 409 of them on staging, oldest six
+      # days, re-examined every five seconds, with an alert that could not
+      # clear. Parking has to leave them replayable, keep them behind fresh
+      # work, and stop counting them as a backlog -- all three, or it trades one
+      # failure for another.
+      - name: deliveries for unattached repositories are parked, not retried forever
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/parked_deliveries.sql
+
       # An agent has no shell, so the repository's own command is what says
       # whether its change works. Opt-in per repository, because running it
       # executes code from the repository as the cell user.
