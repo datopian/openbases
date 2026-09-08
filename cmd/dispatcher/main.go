@@ -1267,15 +1267,15 @@ func (d *dispatcher) ensureRig(ctx context.Context, job *work.Job) error {
 	// inbound port and reaches the control plane outward -- so the control
 	// plane, which knows which repository a rig should hold, sends it. Same
 	// reasoning as the check command.
-	if job.CloneURL == "" {
-		return fmt.Errorf("rig %s does not exist and the job carries no clone URL, so "+
-			"there is nothing to check out. Either the control plane is older than "+
+	if job.CloneURL == "" || job.Prefix == "" {
+		return fmt.Errorf("rig %s does not exist and the job carries no clone URL and "+
+			"prefix, so it cannot be created. Either the control plane is older than "+
 			"this node, or no repository is registered for this bead's project", rig)
 	}
 
 	d.log.Info("creating a rig for work that needs it",
 		"rig", rig, "cell", d.cell)
-	if err := gastown.AddRig(ctx, d.gtBinary, town, job.CloneURL); err != nil {
+	if err := gastown.AddRig(ctx, d.gtBinary, town, rig, job.CloneURL, job.Prefix); err != nil {
 		return err
 	}
 	d.log.Info("rig created", "rig", rig)

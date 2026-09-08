@@ -441,15 +441,16 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			// reports that it could not check the repository out, which is a
 			// better failure than no dispatch at all.
 			if job.Bead != "" {
-				var clone, repository sql.NullString
+				var clone, repository, prefix sql.NullString
 				var held bool
 				if err := db.QueryRowContext(r.Context(),
-					`SELECT clone_url, repository, held FROM system_rigs_wanted_for_bead($1, $2) WHERE rig = $3`,
-					job.Bead, cell, job.Rig).Scan(&clone, &repository, &held); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					`SELECT clone_url, repository, prefix, held FROM system_rigs_wanted_for_bead($1, $2) WHERE rig = $3`,
+					job.Bead, cell, job.Rig).Scan(&clone, &repository, &prefix, &held); err != nil && !errors.Is(err, sql.ErrNoRows) {
 					log.Warn("reading a rig's clone URL", "cell", cell,
 						"rig", job.Rig, "bead", job.Bead, "error", err)
 				} else {
 					job.CloneURL = clone.String
+					job.Prefix = prefix.String
 					// The node is about to clone this for the first time, and
 					// `gt rig add` refuses a repository with no commits. The
 					// attach path initialises an empty repository, but only one
