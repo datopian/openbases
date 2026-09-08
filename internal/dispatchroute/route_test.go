@@ -61,7 +61,7 @@ func TestANamedRigMustBeOneThatHoldsTheWork(t *testing.T) {
 		found: nil,
 	}} {
 		t.Run(c.name, func(t *testing.T) {
-			rig, why, decided := Choose(c.found, c.wanted)
+			rig, refused, decided := Choose(c.found, c.wanted)
 			if len(c.found) == 0 {
 				if decided {
 					t.Fatalf("Choose decided %q with no candidates", rig)
@@ -72,25 +72,70 @@ func TestANamedRigMustBeOneThatHoldsTheWork(t *testing.T) {
 				t.Fatal("Choose did not decide")
 			}
 			if c.refused {
-				if why == "" {
+				if refused == nil {
 					t.Fatalf("expected a refusal, got rig %q", rig)
 				}
 				if rig != "" {
 					t.Errorf("refused and still returned rig %q", rig)
 				}
+				// Every refusal from Choose is a rig problem: a bead that
+				// does not exist is refused earlier, by For, before there are
+				// any candidates to choose between.
+				if refused.Code != CodeNoRig {
+					t.Errorf("code is %q, want %q", refused.Code, CodeNoRig)
+				}
 				for _, want := range c.says {
-					if !strings.Contains(why, want) {
-						t.Errorf("the refusal does not mention %q: %s", want, why)
+					if !strings.Contains(refused.Why, want) {
+						t.Errorf("the refusal does not mention %q: %s", want, refused.Why)
 					}
 				}
 				return
 			}
-			if why != "" {
-				t.Fatalf("unexpected refusal: %s", why)
+			if refused != nil {
+				t.Fatalf("unexpected refusal: %s", refused.Why)
 			}
 			if rig != c.rig {
 				t.Errorf("routed to %q, want %q", rig, c.rig)
 			}
 		})
+	}
+}
+
+// A refusal carries a code a client can branch on, and the two kinds are
+// different codes because they need different actions.
+//
+// Both were no_rig_for_project, which was wrong the moment a bead that does
+// not exist could be refused: a client reading that code would send somebody
+// to provision a rig for a typo, and the prose carried the real meaning while
+// the machine-readable field did not.
+func TestARefusalSaysWhichKindItIs(t *testing.T) {
+	// Choose only ever refuses for rig reasons: a bead that does not exist is
+	// refused by For, before there are candidates to choose between.
+	_, refused, decided := Choose(
+		[]candidate{{rig: "a", repo: "o/a"}, {rig: "b", repo: "o/b"}}, "")
+	if !decided || refused == nil {
+		t.Fatal("two candidates and no name should be refused")
+	}
+	if refused.Code != CodeNoRig {
+		t.Errorf("ambiguity is coded %q, want %q", refused.Code, CodeNoRig)
+	}
+
+	// The codes are distinct strings, which is the whole point.
+	if CodeNoRig == CodeNotProjected {
+		t.Error("the two codes are the same string, so a client cannot tell them apart")
+	}
+	// And they are stable identifiers rather than prose: a client matches on
+	// them, so they must not read like sentences.
+	for _, code := range []string{CodeNoRig, CodeNotProjected} {
+		if strings.ContainsAny(code, " .") || code != strings.ToLower(code) {
+			t.Errorf("%q is not a stable machine-readable code", code)
+		}
+	}
+
+	// A refusal is usable as an error, so a caller that only wants to bubble it
+	// up does not have to reach inside.
+	var err error = &Refusal{Code: CodeNotProjected, Why: "no bead x has been projected"}
+	if !strings.Contains(err.Error(), "projected") {
+		t.Errorf("a refusal does not read as an error: %v", err)
 	}
 }

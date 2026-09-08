@@ -1170,22 +1170,28 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		// PortalJS bead running in a disposable sandbox, reporting done, having
 		// found no PortalJS source. A caller naming a rig is choosing between
 		// the rigs that can do the work, not opting out of the question.
-		rig, why, err := dispatchroute.For(r.Context(), db, bead, payload.Cell, payload.Rig)
+		rig, refused, err := dispatchroute.For(r.Context(), db, bead, payload.Cell, payload.Rig)
 		switch {
 		case err != nil:
 			log.Error("routing a dispatch", "bead", bead, "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 			return
-		case why != "":
+		case refused != nil:
 			// 409 rather than 400: the request is well formed and the
 			// registry cannot honour it yet. The message says what is
 			// missing, because "no rig" is fixed by registering a
 			// repository or provisioning a rig, and the person reading it
 			// needs to know which.
-			log.Info("dispatch refused for want of a rig", "bead", bead, "reason", why)
+			// The code comes from the refusal rather than being assumed here.
+			// It was hardcoded to no_rig_for_project, which was wrong the
+			// moment a bead that does not exist could be refused: a client
+			// branching on that code would send somebody to provision a rig
+			// for a typo.
+			log.Info("dispatch refused", "bead", bead,
+				"code", refused.Code, "reason", refused.Why)
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"error": why,
-				"code":  "no_rig_for_project",
+				"error": refused.Why,
+				"code":  refused.Code,
 			})
 			return
 		default:
