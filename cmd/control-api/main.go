@@ -2191,7 +2191,12 @@ func ensureNotEmpty(ctx context.Context, gh *githubapp.Client, log *slog.Logger,
 		log.Warn("a rig's repository is not owner/name", "repository", full, "error", err)
 		return
 	}
-	tok, err := gh.InstallationToken(ctx, full)
+	// The bare NAME, not owner/name. A scoped token narrows the installation to
+	// repositories by name and refuses an owner-qualified one outright
+	// (ErrOwnerQualified), which is a guard doing its job -- and which both of
+	// my call sites tripped, because the fake-server tests never reached token
+	// minting.
+	tok, err := gh.InstallationToken(ctx, name)
 	if err != nil {
 		log.Warn("minting a token to check a repository for commits",
 			"repository", full, "error", err)

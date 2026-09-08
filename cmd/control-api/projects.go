@@ -360,7 +360,8 @@ func initialiseEmpty(ctx context.Context, gh *githubapp.Client, log *slog.Logger
 			continue
 		}
 
-		tok, err := gh.InstallationToken(ctx, res.FullName)
+		// The bare name: a scoped token refuses owner/name.
+		tok, err := gh.InstallationToken(ctx, name)
 		if err != nil {
 			log.Error("minting a token to inspect a repository",
 				"repository", res.FullName, "error", err)
