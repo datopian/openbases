@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/datopian/workgraph/internal/domain"
-	"github.com/datopian/workgraph/internal/runner"
+	"github.com/datopian/openbases/internal/domain"
+	"github.com/datopian/openbases/internal/runner"
 )
 
 // DirectRunner drives agents without Gas Town (ADR-0023).

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/cost"
+	"github.com/datopian/openbases/internal/cost"
 )
 
 const defaultAPIBase = "https://api.cloudflare.com/client/v4"

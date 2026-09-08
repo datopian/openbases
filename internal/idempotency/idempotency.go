@@ -25,7 +25,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // Header is the request header carrying the key.

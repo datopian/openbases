@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/datopian/workgraph/internal/domain"
-	"github.com/datopian/workgraph/internal/runner"
+	"github.com/datopian/openbases/internal/domain"
+	"github.com/datopian/openbases/internal/runner"
 )
 
 func work() domain.WorkRef {

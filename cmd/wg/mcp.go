@@ -5,8 +5,8 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	wgmcp "github.com/datopian/workgraph/internal/mcp"
-	"github.com/datopian/workgraph/internal/version"
+	wgmcp "github.com/datopian/openbases/internal/mcp"
+	"github.com/datopian/openbases/internal/version"
 )
 
 // The stdio MCP transport (wg-p4h.10, wg-p4h.11).

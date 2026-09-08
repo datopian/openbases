@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/inference"
-	"github.com/datopian/workgraph/internal/workspace"
+	"github.com/datopian/openbases/internal/inference"
+	"github.com/datopian/openbases/internal/workspace"
 )
 
 // Pending is one unprocessed delivery.

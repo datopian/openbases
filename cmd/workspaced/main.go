@@ -25,13 +25,13 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/datopian/workgraph/internal/beads"
-	"github.com/datopian/workgraph/internal/config"
-	"github.com/datopian/workgraph/internal/githubapp"
-	"github.com/datopian/workgraph/internal/inference"
-	"github.com/datopian/workgraph/internal/ingest"
-	"github.com/datopian/workgraph/internal/publish"
-	"github.com/datopian/workgraph/internal/workspace"
+	"github.com/datopian/openbases/internal/beads"
+	"github.com/datopian/openbases/internal/config"
+	"github.com/datopian/openbases/internal/githubapp"
+	"github.com/datopian/openbases/internal/inference"
+	"github.com/datopian/openbases/internal/ingest"
+	"github.com/datopian/openbases/internal/publish"
+	"github.com/datopian/openbases/internal/workspace"
 )
 
 func main() {

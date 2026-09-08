@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/datopian/workgraph/internal/authn"
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authn"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // routeAction says what a route does, in the vocabulary internal/authz already

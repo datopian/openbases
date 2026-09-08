@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/authz"
-	"github.com/datopian/workgraph/internal/tokens"
+	"github.com/datopian/openbases/internal/authz"
+	"github.com/datopian/openbases/internal/tokens"
 )
 
 // The skill states the governance rules the server already enforces.

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/domain"
+	"github.com/datopian/openbases/internal/domain"
 )
 
 // rawIssue mirrors what `bd --json` emits.

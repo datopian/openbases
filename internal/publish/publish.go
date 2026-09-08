@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/beads"
-	"github.com/datopian/workgraph/internal/domain"
+	"github.com/datopian/openbases/internal/beads"
+	"github.com/datopian/openbases/internal/domain"
 )
 
 // Beads is the part of the Beads client this needs.

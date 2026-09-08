@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/datopian/workgraph/internal/work"
+	"github.com/datopian/openbases/internal/work"
 )
 
 // Every call this daemon makes must be under /v1/node/.

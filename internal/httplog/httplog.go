@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authn"
+	"github.com/datopian/openbases/internal/authn"
 )
 
 type recorder struct {

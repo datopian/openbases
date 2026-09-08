@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/domain"
+	"github.com/datopian/openbases/internal/domain"
 )
 
 func TestDispatch_RequiresSignedCapability(t *testing.T) {

@@ -338,7 +338,7 @@ export function ManageRepositories({ slug }: { slug: string }) {
             fontFamily: "ui-monospace, monospace",
           }}
           value={input}
-          placeholder={"datopian/workgraph\ndatopian/portaljs"}
+          placeholder={"datopian/openbases\ndatopian/portaljs"}
           onChange={(e) => setInput(e.target.value)}
         />
         <p

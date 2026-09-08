@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // Item is one thing competing for a person's attention.

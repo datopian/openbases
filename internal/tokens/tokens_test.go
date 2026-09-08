@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // A fixture is composed at run time, never written as a literal.

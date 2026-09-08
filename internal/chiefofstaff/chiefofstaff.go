@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // Kind separates what is known from what is computed from what is guessed.

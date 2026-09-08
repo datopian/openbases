@@ -15,9 +15,9 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/datopian/workgraph/internal/config"
-	"github.com/datopian/workgraph/internal/githubapp"
-	"github.com/datopian/workgraph/internal/reconcile"
+	"github.com/datopian/openbases/internal/config"
+	"github.com/datopian/openbases/internal/githubapp"
+	"github.com/datopian/openbases/internal/reconcile"
 )
 
 func main() {

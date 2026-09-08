@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/domain"
+	"github.com/datopian/openbases/internal/domain"
 )
 
 // Contract tests run against the REAL pinned bd binary in a throwaway database.

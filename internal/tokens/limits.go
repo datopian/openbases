@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // Limiter enforces a per-token request rate.

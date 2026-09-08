@@ -78,7 +78,7 @@ it away between tasks. Installing is the wrong instinct here. Go to
 Install only where a person will use the machine again:
 
 ```bash
-GOPRIVATE=github.com/datopian go install github.com/datopian/workgraph/cmd/wg@latest
+GOPRIVATE=github.com/datopian go install github.com/datopian/openbases/cmd/wg@latest
 ```
 
 ### 3. No token and no way to be given one? Ask for one.

@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/datopian/workgraph/internal/authn"
-	"github.com/datopian/workgraph/internal/authz"
-	"github.com/datopian/workgraph/internal/domain"
-	"github.com/datopian/workgraph/internal/idempotency"
+	"github.com/datopian/openbases/internal/authn"
+	"github.com/datopian/openbases/internal/authz"
+	"github.com/datopian/openbases/internal/domain"
+	"github.com/datopian/openbases/internal/idempotency"
 )
 
 // Creating a project, and attaching repositories to one (wg-1dm, wg-m6p).

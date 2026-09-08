@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // ErrNotFound is returned when a record does not exist, or exists but the

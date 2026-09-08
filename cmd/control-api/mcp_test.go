@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authn"
-	"github.com/datopian/workgraph/internal/config"
-	wgmcp "github.com/datopian/workgraph/internal/mcp"
+	"github.com/datopian/openbases/internal/authn"
+	"github.com/datopian/openbases/internal/config"
+	wgmcp "github.com/datopian/openbases/internal/mcp"
 )
 
 // /mcp is behind Access, is not a bypass, and refuses a caller with no

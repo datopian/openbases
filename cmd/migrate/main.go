@@ -25,8 +25,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/datopian/workgraph/db"
-	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/openbases/db"
+	"github.com/datopian/openbases/internal/config"
 )
 
 type migration struct {

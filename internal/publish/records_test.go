@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/githubapp"
-	"github.com/datopian/workgraph/internal/knowledge"
+	"github.com/datopian/openbases/internal/githubapp"
+	"github.com/datopian/openbases/internal/knowledge"
 )
 
 type fakeGitHub struct {

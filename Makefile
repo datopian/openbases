@@ -3,9 +3,9 @@ SHELL := /bin/bash
 
 GO       ?= go
 BIN      := bin
-LDFLAGS  := -X github.com/datopian/workgraph/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev) \
-            -X github.com/datopian/workgraph/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
-            -X github.com/datopian/workgraph/internal/version.BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS  := -X github.com/datopian/openbases/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev) \
+            -X github.com/datopian/openbases/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+            -X github.com/datopian/openbases/internal/version.BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # The node binaries additionally drop the symbol table and DWARF.
 #

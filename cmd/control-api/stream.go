@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authn"
-	"github.com/datopian/workgraph/internal/events"
+	"github.com/datopian/openbases/internal/authn"
+	"github.com/datopian/openbases/internal/events"
 )
 
 // The event stream and cursor pagination (wg-p4h.8).

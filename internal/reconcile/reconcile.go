@@ -26,7 +26,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/datopian/workgraph/internal/githubapp"
+	"github.com/datopian/openbases/internal/githubapp"
 )
 
 // Result reports what a reconciliation pass did.

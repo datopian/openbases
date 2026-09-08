@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/workspace"
+	"github.com/datopian/openbases/internal/workspace"
 )
 
 func lines(n int) []workspace.TranscriptEntry {

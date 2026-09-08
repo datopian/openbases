@@ -1,4 +1,4 @@
-# AGENTS.md — datopian/workgraph
+# AGENTS.md — datopian/openbases
 
 Instructions for any human or AI agent working in this repository. These are not suggestions; CI
 and policy enforce most of them.

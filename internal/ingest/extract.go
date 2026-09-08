@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/datopian/workgraph/internal/inference"
-	"github.com/datopian/workgraph/internal/workspace"
+	"github.com/datopian/openbases/internal/inference"
+	"github.com/datopian/openbases/internal/workspace"
 )
 
 // PromptVersion identifies the extractor that produced a candidate.

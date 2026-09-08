@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/datopian/workgraph/internal/version"
+	"github.com/datopian/openbases/internal/version"
 )
 
 // action is a typed job the daemon accepts. The set is closed.
