@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"github.com/datopian/openbases/internal/authn"
 	"github.com/datopian/openbases/internal/authz"
 	"github.com/datopian/openbases/internal/domain"
+	"github.com/datopian/openbases/internal/githubapp"
 	"github.com/datopian/openbases/internal/idempotency"
 )
 
@@ -46,6 +48,10 @@ func registerProjectWrites(
 	store *domain.Store,
 	idem *idempotency.Store,
 	log *slog.Logger,
+	// gh may be nil: the API runs without the App configured, and attaching a
+	// repository is database state that does not need it. Only the
+	// empty-repository courtesy below does.
+	gh *githubapp.Client,
 ) {
 	if store == nil {
 		return
@@ -118,6 +124,14 @@ func registerProjectWrites(
 					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 					return
 				}
+				// A repository with no commits cannot be checked out, so `gt
+				// rig add` refuses it and no work can start -- which is where
+				// the msf project stopped: created, attached, and stuck. Give
+				// it a first commit here, while somebody is present and the
+				// intent is unambiguous, rather than failing at dispatch.
+				results = initialiseEmpty(r.Context(), gh, log,
+					r.PathValue("slug"), results)
+
 				// 200 rather than 201 even when something was created: the
 				// response is a per-repository report, and some of those
 				// repositories may have been refused. A 201 would claim more
@@ -315,3 +329,69 @@ func registerBeadDetail(authed *http.ServeMux, db *sql.DB, log *slog.Logger) {
 //	                repository to match, and refusing it would break the case
 //	                that worked before this existed.
 //
+
+// initialiseEmpty gives a first commit to any repository that has none.
+//
+// Best effort, deliberately. The attachment is database state and it has
+// already succeeded; a GitHub outage or a missing installation must not undo
+// it. What must not happen is silence: an empty repository that nobody
+// initialised fails later, at dispatch, as "no rig holds a repository for this
+// project" -- a message about rigs for a problem about commits.
+//
+// Only repositories this call actually attached are touched. One that was
+// already attached is somebody else's decision and may be deliberately empty.
+func initialiseEmpty(ctx context.Context, gh *githubapp.Client, log *slog.Logger,
+	project string, results []domain.AttachResult) []domain.AttachResult {
+
+	for i, res := range results {
+		if res.Status != "attached" {
+			continue
+		}
+		owner, name, err := domain.ParseFullName(res.FullName)
+		if err != nil {
+			continue // it was attached, so it parsed once already
+		}
+		if gh == nil {
+			// Said rather than skipped: without the App we cannot tell whether
+			// the repository is empty, and a caller who dispatches into an
+			// empty one gets a confusing refusal.
+			results[i].Note = "the GitHub App is not configured, so this repository was " +
+				"not checked for commits; a repository with none cannot be checked out"
+			continue
+		}
+
+		tok, err := gh.InstallationToken(ctx, res.FullName)
+		if err != nil {
+			log.Error("minting a token to inspect a repository",
+				"repository", res.FullName, "error", err)
+			results[i].Note = "could not check whether this repository has any commits; " +
+				"if it is empty, push one before dispatching work"
+			continue
+		}
+
+		state, err := gh.InspectRepository(ctx, tok, owner, name)
+		if err != nil {
+			log.Error("inspecting a repository", "repository", res.FullName, "error", err)
+			results[i].Note = "could not check whether this repository has any commits; " +
+				"if it is empty, push one before dispatching work"
+			continue
+		}
+		if !state.Empty {
+			continue
+		}
+
+		if err := gh.InitialiseRepository(ctx, tok, owner, name,
+			state.DefaultBranch, project); err != nil {
+			log.Error("initialising an empty repository",
+				"repository", res.FullName, "error", err)
+			results[i].Note = "this repository has no commits and could not be " +
+				"initialised, so work cannot be dispatched against it yet; push a commit"
+			continue
+		}
+		log.Info("initialised an empty repository",
+			"repository", res.FullName, "branch", state.DefaultBranch)
+		results[i].Note = "this repository had no commits, so a first commit was created " +
+			"on " + state.DefaultBranch + " to make it checkoutable"
+	}
+	return results
+}

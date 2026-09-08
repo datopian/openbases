@@ -97,6 +97,15 @@ type AttachResult struct {
 	FullName string `json:"full_name"`
 	// Status is "attached", "already_attached", or "taken".
 	Status string `json:"status"`
+	// Note is what else the caller needs to know, in a sentence.
+	//
+	// Used for the empty-repository case: a repository with no commits cannot
+	// be checked out, so it is initialised with a first commit and the caller
+	// is told. When that fails the attachment still stands -- it is database
+	// state and it succeeded -- and the note says what to do instead, because
+	// otherwise the failure surfaces much later as a dispatch that cannot find
+	// a rig.
+	Note string `json:"note,omitempty"`
 	// TakenBy names the project holding it, when Status is "taken" and the
 	// caller may see that project. Empty when they may not: the slug of a
 	// restricted engagement is itself confidential (ADR-0013), so the refusal

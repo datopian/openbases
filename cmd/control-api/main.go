@@ -1810,7 +1810,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 
 	// The write surface over domain code that already exists (wg-p4h.4).
 	registerWrites(authed, inbox, idem, log)
-	registerProjectWrites(authed, store, idem, log)
+	registerProjectWrites(authed, store, idem, log, gh)
 	registerPlatformState(authed, db, log)
 	registerBeadDetail(authed, db, log)
 
