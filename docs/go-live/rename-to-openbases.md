@@ -1,6 +1,26 @@
 # Renaming the repository to `openbases`
 
-Written 2026-09-08, before the rename. Every "does not break" below was checked against the live
+**Executed 2026-09-08.** The repository is `datopian/openbases`, the Go module path moved with it, and
+the user-facing references were updated. Kept as written because the checks below are the reason the
+rename was safe, and they are worth having if any of it is ever revisited.
+
+Two of the three open questions at the bottom were answered by doing it: the module path moved, and
+the local clone directory was **not** renamed, so the `core.hooksPath` trap never fired. The
+`workgraph-agent-sandbox` question is still open.
+
+What the rename actually cost: nothing broke. The old URL redirects, `fetch` and the push path both
+work, secret scanning, push protection, the read-only workflow token and the fork-approval policy all
+survived (they key on repository id), and `project_repositories` still holds exactly one
+workgraph-named row -- the sandbox, untouched.
+
+One thing the plan did not predict, and it is the lesson: rewriting the module path against the
+`github.com/` prefix was supposed to spare the repository slugs used as test data, and it caught two
+of them anyway, because those fixtures list what people paste and two entries were full URLs. Both
+affected tests then failed, and were only noticed because the failure was read rather than assumed --
+a truncated `go test` output had made it look clean. Sed across a repository needs its test run read
+to the end.
+
+Written before the rename, and unchanged below except for this note. Every "does not break" below was checked against the live
 system rather than reasoned about, and the check is given so it can be repeated.
 
 ## The rename is smaller than the word count suggests

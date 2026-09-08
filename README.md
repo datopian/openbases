@@ -61,8 +61,8 @@ request it produces says so in its body: *"Opened by a Workgraph agent run. Nobo
 ## Run it
 
 ```bash
-git clone git@github.com:datopian/workgraph.git
-cd workgraph
+git clone git@github.com:datopian/openbases.git
+cd openbases
 make bootstrap                          # pinned bd/dolt/gt/opencode/claude, each SHA-256 verified
 export PATH="$PWD/.toolchain/bin:$PATH"
 ```

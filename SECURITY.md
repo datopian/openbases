@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-**Use [GitHub's private vulnerability reporting](https://github.com/datopian/workgraph/security/advisories/new).**
+**Use [GitHub's private vulnerability reporting](https://github.com/datopian/openbases/security/advisories/new).**
 It keeps the report, the fix and the disclosure in one place, and it works without either of us
 publishing an address.
 
