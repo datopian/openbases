@@ -429,6 +429,15 @@ jobs:
       - name: a dispatch routes to a rig that holds the work, or refuses
         run: psql -v ON_ERROR_STOP=1 -f test/integration/dispatch_routing.sql
 
+      # The router explains an unroutable bead by reading work_refs, which has
+      # RLS forced. With no app user only a PROJECTLESS row is visible, so a
+      # project-scoped bead read as absent and dispatch answered
+      # bead_not_projected -- telling people to wait for a projection pass that
+      # had already run. This drops to workgraph_app, which is the only way to
+      # see it: as the owner, RLS is bypassed and the test cannot fail.
+      - name: the router can see a bead that belongs to a project
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/routing_sees_a_project_bead.sql
+
       # An agent has no shell, so the repository's own command is what says
       # whether its change works. Opt-in per repository, because running it
       # executes code from the repository as the cell user.

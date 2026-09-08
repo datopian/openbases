@@ -13,7 +13,6 @@ package dispatchroute
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strings"
 )
 
@@ -131,58 +130,53 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig string
 	// None matched. Distinguish the two reasons, because they have different
 	// fixes: a project with no registered repository needs one attaching, and a
 	// project whose repositories no rig holds needs a rig.
+	//
+	// Through a SECURITY DEFINER function, and that is the whole point of this
+	// call rather than reading work_refs here. This used to be two plain reads,
+	// which RLS answered wrongly: with no app user, work_refs shows a row only
+	// when project_id IS NULL, so every PROJECT-SCOPED bead looked absent and
+	// dispatch reported bead_not_projected with the advice to wait a few
+	// seconds. Waiting could never help. Eight beads in project msf were
+	// refused that way while sitting in work_refs the whole time.
+	//
+	// The happy path above was already definer-safe. This path was not, so the
+	// failure only appeared once something failed -- and then lied about why.
+	var projected bool
 	var project string
 	var repos int
-	if qerr := db.QueryRowContext(ctx, `
-		SELECT COALESCE(p.slug, ''),
-		       (SELECT count(*) FROM project_repositories r WHERE r.project_id = p.id)
-		  FROM work_refs w
-		  JOIN projects p ON p.id = w.project_id
-		 WHERE w.bead_id = $1
-		 LIMIT 1`, bead).Scan(&project, &repos); qerr != nil {
-		if errors.Is(qerr, sql.ErrNoRows) {
-			// That join finds nothing for TWO different situations, and until
-			// now they collapsed into one answer: a bead with no project, and
-			// a bead id that exists nowhere at all. The first is ordinary --
-			// company-wide work, routed to the cell's default rig. The second
-			// is a typo, and it used to be dispatched.
-			//
-			// Observed rather than imagined: an unquoted shell variable turned
-			// `dispatch $BEAD oss` into `dispatch oss`, and a bead literally
-			// named `oss` was accepted, claimed, given to an agent and billed.
-			// The agent had nothing to read and nothing to do. That is the same
-			// shape as LoadCatalogue("") treating an unset path as an absent
-			// file: two states that need different answers, given the same one.
-			var projected bool
-			if err := db.QueryRowContext(ctx,
-				`SELECT EXISTS (SELECT 1 FROM work_refs WHERE bead_id = $1)`,
-				bead).Scan(&projected); err != nil {
-				return "", nil, err
-			}
-			if !projected {
-				// A bead can be real and not yet here: the node projects its
-				// graph every fifteen seconds or so, so one created a moment
-				// ago has not arrived. The message says that, because "no such
-				// bead" would send somebody looking for a typo they did not
-				// make.
-				return "", &Refusal{Code: CodeNotProjected,
-					Why: "no bead " + bead + " has been projected from any cell. Either the " +
-						"id is wrong, or it was created seconds ago and the next projection " +
-						"pass has not run yet -- wait a few seconds and try again. Nothing is " +
-						"dispatched against an id that resolves to nothing, because the agent " +
-						"would have nothing to read and would be billed for finding that out."}, nil
-			}
-			// Projected, but belonging to no project: nothing to route on, and
-			// not an error. A rig the caller named is honoured, and otherwise
-			// the dispatcher's default stands.
-			//
-			// Returning "" for a named rig here would CLEAR it, because the
-			// caller assigns this result unconditionally now. That is the
-			// hazard of turning two paths into one, and it is why this returns
-			// `wanted` rather than the empty string.
-			return strings.TrimSpace(wanted), nil, nil
-		}
+	if qerr := db.QueryRowContext(ctx,
+		`SELECT projected, project, repositories FROM system_bead_routing($1)`,
+		bead).Scan(&projected, &project, &repos); qerr != nil {
 		return "", nil, qerr
+	}
+
+	if !projected {
+		// A bead can be real and not yet here: the node projects its graph
+		// every fifteen seconds or so, so one created a moment ago has not
+		// arrived. The message says that, because "no such bead" would send
+		// somebody looking for a typo they did not make.
+		//
+		// Observed rather than imagined: an unquoted shell variable turned
+		// `dispatch $BEAD oss` into `dispatch oss`, and a bead literally named
+		// `oss` was accepted, claimed, given to an agent and billed. The agent
+		// had nothing to read and nothing to do.
+		return "", &Refusal{Code: CodeNotProjected,
+			Why: "no bead " + bead + " has been projected from any cell. Either the " +
+				"id is wrong, or it was created seconds ago and the next projection " +
+				"pass has not run yet -- wait a few seconds and try again. Nothing is " +
+				"dispatched against an id that resolves to nothing, because the agent " +
+				"would have nothing to read and would be billed for finding that out."}, nil
+	}
+
+	if project == "" {
+		// Projected, but belonging to no project: nothing to route on, and not
+		// an error. A rig the caller named is honoured, and otherwise the
+		// dispatcher's default stands.
+		//
+		// Returning "" for a named rig here would CLEAR it, because the caller
+		// assigns this result unconditionally. That is the hazard of turning
+		// two paths into one, and it is why this returns `wanted`.
+		return strings.TrimSpace(wanted), nil, nil
 	}
 
 	if repos == 0 {
