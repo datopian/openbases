@@ -47,6 +47,9 @@ func main() {
 		dsn    = flag.String("dsn", config.DatabaseURL(), "PostgreSQL connection string")
 		dryRun = flag.Bool("dry-run", false, "report what would be applied without applying it")
 		verify = flag.Bool("verify", false, "check applied migrations still match their recorded checksums, then exit")
+
+		// Installing somebody else's deployment. See db/tenant_seeds.txt.
+		fresh = flag.Bool("fresh", false, "install into an EMPTY database, skipping the migrations that seed Datopian's own records (refuses if anything is already applied)")
 	)
 	flag.Parse()
 
@@ -57,13 +60,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(context.Background(), log, *dsn, *dryRun, *verify); err != nil {
+	if *fresh && *verify {
+		log.Error("-fresh and -verify are contradictory: one installs, the other only reads")
+		os.Exit(1)
+	}
+
+	if err := run(context.Background(), log, *dsn, *dryRun, *verify, *fresh); err != nil {
 		log.Error("migration failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, log *slog.Logger, dsn string, dryRun, verifyOnly bool) error {
+func run(ctx context.Context, log *slog.Logger, dsn string, dryRun, verifyOnly, fresh bool) error {
 	all, err := load()
 	if err != nil {
 		return fmt.Errorf("loading migrations: %w", err)
@@ -108,6 +116,12 @@ func run(ctx context.Context, log *slog.Logger, dsn string, dryRun, verifyOnly b
 		return nil
 	}
 
+	if fresh {
+		if err := skipTenantSeeds(ctx, db, log, all, applied, dryRun); err != nil {
+			return err
+		}
+	}
+
 	pending := make([]migration, 0, len(all))
 	for _, m := range all {
 		if _, ok := applied[m.name]; !ok {
@@ -131,6 +145,67 @@ func run(ctx context.Context, log *slog.Logger, dsn string, dryRun, verifyOnly b
 		}
 		log.Info("applied", "migration", m.name, "duration", time.Since(start).Round(time.Millisecond))
 	}
+	return nil
+}
+
+// skipTenantSeeds records the seed migrations as applied without running them,
+// which is what makes a fresh install come up with nobody in it.
+//
+// Refuses unless nothing has been applied yet. Without that guard this flag is
+// a way to skip a migration on a running deployment, and refusing an edited
+// migration is the entire reason this command records checksums at all. The
+// check is "no migrations applied" rather than "no tables": a half-migrated
+// database is exactly where skipping would do the most damage.
+//
+// A name in the manifest that matches no migration is an error, not a no-op.
+// The failure mode being designed against is silence — a typo here would mean
+// the seed runs and the install quietly contains Datopian, which is the bug
+// this whole mechanism exists to prevent.
+// The connection is `conn`, not `db`: the package holding the manifest is also
+// called db, and shadowing it here is how the manifest becomes unreachable.
+func skipTenantSeeds(ctx context.Context, conn *sql.DB, log *slog.Logger,
+	all []migration, applied map[string]string, dryRun bool) error {
+
+	if len(applied) > 0 {
+		return fmt.Errorf(
+			"-fresh needs an empty database, but %d migration(s) are already applied; "+
+				"it exists to install a new deployment, not to skip a migration on an "+
+				"existing one", len(applied))
+	}
+
+	byName := make(map[string]migration, len(all))
+	for _, m := range all {
+		byName[m.name] = m
+	}
+
+	seeds := db.TenantSeedNames()
+	if len(seeds) == 0 {
+		return fmt.Errorf("the tenant seed manifest is empty; -fresh would install the seed data it exists to skip")
+	}
+
+	for _, name := range seeds {
+		m, ok := byName[name]
+		if !ok {
+			return fmt.Errorf(
+				"db/tenant_seeds.txt names %q, which is not a migration; "+
+					"a name that matches nothing would skip nothing and the install "+
+					"would silently contain the seed data", name)
+		}
+		if dryRun {
+			log.Info("would record without running", "migration", name)
+			continue
+		}
+		// Recorded with the real checksum, so -verify still passes here and an
+		// edit to a seed file is still caught on every deployment.
+		if _, err := conn.ExecContext(ctx,
+			`INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)`,
+			m.name, m.checksum); err != nil {
+			return fmt.Errorf("recording %s as skipped: %w", name, err)
+		}
+		applied[m.name] = m.checksum
+		log.Info("recorded without running", "migration", name)
+	}
+	log.Info("fresh install: tenant seed migrations skipped", "count", len(seeds))
 	return nil
 }
 

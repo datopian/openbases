@@ -58,6 +58,21 @@ Steps 1 and 6 are the work base; 2–4 the execution base; 5 the work base again
 comment on its bead. It cannot push, merge, widen a classification, or change its own budget. The pull
 request it produces says so in its body: *"Opened by a Workgraph agent run. Nobody has reviewed this."*
 
+## Installing it somewhere else
+
+This runs Datopian's own work, and a plain `migrate` still creates Datopian's organisation. To
+install into a database of your own:
+
+```bash
+workgraph-migrate -fresh      # schema and the permission model, and nobody in it
+```
+
+It refuses any database with a migration already applied. What is still missing before an outside
+deployment is realistic — creating your own organisation and first administrator, an example
+environment that is not ours, and an install guide someone has followed end to end — is written
+down, with what each stage costs, in [docs/install/deployable-by-others.md](docs/install/deployable-by-others.md).
+One company per deployment; multi-tenancy is not supported.
+
 ## Run it
 
 ```bash

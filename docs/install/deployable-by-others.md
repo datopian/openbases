@@ -41,9 +41,15 @@ The fix therefore has to change what a **fresh** install runs, without touching 
 ## The mechanism, and it is tested
 
 Thirteen of the twenty are **pure seed**: they contain no DDL, so skipping the whole file costs
-nothing. The other seven mix schema with seeding and cannot be skipped — but they do not need to be,
-because every one of their inserts is an `INSERT … SELECT … WHERE`, which finds nothing once the
-organisation is absent.
+nothing.
+
+The other seven need no skipping at all, and the first version of this document got the reason wrong.
+It said they mix schema with seeding and are guarded by `INSERT … SELECT … WHERE`. They are not
+guarded: their `INSERT` statements sit inside `CREATE FUNCTION` bodies, so they run when the function
+is called and never when the migration is applied. `0084` registers a rig, `0057` a beads graph. The
+measured result was right and the explanation was wrong — which matters, because the test protecting
+this invariant has to strip dollar-quoted bodies to tell the two apart, and a version that matched
+SQL text reported all seven as violations.
 
 Verified by pre-recording those thirteen as applied in `schema_migrations` — exactly what a
 `--fresh` flag would do — and then migrating:
@@ -61,7 +67,24 @@ needs no change to a single migration.
 
 ## What to build
 
-### Stage 1 — a tenant-neutral install, plus the test that keeps it one
+### Stage 1 — a tenant-neutral install, plus the test that keeps it one — **DONE**
+
+Delivered 2026-09-08. `workgraph-migrate -fresh` reads `db/tenant_seeds.txt`, records those thirteen
+as applied without running them, and refuses any database with a migration already applied. Verified
+end to end against a real PostgreSQL with the real binary: thirteen recorded without running,
+seventy-six applied, the assertion passing, and a second `-fresh` on the same database refused with
+`needs an empty database, but 89 migration(s) are already applied`.
+
+The assertion is `test/integration/fresh_install_has_no_tenant.sql`, and it was checked against a
+NORMAL install to prove it is not vacuous: it fails there, naming `organisations holds 1 row`,
+`users holds 8 row`, `projects holds 13 row`. CI runs both directions in the `database` job.
+
+Three unit tests in `cmd/migrate` guard the manifest itself: every name in it is a real migration, no
+file in it carries DDL, and — the important one — no migration OUTSIDE it seeds a record. Each was
+checked by making it fail on purpose.
+
+The original text follows.
+
 
 `workgraph-migrate --fresh`, reading a manifest of the thirteen (`db/migrations/TENANT_SEEDS`) and
 recording them as applied without executing them.
