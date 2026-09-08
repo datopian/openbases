@@ -1,0 +1,16 @@
+# Copy to backend.hcl. State lives in an R2 bucket you own.
+#
+# Create the bucket before the first `tofu init`. State records every resource
+# this environment owns, so losing it means the mapping between the config and
+# the live infrastructure is gone -- versioning on the bucket is worth turning
+# on.
+bucket                      = "REPLACE-tfstate"
+key                         = "example/terraform.tfstate"
+region                      = "auto"
+endpoints                   = { s3 = "https://REPLACE-ACCOUNT-ID.r2.cloudflarestorage.com" }
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+skip_metadata_api_check     = true
+skip_s3_checksum            = true
+use_path_style              = true

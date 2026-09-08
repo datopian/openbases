@@ -45,7 +45,11 @@ Environment=WG_BEADS_BINARY=/usr/local/bin/bd
 Environment=WG_KNOWLEDGE_REPO={{ control_api_knowledge_repo | default('') }}
 Environment=WG_KNOWLEDGE_BASE={{ control_api_knowledge_base | default('main') }}
 
-ExecStart={{ control_api_workspace_binary }}
+# The timer is only enabled when a subject and a topic are configured, so
+# reaching here means ingestion is on. Passed explicitly anyway: a unit that
+# states its mode is one you can read, and a manual `systemctl start` of a
+# leftover unit then declines cleanly instead of refusing an empty source list.
+ExecStart={{ control_api_workspace_binary }} -ingest=true
 
 # This key can read every file in three shared drives as any user in the
 # domain. Same hardening as the API, and ProtectSystem=strict means the key is

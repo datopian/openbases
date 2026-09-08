@@ -1,0 +1,25 @@
+# Example inventory. Copy to <yourenv>.yml and change the four hostnames.
+#
+# ansible_host is a Cloudflare hostname, not an IP. Neither node has an inbound
+# port: cloudflared proxies SSH over the tunnel each node dialled out on, and
+# Access authenticates before the connection is made. Those hostnames come from
+# the tofu environment (ssh_hostname and ssh_hostname_execution).
+#
+# One tunnel per node. A shared tunnel routes SSH to whichever connector
+# Cloudflare picks, which makes targeting a specific host impossible.
+#
+# The group names -- control and execution -- are what site.yml plays against,
+# so keep them. The host names are yours; they appear in execution_nodes in the
+# database, so pick something you will recognise a year from now.
+all:
+  children:
+    control:
+      hosts:
+        example-control:
+          ansible_host: ssh.example.com
+          ansible_user: root
+    execution:
+      hosts:
+        example-execution:
+          ansible_host: ssh-exec.example.com
+          ansible_user: root

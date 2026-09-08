@@ -42,10 +42,13 @@ func main() {
 		streams    = flag.String("backup-streams", getenv("WG_MONITOR_BACKUP_STREAMS", "beads:24h"), "comma-separated name:max-age backup obligations")
 		services   = flag.String("services", getenv("WG_MONITOR_SERVICES", ""), "comma-separated systemd units that must be running")
 		gateways   = flag.String("gateways", getenv("WG_MONITOR_GATEWAYS", ""), "comma-separated AI Gateways whose import must be fresh")
-		graphs     = flag.String("graphs", getenv("WG_MONITOR_GRAPHS", ""), "comma-separated name=/path work graphs that must be readable")
-		graphUser  = flag.String("graph-user", getenv("WG_MONITOR_GRAPH_USER", ""), "the service account the graphs must be readable by")
-		cells      = flag.Int("expect-cells", getenvInt("WG_MONITOR_EXPECT_CELLS", 0), "how many execution cells should be reporting agent health")
-		dryRun     = flag.Bool("dry-run", false, "evaluate and print, raising nothing")
+		// Declared, not discovered: with no sources present, a deployment that
+		// never set Workspace up looks exactly like one whose ingestion broke.
+		wsIngest  = flag.Bool("workspace-ingest", getenv("WG_WORKSPACE_INGEST", "") == "true", "this deployment ingests Google Drive and Meet")
+		graphs    = flag.String("graphs", getenv("WG_MONITOR_GRAPHS", ""), "comma-separated name=/path work graphs that must be readable")
+		graphUser = flag.String("graph-user", getenv("WG_MONITOR_GRAPH_USER", ""), "the service account the graphs must be readable by")
+		cells     = flag.Int("expect-cells", getenvInt("WG_MONITOR_EXPECT_CELLS", 0), "how many execution cells should be reporting agent health")
+		dryRun    = flag.Bool("dry-run", false, "evaluate and print, raising nothing")
 		// Thresholds are flags, not constants. The right value differs between
 		// staging and production, a threshold that needs a release to change is
 		// one that gets worked around instead — and the acceptance test needs to
@@ -97,17 +100,18 @@ func main() {
 	}
 
 	c := monitor.Collector{
-		Services:    splitList(*services),
-		Gateways:    splitList(*gateways),
-		Graphs:      parsedGraphs,
-		GraphUser:   strings.TrimSpace(*graphUser),
-		DB:          db,
-		HTTP:        &http.Client{Timeout: 10 * time.Second},
-		HealthURL:   *healthURL,
-		Mounts:      splitNonEmpty(*mounts),
-		ReceiptDir:  *receiptDir,
-		Streams:     parsedStreams,
-		ExpectCells: *cells,
+		WorkspaceIngest: *wsIngest,
+		Services:        splitList(*services),
+		Gateways:        splitList(*gateways),
+		Graphs:          parsedGraphs,
+		GraphUser:       strings.TrimSpace(*graphUser),
+		DB:              db,
+		HTTP:            &http.Client{Timeout: 10 * time.Second},
+		HealthURL:       *healthURL,
+		Mounts:          splitNonEmpty(*mounts),
+		ReceiptDir:      *receiptDir,
+		Streams:         parsedStreams,
+		ExpectCells:     *cells,
 	}
 
 	thresholds := monitor.Thresholds{

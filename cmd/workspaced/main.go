@@ -64,6 +64,14 @@ func main() {
 		recordLimit = flag.Int("record-limit", 20, "most accepted records to propose in one pass")
 		timeout     = flag.Duration("timeout", 15*time.Minute, "overall deadline")
 		verbose     = flag.Bool("v", false, "log the sources left alone too")
+		// A deployment declares whether it ingests Workspace at all. Drive and
+		// Meet need a GCP project, domain-wide delegation and Pub/Sub, and
+		// nothing else in the system depends on them.
+		// Named ingestOn, not ingest: internal/ingest is imported here and a
+		// variable called ingest shadows the package. The same shadowing cost a
+		// build in cmd/migrate an hour earlier.
+		ingestOn = flag.Bool("ingest", os.Getenv("WG_WORKSPACE_INGEST") == "true",
+			"this deployment ingests Google Drive and Meet")
 	)
 	flag.Parse()
 
@@ -72,6 +80,24 @@ func main() {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+
+	// Nothing to keep alive if this deployment does not ingest Workspace.
+	//
+	// Exits 0 rather than failing: on a deployment that never set Drive and
+	// Meet up, the reconciler refuses an empty source list by design -- it
+	// cannot tell "never configured" from "configuration disappeared", and
+	// treating the second as the first would delete every subscription. That
+	// refusal is right for us and wrong for them, and the difference is not
+	// observable, so the deployment declares which it is.
+	//
+	// Ansible does not install the timer when this is off, so reaching here
+	// means a manual run or a leftover unit. Either way a clear line and a
+	// zero exit beats a unit in failed state that nobody can clear.
+	if !*ingestOn {
+		log.Info("Google Workspace ingestion is off for this deployment; nothing to do",
+			"hint", "set WG_WORKSPACE_INGEST=true, or -ingest, to enable it")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()

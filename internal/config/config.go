@@ -73,6 +73,10 @@ type ControlAPI struct {
 	// a question somebody has to reason about into one the logs answer, and the
 	// switch is flipped once they are quiet.
 	AuthzEnforce bool
+	// WorkspaceIngest declares whether this deployment ingests Google Drive and
+	// Meet. Off unless set, because it is the largest external setup in the
+	// system and nothing else depends on it.
+	WorkspaceIngest bool
 
 	// CellAccessAudience is the AUD of the Access application that fronts the
 	// git-credential endpoint. Accepted ONLY on that path.
@@ -159,6 +163,19 @@ func LoadControlAPI() (ControlAPI, error) {
 		// Defaulting a permission gate to ON before its data is verified is how
 		// a safety feature becomes an outage.
 		AuthzEnforce: os.Getenv("WG_AUTHZ_ENFORCE") == "true",
+
+		// Whether this deployment ingests Google Workspace at all.
+		//
+		// Off unless declared, which is the safe default for a NEW deployment:
+		// Drive and Meet ingestion needs a GCP project, domain-wide delegation
+		// and Pub/Sub, and nothing else depends on it. A deployment that has
+		// not set this up should not have a service failing every run and a
+		// monitor check red on day one.
+		//
+		// Datopian's own environments set it explicitly in
+		// infra/ansible/group_vars, so the value is recorded in Git rather than
+		// depending on this default.
+		WorkspaceIngest: os.Getenv("WG_WORKSPACE_INGEST") == "true",
 
 		CellAccessAudience:       os.Getenv("WG_CELL_ACCESS_AUD"),
 		CellHealthAccessAudience: os.Getenv("WG_CELL_HEALTH_ACCESS_AUD"),
