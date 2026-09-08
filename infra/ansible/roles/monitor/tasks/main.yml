@@ -44,15 +44,21 @@
     - Reload systemd
     - Restart the monitor timer
 
+# Tagged for the same reason as the worker's stat in control_api: the restart
+# handler guards on this, so leaving it untagged meant a `--tags code` deploy
+# left the variable undefined, the guard false, and the monitor never restarted
+# while the handler reported ok.
 - name: Check whether the monitor binary is present
   ansible.builtin.stat:
     path: "{{ monitor_binary }}"
   register: monitor_binary_stat
+  tags: [binaries, code]
 
 # Enabling a timer whose ExecStart does not exist produces a unit that fails
 # every five minutes, which is indistinguishable from a monitor reporting real
 # trouble. Better to install the units and leave the timer stopped until a binary
 # is deployed.
+
 - name: Enable the monitor timer
   ansible.builtin.systemd_service:
     name: wg-monitor.timer

@@ -326,10 +326,22 @@
     - Reload systemd
     - Restart the worker
 
+# Tagged the same as the copy above, and that is the point.
+#
+# The Restart-the-worker handler guards on this stat -- correctly, because
+# starting a unit whose ExecStart does not exist produces a restart loop that
+# looks exactly like a crashing worker. Untagged, this task did not run on a
+# `--tags code` deploy, so the variable was undefined, `| default(false)` made
+# the guard false, and the handler SKIPPED while reporting ok in 0.04s.
+#
+# The worker process on staging had therefore been running since 26 August: the
+# binary was replaced on every deploy and the process never restarted, so the
+# code that was running had no relation to the code that was deployed.
 - name: Check whether the worker binary is present
   ansible.builtin.stat:
     path: "{{ control_api_worker_binary }}"
   register: control_api_worker_stat
+  tags: [binaries, code]
 
 # Starting a unit whose ExecStart does not exist produces a restart loop that
 # looks exactly like a crashing worker.

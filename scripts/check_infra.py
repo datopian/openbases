@@ -556,6 +556,53 @@ def check_every_installed_binary_has_a_source() -> None:
                     f"every deploy while reporting ok")
 
 
+def check_restart_handlers_can_fire_on_a_tagged_deploy() -> None:
+    """A handler guarded on an untagged fact never fires on a tagged deploy.
+
+    The pattern: a copy task notifies "Restart the X", and the handler guards on
+    `X_stat.stat.exists` so it does not start a unit whose ExecStart is missing
+    -- which produces a restart loop that looks exactly like a crashing service.
+    The guard is right. What was wrong is that the stat registering that fact
+    carried no tags, so on `ansible-playbook --tags code` it did not run, the
+    variable was undefined, `| default(false)` made the guard false, and the
+    handler skipped while reporting ok in 0.04s.
+
+    The worker on staging had been running since 26 August because of it: its
+    binary was replaced on later deploys and the process never restarted, so the
+    running code had no relation to the deployed code. The monitor had the same
+    shape.
+
+    So: if a handler guards on a registered fact, the task registering it must
+    carry at least the tags of the task that notifies the handler.
+    """
+    roles = ROOT / "infra" / "ansible" / "roles"
+    for handlers in sorted(roles.glob("*/handlers/main.yml")):
+        role = handlers.parent.parent
+        tasks_dir = role / "tasks"
+        if not tasks_dir.is_dir():
+            continue
+        tasks = "".join(p.read_text() for p in sorted(tasks_dir.glob("*.yml")))
+
+        for var in set(re.findall(r"when:\s*([a-z_]+)\.stat\.exists", handlers.read_text())):
+            # The task that registers the fact, and whether it is tagged.
+            block = re.search(
+                r"- name: ([^\n]+)\n((?:(?!\n- name:).)*?register:\s*%s\b(?:(?!\n- name:).)*)" % var,
+                tasks, re.S)
+            if not block:
+                problems.append(
+                    f"{role.name}: a handler guards on {var}.stat.exists, but no task "
+                    f"registers {var}, so the guard is always false and the handler "
+                    f"never fires")
+                continue
+            if "tags:" not in block.group(2):
+                problems.append(
+                    f"{role.name}/tasks: {block.group(1)!r} registers {var}, which a "
+                    f"restart handler guards on, but carries no tags. On "
+                    f"`--tags code` it does not run, the guard is false, and the "
+                    f"service is never restarted while the handler reports ok -- the "
+                    f"deployed binary changes and the running process does not")
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -571,6 +618,7 @@ def main() -> int:
         check_every_binary_install_carries_the_code_tag,
         check_example_env_is_complete_and_not_ours,
         check_every_installed_binary_has_a_source,
+        check_restart_handlers_can_fire_on_a_tagged_deploy,
     ):
         check()
 
