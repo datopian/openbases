@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/beads"
-	"github.com/datopian/workgraph/internal/githubapp"
-	"github.com/datopian/workgraph/internal/knowledge"
+	"github.com/datopian/openbases/internal/beads"
+	"github.com/datopian/openbases/internal/githubapp"
+	"github.com/datopian/openbases/internal/knowledge"
 )
 
 // GitHub is the part of the App client the record publisher needs.

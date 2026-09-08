@@ -37,11 +37,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/datopian/workgraph/internal/check"
-	"github.com/datopian/workgraph/internal/landing"
-	"github.com/datopian/workgraph/internal/runner"
-	"github.com/datopian/workgraph/internal/version"
-	"github.com/datopian/workgraph/internal/work"
+	"github.com/datopian/openbases/internal/check"
+	"github.com/datopian/openbases/internal/landing"
+	"github.com/datopian/openbases/internal/runner"
+	"github.com/datopian/openbases/internal/version"
+	"github.com/datopian/openbases/internal/work"
 )
 
 func main() {

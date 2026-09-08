@@ -10,19 +10,19 @@ import (
 // mildly hostile.
 func TestParseFullNameAcceptsWhatPeoplePaste(t *testing.T) {
 	for _, in := range []string{
-		"datopian/workgraph",
-		"  datopian/workgraph  ",
-		"https://github.com/datopian/workgraph",
-		"https://github.com/datopian/workgraph.git",
-		"git@github.com:datopian/workgraph.git",
-		"datopian/workgraph/",
+		"datopian/openbases",
+		"  datopian/openbases  ",
+		"https://github.com/datopian/openbases",
+		"https://github.com/datopian/openbases.git",
+		"git@github.com:datopian/openbases.git",
+		"datopian/openbases/",
 	} {
 		owner, name, err := ParseFullName(in)
 		if err != nil {
 			t.Errorf("%q: %v", in, err)
 			continue
 		}
-		if owner != "datopian" || name != "workgraph" {
+		if owner != "datopian" || name != "openbases" {
 			t.Errorf("%q parsed to %q/%q", in, owner, name)
 		}
 	}
@@ -30,8 +30,8 @@ func TestParseFullNameAcceptsWhatPeoplePaste(t *testing.T) {
 
 func TestParseFullNameRefusesWhatIsNotARepository(t *testing.T) {
 	for _, in := range []string{
-		"", "workgraph", "datopian", "/", "datopian/", "/workgraph",
-		"datopian/work graph", "a/b/c", "-bad/name", "datopian/.hidden",
+		"", "openbases", "datopian", "/", "datopian/", "/openbases",
+		"datopian/open bases", "a/b/c", "-bad/name", "datopian/.hidden",
 	} {
 		if _, _, err := ParseFullName(in); err == nil {
 			t.Errorf("%q was accepted as a repository", in)
@@ -47,7 +47,7 @@ func TestParseFullNameRefusesWhatIsNotARepository(t *testing.T) {
 func TestAttachRefusesADuplicateInTheSameRequest(t *testing.T) {
 	s := &Store{}
 	_, err := s.AttachRepositories(nil, "u", "p",
-		[]string{"datopian/workgraph", "https://github.com/datopian/workgraph"})
+		[]string{"datopian/openbases", "https://github.com/datopian/openbases"})
 	if err == nil {
 		t.Fatal("the same repository listed twice should be refused")
 	}

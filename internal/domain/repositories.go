@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // Attaching repositories to a project (wg-m6p).
@@ -29,7 +29,7 @@ type Repository struct {
 // namePattern is GitHub's own rule for an owner or repository name: letters,
 // digits, and the three punctuation characters, no leading separator.
 //
-// Enforced here so "datopian/workgraph.git" or a pasted URL is refused with a
+// Enforced here so "datopian/openbases.git" or a pasted URL is refused with a
 // message, rather than stored and then failing later against the API with
 // something less obvious.
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)

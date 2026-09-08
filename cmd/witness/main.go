@@ -31,7 +31,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/datopian/workgraph/internal/witness"
+	"github.com/datopian/openbases/internal/witness"
 )
 
 func main() {

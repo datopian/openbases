@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // Prefix marks a Workgraph personal token.

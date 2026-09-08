@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // The device authorization grant (RFC 8628), for a client that cannot hold a

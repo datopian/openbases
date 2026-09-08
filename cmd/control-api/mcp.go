@@ -16,10 +16,10 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/datopian/workgraph/internal/authn"
-	"github.com/datopian/workgraph/internal/config"
-	wgmcp "github.com/datopian/workgraph/internal/mcp"
-	"github.com/datopian/workgraph/internal/version"
+	"github.com/datopian/openbases/internal/authn"
+	"github.com/datopian/openbases/internal/config"
+	wgmcp "github.com/datopian/openbases/internal/mcp"
+	"github.com/datopian/openbases/internal/version"
 )
 
 // The remote MCP server (wg-p4h.11).

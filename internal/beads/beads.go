@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/datopian/workgraph/internal/domain"
+	"github.com/datopian/openbases/internal/domain"
 )
 
 // ErrNotImplemented marks an operation that WP-D2 has not yet delivered.

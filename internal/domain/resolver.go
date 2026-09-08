@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/datopian/workgraph/internal/authn"
+	"github.com/datopian/openbases/internal/authn"
 )
 
 // Resolver maps an authenticated Cloudflare Access identity to an application

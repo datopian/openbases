@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // Refusal is a structured refusal.

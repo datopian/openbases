@@ -31,8 +31,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/datopian/workgraph/internal/budget"
-	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/openbases/internal/budget"
+	"github.com/datopian/openbases/internal/config"
 )
 
 func main() {

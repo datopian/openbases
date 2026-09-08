@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // WorkspaceEvent is one Google Workspace delivery, as a reader sees it.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/workspace"
+	"github.com/datopian/openbases/internal/workspace"
 )
 
 // The checksum is the revision, so the same transcript read twice must produce

@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/datopian/workgraph/internal/authz"
+	"github.com/datopian/openbases/internal/authz"
 )
 
 // Event is one entry, in the shape the API returns.

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/datopian/workgraph/internal/attention"
-	"github.com/datopian/workgraph/internal/authn"
-	"github.com/datopian/workgraph/internal/idempotency"
+	"github.com/datopian/openbases/internal/attention"
+	"github.com/datopian/openbases/internal/authn"
+	"github.com/datopian/openbases/internal/idempotency"
 )
 
 // The write surface over domain code that already existed (wg-p4h.4).

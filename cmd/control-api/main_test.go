@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/authn"
-	"github.com/datopian/workgraph/internal/config"
+	"github.com/datopian/openbases/internal/authn"
+	"github.com/datopian/openbases/internal/config"
 )
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

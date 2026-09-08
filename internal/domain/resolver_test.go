@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/authn"
+	"github.com/datopian/openbases/internal/authn"
 )
 
 // A service token must never acquire a user record. If it did, a machine would

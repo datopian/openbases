@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/datopian/workgraph/internal/authz"
-	"github.com/datopian/workgraph/internal/domain"
+	"github.com/datopian/openbases/internal/authz"
+	"github.com/datopian/openbases/internal/domain"
 )
 
 // ErrNoSuchDatabase reports a Beads database that is not registered.

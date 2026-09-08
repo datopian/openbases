@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/datopian/workgraph/internal/domain"
+	"github.com/datopian/openbases/internal/domain"
 )
 
 func ref(db, id string) domain.WorkRef {

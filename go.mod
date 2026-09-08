@@ -1,4 +1,4 @@
-module github.com/datopian/workgraph
+module github.com/datopian/openbases
 
 go 1.26
 
