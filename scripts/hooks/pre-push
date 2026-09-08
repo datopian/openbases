@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Refuse a direct push to main.
+# Refuse a direct push to main, and refuse to push new client or operational
+# data to a public repository.
 #
 # Compensating control for ADR-0016: branch protection is unavailable on the
 # current GitHub plan. This hook stops the accidental case, which is the common
@@ -22,4 +23,22 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
     exit 1
   fi
 done
+
+# The repository is public. gitleaks and GitHub push protection look for
+# credentials; a client's name and a Meet space code are not credentials, and
+# once pushed they are public and cached whatever happens next. CI checks this
+# too and CI is the control that counts -- this is here because a local refusal
+# costs 0.2s and a public one cannot be taken back.
+root="$(git rev-parse --show-toplevel)"
+if [ -f "$root/scripts/check_disclosure.py" ]; then
+  if ! python3 "$root/scripts/check_disclosure.py"; then
+    echo >&2
+    echo "refusing to push: see the finding above." >&2
+    echo "Business records belong in the deployment's database, not in a" >&2
+    echo "migration; identifiers belong in event_sources or in deployment" >&2
+    echo "configuration." >&2
+    exit 1
+  fi
+fi
+
 exit 0
