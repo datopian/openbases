@@ -65,6 +65,12 @@ type Cell struct {
 	MaxConcurrentAgents int    `json:"max_concurrent_agents"`
 	CPUQuotaPercent     int    `json:"cpu_quota_percent"`
 	MemoryLimitMB       int    `json:"memory_limit_mb"`
+	// Shared is whether this cell may hold more than one project.
+	//
+	// Infrastructure, so it arrives in the document with the cell rather than
+	// being inferred: a shared cell is where a project goes when nobody names
+	// one, and which cells exist is a deploy-time fact.
+	Shared bool `json:"shared"`
 }
 
 // Project attaches a project to the cell its work runs in.

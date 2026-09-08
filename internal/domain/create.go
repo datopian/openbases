@@ -240,9 +240,38 @@ func optionalIDBySlug(ctx context.Context, tx *sql.Tx, table, orgID, slug string
 
 // cellIDBySlug resolves an execution cell, which is unique globally rather than
 // per organisation.
+//
+// An empty slug takes the deployment's shared cell. Before this, it took NULL:
+// a project created without naming a cell had nowhere to run, dispatch found no
+// rig, and the work sat there. That is what happened to msf -- eight beads filed
+// and undispatchable, because the field a caller is not required to fill decided
+// whether the project worked at all.
+//
+// The alternative was to require a cell from every caller. That pushes an
+// infrastructure decision onto whoever is creating a project, and the honest
+// answer for internal and open-source work is "the shared one" almost every
+// time. Restricted projects are already refused above unless they name their
+// own, which is the case where the decision genuinely belongs to a person.
 func cellIDBySlug(ctx context.Context, tx *sql.Tx, slug string) (any, error) {
 	if slug == "" {
-		return nil, nil
+		var def string
+		if err := tx.QueryRowContext(ctx, `SELECT system_default_cell()`).Scan(&def); err != nil {
+			return nil, err
+		}
+		if def == "" {
+			// No shared cell, or more than one, so there is nothing to default
+			// to. Naming the candidates is the difference between a caller
+			// fixing it in one step and a caller guessing.
+			var options string
+			_ = tx.QueryRowContext(ctx,
+				`SELECT coalesce(string_agg(slug, ', ' ORDER BY slug), '(none)')
+				   FROM execution_cells`).Scan(&options)
+			return nil, fmt.Errorf("%w: this deployment has no single shared execution cell, "+
+				"so a project must name one. Available cells: %s. A shared cell is "+
+				"declared in the deployment's execution_cells configuration",
+				ErrInvalid, options)
+		}
+		slug = def
 	}
 	var id string
 	err := tx.QueryRowContext(ctx,

@@ -12,9 +12,10 @@
 # cell gets its own Linux user, home and resource limits and cannot read
 # another cell's files or credentials.
 #
-# Ours are named for the client whose work they isolate (client-nged,
-# client-cdt). Yours should be too, and a deployment that only does open
-# source work needs exactly one.
+# Ours are named for the engagement whose work they isolate. Yours should be
+# too, and a deployment that only does open-source work needs exactly one --
+# mark that one `shared: true` so projects created through the API land in it
+# without anybody editing this file.
 #
 # The limits are ceilings, not reservations. Sizing them above the node's real
 # memory is how a cell gets OOM-killed mid-run: `npm ci` on a large repository

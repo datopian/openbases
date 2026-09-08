@@ -1,58 +1,40 @@
 ---
-# Which project's work runs in which execution cell (wg-38w).
+# Which projects run in which cell is NOT here any more. It is data.
 #
-# Policy, not infrastructure, which is why it lives beside the inventory rather
-# than in a migration: a migration cannot know that staging has a cell called
-# client-nged, and the assignment can differ between environments.
+# This file used to carry a project-to-cell table, with client names, in a
+# repository that is now public. Two things were wrong with that, and they are
+# different problems:
 #
-# The assignments come from docs/pilot/registry.md, which describes them as
-# "proposed rather than specified, and accepted as a starting point".
+#   The names. Client project slugs and their cells were configuration in git,
+#   so who Datopian works with was in the source tree. Client identifiers are
+#   data about the real world and belong in the deployment's database.
 #
-# datopian-products is deliberately ABSENT. It has no cell of its own, and the
-# obvious move — put it in the oss cell alongside portaljs-oss — has a cost that
-# is easy to miss: a cell hosting two projects cannot attribute its spend to
-# either, because system_record_usage resolves a cell tag to a project only when
-# exactly one matches and refuses to guess otherwise. Leaving it unassigned says
-# "not decided yet", which is true, instead of quietly making the oss cell's
-# spend unattributable.
-project_cell_assignments:
-  - project: portaljs-oss
-    cell: oss
-
-  # The tightening 0009 deferred, in its own words: "the schema refuses a
-  # restricted project without one, so nged is created as confidential and
-  # tightened to restricted when its cell exists". This is when.
-  - project: nged
-    cell: client-nged
-    visibility: restricted
-
-  # CDT, and the same two-step for the same reason: 0050 creates it as
-  # confidential because restricted_requires_cell refuses a restricted project
-  # with no cell, and this is the line that gives it one and tightens it.
-  - project: cdt
-    cell: client-cdt
-    visibility: restricted
-
-  # MSF runs in the shared oss cell, decided 2026-09-08, and stays there.
-  #
-  # It sits in the client portfolio, so its own cell -- client-msf, like the two
-  # above -- was the first answer. The node cannot host it: per-cell memory is
-  # derived from capacity, and a fourth cell takes the oss cell from 1771 MB to
-  # 1259 MB idle, or 886 MB once msf carries load. PortalJS `npm ci` was
-  # OOM-killed at 932 MB and 1771 MB is what was chosen to fit it, so a fourth
-  # working cell breaks the cell that already has work in it. Measured on the
-  # node rather than estimated.
-  #
-  # NO visibility line, deliberately. The two above tighten to restricted
-  # because their own cell is what backs the claim. Sharing a cell with
-  # open-source work does not, and marking msf restricted here would assert an
-  # isolation that is not there -- worse than leaving it internal, because the
-  # classification is what other decisions are made from.
-  #
-  # The cost, stated rather than discovered: oss now hosts twelve projects, so
-  # system_record_usage cannot attribute its spend by cell -- it refuses to
-  # guess when more than one project matches. Per-BEAD attribution is
-  # unaffected, which is what the cost import actually uses; the cell tag was
-  # already unattributable with eleven.
-  - project: msf
-    cell: oss
+#   The mechanism. Assigning a project to a cell required an Ansible run. That
+#   makes starting a project an infrastructure change, which it is not: it
+#   happens on a Tuesday afternoon, from the interface or from MCP, by somebody
+#   who should not need a deploy or a person who can run one. A project created
+#   through the API got NO cell, could not be dispatched, and the fix was a
+#   commit -- which is how eight beads in a newly created project sat
+#   undispatchable.
+#
+# The split that replaced it:
+#
+#   Infrastructure, and still in git: which cells EXIST, their limits, their
+#   trust domains, and which one is `shared` -- see group_vars/execution.yml. A
+#   cell is a Linux user with cgroup limits and a credential profile (ADR-0002);
+#   creating one means touching the machine.
+#
+#   Data, and only in the database: which project runs in which cell. Set when
+#   the project is created, defaulted to the shared cell by
+#   system_default_cell(), and changeable afterwards through the API.
+#
+# The assignments that used to be listed here are already applied in every
+# environment, and nothing unassigns: system_attach_project_to_cell only ever
+# sets. Removing them is therefore inert -- it does not detach a project -- and
+# the DB has been the source of truth all along. This file was a seeder that
+# outlived its job.
+#
+# The registry document still carries the `projects` array, so an environment
+# that genuinely wants to declare an assignment at deploy time can. Nothing
+# does, and a new one should not.
+project_cell_assignments: []

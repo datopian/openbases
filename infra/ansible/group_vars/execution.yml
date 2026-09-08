@@ -9,7 +9,16 @@ cells_root: /srv/cells
 # own Linux user, home, and resource limits, and cannot read another cell's
 # files or credentials.
 execution_cells:
+  # shared: this cell may hold more than one project, and is where work goes
+  # when nobody names a cell. A project created through the API or MCP takes it
+  # by default, which is what makes "create a project and dispatch work"
+  # possible without an Ansible run.
+  #
+  # Exactly one cell should be shared. system_default_cell() returns nothing
+  # when two are, rather than picking, because a project quietly placed in the
+  # wrong trust domain is the failure ADR-0002 exists to prevent.
   - name: oss
+    shared: true
     trust_domain: oss
     cpu_quota_percent: 200
     memory_limit_mb: 8192

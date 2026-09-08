@@ -32,6 +32,13 @@ TESTS = ROOT / "test" / "integration"
 # Tests that legitimately run as the owner, with the reason. An entry here is a
 # claim that the file asserts nothing about who may READ a protected table.
 OWNER_ONLY = {
+    "a_project_finds_its_cell.sql":
+        "asserts what the cell registration functions wrote and what "
+        "system_default_cell resolves to, including that it refuses to guess "
+        "between two shared cells. Every write goes through a SECURITY DEFINER "
+        "function that runs with no app user by design, and the reads verify "
+        "those writes rather than who may see them. Who may read "
+        "execution_cells is covered by execution_registry.sql.",
     "fresh_install_has_no_tenant.sql":
         "asserts that a `migrate -fresh` install is EMPTY, that the permission "
         "model (roles, role_permissions) survived the skip, and that the "
