@@ -310,27 +310,18 @@ versions.lock      the pinned, checksummed toolchain: bd, dolt, gt, opencode, cl
 
 ## Contributing
 
-Read [`AGENTS.md`](AGENTS.md) before your first change. The short version: every change is attached to
-a bead; one bead, one branch `bead/<id>-<slug>`, one pull request; close a bead with evidence, not an
-opinion; never commit a secret; never publish unreviewed model extraction; never widen a
-classification; nothing approves itself. Much of this repository was written by agents running inside
-it, and every rule above exists because one of them found the gap.
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) before your first change. The
+short version: every change is attached to a bead; one bead, one branch `bead/<id>-<slug>`, one pull
+request; close a bead with evidence, not an opinion; never commit a secret; never publish unreviewed
+model extraction; never widen a classification; nothing approves itself. Much of this repository was
+written by agents running inside it, and every rule above exists because one of them found the gap.
 
 What we care about in review, in this order: does it actually work and how do you know; is the reasoning
 in the repository; is it honest about what it does not do.
 
-### Three files this repository does not have yet
+Security issues: [`SECURITY.md`](SECURITY.md) — use GitHub's private vulnerability reporting. There is
+deliberately no `security@` alias quoted, because an address nobody monitors looks like a channel and
+silently is not.
 
-Named here rather than linked, because a README that links to files that do not exist is the first
-thing a newcomer finds broken:
-
-- **`LICENSE`** — there is none, so default copyright applies and nobody has been granted rights to
-  use, copy or modify this. Calling the system "open" while shipping no licence is a contradiction to
-  close before any public release. The intent is Apache-2.0; adding it is Datopian's decision, not
-  something to infer here.
-- **`SECURITY.md`** — no disclosure address is published. Until there is one, report security issues
-  privately to Datopian directly. [`docs/go-live/threat-model.md`](docs/go-live/threat-model.md)
-  records the accepted risks, which is not the same as telling somebody where to send a finding.
-- **`CONTRIBUTING.md`** — the rules above and [`AGENTS.md`](AGENTS.md) are what exists. `AGENTS.md` is
-  written for agents and read by people, which has worked so far and is not an argument that it should
-  stay that way.
+Licence: [Apache-2.0](LICENSE), © 2026 Datopian Limited. The licence text is the canonical one from
+apache.org with only the appendix's copyright placeholder filled in.
