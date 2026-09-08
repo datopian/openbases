@@ -77,25 +77,44 @@ create the real client projects as schema data, so the names ship in the source 
 ('nged', 'NGED', 'Restricted client engagement', 'client', 'confidential', ...
 ```
 
-- **Real client identifiers, by area.** `nged`/`NGED` in 36 files (17 code and tests, 10 migrations,
+- **Real client identifiers, by area \u2014 DECIDED 2026-09-08: publishable.** Datopian names clients in
+  its own blog posts, so the repository revealing the same names discloses nothing new. No action.
+  Recorded here so the question is not reopened by the next reader of this file.
+
+  Detail: `nged`/`NGED` in 36 files (17 code and tests, 10 migrations,
   6 infra, 3 docs), `cdt`/`CDT` in 32, `roseville` in 12, `jackson` in 9 — as project slugs, cell
   names (`client-nged`, `client-cdt` in `infra/ansible/group_vars/`), test fixtures and ADR prose.
   Publishing reveals who Datopian works with, and in places what the work is. Client contracts may
   have something to say about that.
-- **Live Google identifiers, which are more than names.** Two Meet space codes and three
-  shared-drive IDs (`0ACuIgKcIt7SPUk9PVA`, `0ADdEMMAO5SMVUk9PVA`, `0AEPg8vnj02IcUk9PVA`). The two
-  Meet codes are not equivalent:
-  - `tfy-qcsa-twb` (`0045_seed_event_sources.sql`) is the alias of the **recurring** internal
-    Innovation Team Sync, Monday to Thursday — a meeting that still happens. A published join code
-    for a live recurring call invites join attempts and disruption, even when every attempt is
-    refused.
-  - `rtd-siqf-aup` (`0048`, `0050`) is the one-off CDT client kick-off of 2026-09-01, now past. The
-    same migration records in prose that the engagement is **pre-contract, with commercial terms**,
-    which is the more sensitive half of that entry.
+- **Live Google identifiers were in the source, and are now out of it.** The seed migrations carry
+  two Meet space codes and three shared-drive IDs. None is a credential and Workspace enforces
+  membership on every one, so publishing them grants nobody access \u2014 but they are operational, and
+  they were also duplicated into live source that had no use for them.
 
-  None of these are credentials, and Workspace enforces membership on every one, so publishing them
-  grants nobody access. Of everything in this section, the recurring code is the part worth deciding
-  first.
+  The literal values are deliberately NOT reproduced in this document. This file is published too,
+  and an audit that lists what should not be published defeats itself. They are in
+  `0045_seed_event_sources.sql`, `0048_seed_cdt_kickoff_space.sql`, `0050`, `0051`.
+
+  **Removed from live source (this change).** `internal/workspace/sources.json` is `go:embed`-ed into
+  the binary, so the drive IDs and the Meet space code shipped in the compiled artifact. Nothing read
+  them: production calls only `VerifiedWants()` (`cmd/workspaced/main.go:99`), which returns event
+  types, and the addressable identifiers come from the `event_sources` table. They are gone from that
+  file, from the `VerifiedSources` struct, from the `lifecycle` test fixtures (synthetic ids assert a
+  URL shape just as well) and from a runbook example.
+
+  **Still in four applied migrations, and that is settled.** `cmd/migrate/main.go:99` refuses any
+  deploy whose applied migration no longer matches its recorded SHA-256 \u2014 "an applied migration must
+  never be edited \u2014 write a new one". Those four cannot be scrubbed without breaking every existing
+  database, which puts them in the same bucket as git history: a record of what happened.
+
+  **The recurring Meet code will be rotated instead**, which is the better fix anyway: rotation makes
+  every remaining copy stale by construction, including the frozen migrations, without editing
+  anything. The other code is a one-off client kick-off already in the past. Drive IDs cannot be
+  rotated, but a drive ID grants nothing without membership.
+
+  `0048` also records in prose that the CDT engagement was **pre-contract, with commercial terms**.
+  That sentence, not the space code, is the sensitive half of that entry, and it is in a frozen
+  migration.
 - **Nineteen employee email addresses** appear in seeds, tests and runbooks, and eleven surname
   references (`Demenech`, `Okungbowa`, `Popova`, `Rubaj`) name who is accountable for which client.
 - **Infrastructure hostnames** (`work-staging.openbases.com`, `ssh-staging…`, `ssh-exec-staging…`) are
@@ -119,8 +138,10 @@ way silently searches for the whole string and reports zero.
 **No credential, key, token or password was found in any of the 581 commits.** Nothing here requires a
 rotation or a history rewrite on security grounds.
 
-What remains before publishing is not a security question: whether client names, the Google Meet and
-shared-drive identifiers, and employee addresses may be published, which is Datopian's to answer.
+What remained was not a security question, and is now largely answered. Client names are publishable
+(Datopian names clients publicly anyway). The Google identifiers are out of live source, frozen in
+four migrations, and the recurring Meet code is being rotated, which retires every remaining copy.
+Open: the nineteen employee email addresses, and one evidence file discussed below.
 
 ## Reproducing this
 
@@ -136,3 +157,11 @@ Counting a short identifier needs `-w`, and both cases, against tracked files on
 ```bash
 { git grep -lw nged; git grep -lw NGED; } | sort -u | wc -l   # 36, not the 127 a substring grep claims
 ```
+
+## One file left as it is, on purpose
+
+`docs/go-live/evidence/2026-08-31-workspace-subscriptions-staging.json` names the CDT kick-off space
+in its record of the 2026-09-01 proof. It was left untouched. It is dated evidence that a
+subscription discovered a real meeting without being told about it, and editing an evidence artefact
+to look better in public is how evidence stops being worth keeping. The meeting is past and the code
+is spent, so there is nothing live in it.

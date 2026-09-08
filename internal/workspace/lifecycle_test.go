@@ -201,11 +201,11 @@ func TestADisabledSourceWithNoSubscriptionIsQuiet(t *testing.T) {
 }
 
 func TestTargetResourceIsBuiltFromTheSource(t *testing.T) {
-	got, err := Source{Kind: KindDrive, ExternalID: "0ACuIgKcIt7SPUk9PVA"}.TargetResource()
+	got, err := Source{Kind: KindDrive, ExternalID: "0ABCdefGHIjklMNOp"}.TargetResource()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "//drive.googleapis.com/drives/0ACuIgKcIt7SPUk9PVA" {
+	if got != "//drive.googleapis.com/drives/0ABCdefGHIjklMNOp" {
 		t.Errorf("target = %q", got)
 	}
 	if _, err := (Source{Kind: KindDrive}).TargetResource(); err == nil {
@@ -217,20 +217,20 @@ func TestTargetResourceIsBuiltFromTheSource(t *testing.T) {
 }
 
 // A Meet target needs the spaces/ prefix and the stable space id. The typeable
-// meeting code is an alias — tfy-qcsa-twb resolves to spaces/FS4Sj-9MIY0B — and
+// meeting code is an alias — abc-defg-hij resolves to spaces/Sp4ceIdExample — and
 // targeting an alias is the same trap as matching a shared drive by name.
 func TestAMeetTargetUsesTheSpaceResourceName(t *testing.T) {
-	got, err := Source{Kind: KindMeet, ExternalID: "FS4Sj-9MIY0B"}.TargetResource()
+	got, err := Source{Kind: KindMeet, ExternalID: "Sp4ceIdExample"}.TargetResource()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "//meet.googleapis.com/spaces/FS4Sj-9MIY0B" {
+	if got != "//meet.googleapis.com/spaces/Sp4ceIdExample" {
 		t.Errorf("target = %q", got)
 	}
 	// Idempotent when the id already carries the prefix, so a source recorded
 	// either way produces one target rather than spaces/spaces/...
-	got, _ = Source{Kind: KindMeet, ExternalID: "spaces/FS4Sj-9MIY0B"}.TargetResource()
-	if got != "//meet.googleapis.com/spaces/FS4Sj-9MIY0B" {
+	got, _ = Source{Kind: KindMeet, ExternalID: "spaces/Sp4ceIdExample"}.TargetResource()
+	if got != "//meet.googleapis.com/spaces/Sp4ceIdExample" {
 		t.Errorf("prefixed id gave %q", got)
 	}
 }

@@ -63,7 +63,7 @@ func (s Source) TargetResource() (string, error) {
 	case KindMeet:
 		// spaces/ is part of the resource name, and the stable server-generated
 		// id belongs here rather than the typeable meeting code. The code is an
-		// alias — tfy-qcsa-twb resolves to spaces/FS4Sj-9MIY0B — and an alias is
+		// alias — abc-defg-hij resolves to spaces/Sp4ceIdExample — and an alias is
 		// the same trap as matching a shared drive by name.
 		return "//meet.googleapis.com/spaces/" + strings.TrimPrefix(id, "spaces/"), nil
 	default:

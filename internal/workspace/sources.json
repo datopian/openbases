@@ -4,18 +4,25 @@
     "each one inherits (ADR-0013).",
     "",
     "Starting set, chosen 2026-08-28: the three drives every employee can already",
-    "IDs enumerated 2026-08-30 via drives.list under domain-wide delegation. Matching",
-    "by NAME would have been ambiguous and this is the evidence: the tenant has ten",
-    "shared drives and three of them begin with \"BizDev\" \u2014 BizDev, BizDev DataHub and",
-    "\"BizDev <-> Ops\". An ID is what the API takes and the only thing a rename does",
-    "not move.",
     "read. That is deliberate as a first cut \u2014 a drive whose membership is the",
     "whole company cannot leak to the whole company, so the isolation tests can",
     "come before the drives that need them rather than after.",
     "",
-    "drive.readonly scope we already need, so the connector reads the IDs itself",
-    "and records them here. Names are for people; IDs are what the API takes and",
-    "the only thing stable across a rename.",
+    "NO ADDRESSABLE IDENTIFIER LIVES IN THIS FILE, deliberately. The drive and",
+    "space ids are in the event_sources table, seeded by migration",
+    "0045_seed_event_sources.sql, and that is what the connector and the",
+    "reconciler read. They were enumerated 2026-08-30 via drives.list under",
+    "domain-wide delegation, because matching by NAME would have been ambiguous:",
+    "the tenant has ten shared drives and three of them begin with \"BizDev\" \u2014",
+    "BizDev, BizDev DataHub and \"BizDev <-> Ops\". An id is what the API takes and",
+    "the only thing a rename does not move. The names below are labels for",
+    "whoever reads this file, not how anything is matched.",
+    "",
+    "This file carries the subscription SHAPE and the visibility policy. It is",
+    "compiled into the binary (go:embed) and the repository is public, which is",
+    "no place for live meeting and drive identifiers \u2014 they grant nothing",
+    "without Workspace membership, but they are operational and they need not be",
+    "here to do their job.",
     "",
     "Adding a drive with narrower membership means adding it with the visibility",
     "its membership implies \u2014 NOT internal. ADR-0013 makes every derived artefact",
@@ -26,19 +33,16 @@
   "drives": [
     {
       "name": "All",
-      "id": "0ACuIgKcIt7SPUk9PVA",
       "visibility": "internal",
       "why": "readable by everyone in the company"
     },
     {
       "name": "BizDev",
-      "id": "0AEPg8vnj02IcUk9PVA",
       "visibility": "internal",
       "why": "readable by everyone in the company"
     },
     {
       "name": "Delivery",
-      "id": "0ADdEMMAO5SMVUk9PVA",
       "visibility": "internal",
       "why": "readable by everyone in the company"
     }
@@ -96,17 +100,15 @@
       "product. A client-confidential meeting would need its own visibility and",
       "would not belong in the same registry entry (ADR-0013).",
       "",
-      "space_id is what the subscription targets. The code above is an alias that",
-      "resolves to it (spaces/FS4Sj-9MIY0B), and an alias is the same trap as a drive",
-      "name: typeable, human, and not what the API is stable on."
+      "The space itself is identified in event_sources (migration 0045), not here.",
+      "A typeable meeting code is only an alias for it, and an alias is the same",
+      "trap as a drive name: human, rotatable, and not what the API is stable on."
     ],
-    "space_code": "tfy-qcsa-twb",
     "display_name": "Innovation Team Sync",
     "visibility": "internal",
     "cadence": "Mon-Thu, sometimes skipped",
     "purpose": "DataHub.io product",
     "transcription": "on by default",
-    "space_id": "FS4Sj-9MIY0B",
     "subscription": {
       "_doc": [
         "Verified by probing on 2026-08-30. transcript.v2.file and recording.v2.file",
@@ -127,7 +129,7 @@
         "google.workspace.meet.conference.v2.ended",
         "google.workspace.meet.transcript.v2.ended"
       ],
-      "verified": "2026-08-30, validateOnly against spaces/FS4Sj-9MIY0B"
+      "verified": "2026-08-30, validateOnly against the registered space"
     }
   }
 }
