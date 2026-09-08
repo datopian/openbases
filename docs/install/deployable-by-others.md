@@ -99,7 +99,42 @@ tenant table is empty.** Without it, the next seed migration silently reintroduc
 nobody notices until an outside deployment does. `scripts/check_disclosure.py` already refuses a
 *new* seeding migration; this closes the same gap from the other end, against what is already there.
 
-### Stage 2 — creating the tenant
+### Stage 2 — creating the tenant — **DONE**
+
+Delivered 2026-09-08. `wg-init` (`cmd/init`, cross-compiled by `make build-linux`) creates the
+organisation, the first administrator and their `organisation_admin` grant:
+
+```bash
+wg-init -org acme -org-name "Acme Ltd" \
+        -admin-email ops@acme.example -admin-name "Dana Ops"
+```
+
+It runs at install time on a host with database access, like `wg-registry`, and writes through
+`system_bootstrap_organisation` (migration `0091`) — SECURITY DEFINER, because at bootstrap there is
+no app user for RLS to check, by definition. Superuser would also work and is worse: it would put a
+second unconstrained write path into the install story.
+
+Three properties worth stating:
+
+- **It refuses a second organisation.** One company per deployment is the documented stance, and a
+  bootstrap that could quietly add a tenant would contradict it.
+- **It is idempotent.** A repeat run reports `already_initialised` and changes nothing. A deploy-time
+  tool people are afraid to run twice is one they run once, wrongly, and then patch by hand.
+- **It creates no login identity, and none can be created.** A Cloudflare Access subject is issued by
+  the provider on first sign-in and linked to a user by email address then. So the address given here
+  has to be the one the provider asserts — otherwise the administrator is refused and the deployment
+  has nobody who can fix it. The tool says this on every successful run, and CI asserts that it does.
+
+`granted_by` on the bootstrap grant is NULL, deliberately: nobody granted it, the install did.
+Naming the new administrator as their own granter would write the thing `AGENTS.md` rule 9 forbids
+into the audit trail on day one.
+
+Flags rather than prompts, which is a deliberate narrowing of what this document originally promised.
+This step sits in an install script beside the migration, and a tool that stops to ask cannot run
+unattended; an incomplete invocation refuses and names the missing flag.
+
+The original text follows.
+
 
 With no seed, a fresh install has no organisation and nobody can sign in. `wg init` should take an
 organisation name and a first administrator, create the org, the user and the `organisation_admin`

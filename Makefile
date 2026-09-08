@@ -95,6 +95,11 @@ build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 		-o $(BIN)/linux-amd64/costimport ./cmd/costimport
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/registry ./cmd/registry
+	@# wg-init runs once at install time, next to migrate, on a host with
+	@# database access. It has to be cross-compiled with the rest or the one
+	@# command an outside deployment needs first is the one not shipped.
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
+		-o $(BIN)/linux-amd64/init ./cmd/init
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/budget ./cmd/budget
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
@@ -115,7 +120,7 @@ build-linux: ## Cross-compile the node binaries for deployment (linux/amd64)
 	@# while reporting success.
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -ldflags "$(NODE_LDFLAGS)" \
 		-o $(BIN)/linux-amd64/migrate ./cmd/migrate
-	@echo "built: $(BIN)/linux-amd64/{witness,monitor,worker,control-api,reconcile,costimport,registry,budget,runner,dispatcher,work,workspaced,wg,migrate}"
+	@echo "built: $(BIN)/linux-amd64/{witness,monitor,worker,control-api,reconcile,costimport,registry,init,budget,runner,dispatcher,work,workspaced,wg,migrate}"
 
 verify-versions: ## Check installed gt/bd/dolt against versions.lock
 	@bash scripts/verify_versions.sh

@@ -21,6 +21,7 @@ control_api_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/con
 budget_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/budget'], errors='ignore') | default('', true) }}"
 work_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/work'], errors='ignore') | default('', true) }}"
 migrate_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/migrate'], errors='ignore') | default('', true) }}"
+init_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/init'], errors='ignore') | default('', true) }}"
 monitor_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/monitor'], errors='ignore') | default('', true) }}"
 costimport_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/costimport'], errors='ignore') | default('', true) }}"
 registry_local_binary: "{{ lookup('first_found', [workgraph_build_dir ~ '/registry'], errors='ignore') | default('', true) }}"

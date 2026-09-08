@@ -193,6 +193,47 @@ jobs:
           fi
           echo "refused, as it must"
 
+      # Stage 2: -fresh leaves nobody, and nobody can sign in, so the install is
+      # not finished until a first organisation and administrator exist. This
+      # runs the real tool against the database the steps above just installed.
+      - name: wg-init creates the first organisation and administrator
+        run: |
+          set -euo pipefail
+          out="$(go run ./cmd/init \
+            -dsn "postgres://postgres:ci@localhost:5432/openbases_fresh?sslmode=disable" \
+            -org acme -org-name 'Acme Ltd' \
+            -admin-email ops@acme.example -admin-name 'Dana Ops')"
+          echo "$out"
+          grep -q 'created organisation' <<<"$out"
+          # The next step is the part nobody can guess: no login identity is
+          # created and none can be. If that stops being said, an installer
+          # hands over a deployment whose administrator cannot sign in.
+          grep -q 'first sign-in' <<<"$out"
+
+      # Re-running an install step must be free. A deploy-time tool people are
+      # afraid to run twice is one they run once, wrongly, and then patch by
+      # hand.
+      - name: wg-init is idempotent
+        run: |
+          set -euo pipefail
+          out="$(go run ./cmd/init \
+            -dsn "postgres://postgres:ci@localhost:5432/openbases_fresh?sslmode=disable" \
+            -org acme -org-name 'Acme Ltd' \
+            -admin-email ops@acme.example -admin-name 'Dana Ops')"
+          echo "$out"
+          grep -q 'already initialised' <<<"$out"
+          # `grep -qv` would be wrong here: it inverts LINE selection, so it
+          # succeeds whenever any single line lacks the string, which is always.
+          # Negate the command instead.
+          ! grep -q 'created organisation' <<<"$out"
+
+      # The refusals are why this is a function and not four INSERTs: a second
+      # organisation, an address that is not one, a blank name.
+      - name: the bootstrap refuses a second organisation
+        run: |
+          psql -v ON_ERROR_STOP=1 -d openbases_fresh \
+            -f test/integration/bootstrap_an_organisation.sql
+
       # The invariants are the point of the schema. If these stop being
       # enforced, the application's guarantees are gone whatever the code says.
       - name: schema invariants refuse what they must refuse
