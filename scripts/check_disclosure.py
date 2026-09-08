@@ -47,6 +47,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "scripts" / "disclosure_baseline.txt"
+MANIFEST = ROOT / "db" / "tenant_seeds.txt"
 
 # A Meet space code is three-four-three lowercase letters. The lookarounds are
 # load-bearing: without them "remote-code-execution" contains "ote-code-exe" and
@@ -76,6 +77,43 @@ BUSINESS_TABLES = {
     "event_receipts", "usage_import_runs",
 }
 INSERT = re.compile(r"INSERT\s+INTO\s+([a-z_]+)", re.IGNORECASE)
+
+# A dollar-quoting tag: $$, $function$, $_$.
+DOLLAR = re.compile(r"\$[a-zA-Z_][a-zA-Z_0-9]*\$|\$\$")
+ENDS_WITH_DO = re.compile(r"(?i)\bDO\s*$")
+
+
+def statements(sql):
+    """The SQL that runs when the migration is APPLIED.
+
+    A CREATE FUNCTION body is removed: it runs when the function is called, so
+    it is not a seed. Without this the check refused migration 0091, whose only
+    purpose is the function that lets a NEW deployment seed its own first
+    administrator -- precisely backwards.
+
+    A `DO $$ ... $$` block is KEPT, because it executes immediately and an
+    insert inside one is a seed like any other. The first version of this
+    stripped both, and that made the rule blind to exactly what it is for:
+    0080_restructure_projects.sql seeds through a DO block. cmd/migrate's test
+    draws the same distinction, and the two must agree -- when they disagreed,
+    45 entries had already been baselined by mistake.
+    """
+    out = []
+    pos = 0
+    while True:
+        opening = DOLLAR.search(sql, pos)
+        if not opening:
+            out.append(sql[pos:])
+            return "\n".join(out)
+        closing = DOLLAR.search(sql, opening.end())
+        if not closing:  # unterminated; keep the rest rather than lose it
+            out.append(sql[pos:])
+            return "\n".join(out)
+        out.append(sql[pos:opening.start()])
+        if ENDS_WITH_DO.search(sql[:opening.start()]):
+            out.append(sql[opening.end():closing.start()])
+        pos = closing.end()
+
 
 # These three necessarily contain the patterns: this file describes them, the
 # baseline records them by hash, and the test has to carry a realistic
@@ -123,7 +161,7 @@ def findings():
         # A migration seeds business data. Checked on the directory rather than
         # the filename so a seed cannot hide under a different suffix.
         if rel.startswith("db/migrations/") and rel.endswith(".sql"):
-            for table in {t.lower() for t in INSERT.findall(text)}:
+            for table in {t.lower() for t in INSERT.findall(statements(text))}:
                 if table in BUSINESS_TABLES:
                     found[fingerprint(rel, "seeded-record", table)] = (
                         rel, "seeded-record", table)
@@ -158,6 +196,48 @@ DEFAULT_WHERE = (
     "  configuration, and refer to it here by name or by role instead.")
 
 
+def seed_manifest():
+    """The migrations `migrate -fresh` skips, from db/tenant_seeds.txt."""
+    if not MANIFEST.exists():
+        return None
+    return {ln.strip() for ln in MANIFEST.read_text().splitlines()
+            if ln.strip() and not ln.startswith("#")}
+
+
+def manifest_drift(found):
+    """Where this check and db/tenant_seeds.txt disagree about what seeds.
+
+    They answer the same question for different purposes -- one refuses new
+    seeding, the other decides what a fresh install skips -- so they must name
+    the same files. When they disagreed, both were wrong and neither said so:
+    0027 and 0052 were in the manifest and seed nothing, which stripped four
+    registration functions out of every fresh install, while 0018 and 0028
+    seed credential_registry and were missing from it, so ten Datopian
+    addresses shipped in an install that reported itself clean.
+
+    That was found by comparing the two lists by hand. This is that comparison.
+    """
+    manifest = seed_manifest()
+    if manifest is None:
+        return ["db/tenant_seeds.txt is missing; `migrate -fresh` would skip nothing"]
+
+    seeding = {rel.split("/")[-1] for rel, rule, _ in found.values()
+               if rule == "seeded-record"}
+
+    problems = []
+    for name in sorted(seeding - manifest):
+        problems.append(
+            f"{name} seeds a record but is NOT in db/tenant_seeds.txt, so a fresh "
+            f"install would contain it")
+    for name in sorted(manifest - seeding):
+        problems.append(
+            f"{name} is in db/tenant_seeds.txt but seeds nothing. If it carries "
+            f"schema, `migrate -fresh` is removing that schema from every fresh "
+            f"install (cmd/migrate's tests check for DDL); if it is simply "
+            f"obsolete, take it out")
+    return problems
+
+
 def main():
     found = findings()
     if "--update" in sys.argv:
@@ -169,8 +249,37 @@ def main():
         print(f"recorded {len(found)} accepted disclosures in {BASELINE.name}")
         return 0
 
-    new = sorted(k for k in found if k not in load_baseline())
+    baseline = load_baseline()
+    # Checked before the baseline: this is a disagreement between two guards,
+    # not a disclosure, and no baseline entry should ever silence it.
+    drift = manifest_drift(found)
+    if drift:
+        print("db/tenant_seeds.txt and this check disagree about what seeds:\n",
+              file=sys.stderr)
+        for p in drift:
+            print(f"  {p}\n", file=sys.stderr)
+        return 1
+
+    new = sorted(k for k in found if k not in baseline)
+
     if not new:
+        # A baseline that only ever grows stops describing anything. Entries
+        # for findings that no longer occur are how it rots: the file keeps
+        # excusing things nobody has checked in months, and the next real
+        # finding hides among them. Reported once the tree is otherwise clean,
+        # so the fix cannot absorb a finding by accident.
+        stale = sorted(baseline - set(found))
+        if stale:
+            print(f"{len(stale)} baseline entr{'y' if len(stale) == 1 else 'ies'} "
+                  f"no longer match anything:", file=sys.stderr)
+            for k in stale[:10]:
+                print(f"  {k}", file=sys.stderr)
+            if len(stale) > 10:
+                print(f"  ... and {len(stale) - 10} more", file=sys.stderr)
+            print("\nThe tree is otherwise clean, so re-recording is safe:",
+                  file=sys.stderr)
+            print("  python3 scripts/check_disclosure.py --update", file=sys.stderr)
+            return 1
         print(f"no new disclosures ({len(found)} accepted, baselined)")
         return 0
 
