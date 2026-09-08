@@ -323,5 +323,5 @@ Security issues: [`SECURITY.md`](SECURITY.md) — use GitHub's private vulnerabi
 deliberately no `security@` alias quoted, because an address nobody monitors looks like a channel and
 silently is not.
 
-Licence: [Apache-2.0](LICENSE), © 2026 Datopian Limited. The licence text is the canonical one from
+Licence: [Apache-2.0](LICENSE), © 2026 Datopian Inc. The licence text is the canonical one from
 apache.org with only the appendix's copyright placeholder filled in.

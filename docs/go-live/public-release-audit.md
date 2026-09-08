@@ -67,24 +67,60 @@ decision than it is worth for bloat alone — recorded here so nobody has to red
 
 ## Not secrets, but disclosure — decisions for Datopian
 
-None of this is a leak. All of it becomes public, and none of it is our call:
+None of this is a leak. All of it becomes public, and none of it is our call.
 
-- **Real client identifiers appear throughout.** `nged` in 127 files, `cdt` in 32, `roseville` in 10,
-  `jackson` in 8 — as cell names, project slugs, fixtures and ADR prose. Publishing reveals who
-  Datopian works with, and in places what the work is. Client contracts may have something to say
-  about that.
-- **Nineteen employee email addresses** appear in seeds, tests and runbooks.
+**These live in the repository itself, not only in the deployed database.** The seed migrations
+create the real client projects as schema data, so the names ship in the source tree:
+
+```sql
+-- db/migrations/0009_pilot_seed.sql:73
+('nged', 'NGED', 'Restricted client engagement', 'client', 'confidential', ...
+```
+
+- **Real client identifiers, by area.** `nged`/`NGED` in 36 files (17 code and tests, 10 migrations,
+  6 infra, 3 docs), `cdt`/`CDT` in 32, `roseville` in 12, `jackson` in 9 — as project slugs, cell
+  names (`client-nged`, `client-cdt` in `infra/ansible/group_vars/`), test fixtures and ADR prose.
+  Publishing reveals who Datopian works with, and in places what the work is. Client contracts may
+  have something to say about that.
+- **Live Google identifiers, which are more than names.** Two Meet space codes and three
+  shared-drive IDs (`0ACuIgKcIt7SPUk9PVA`, `0ADdEMMAO5SMVUk9PVA`, `0AEPg8vnj02IcUk9PVA`). The two
+  Meet codes are not equivalent:
+  - `tfy-qcsa-twb` (`0045_seed_event_sources.sql`) is the alias of the **recurring** internal
+    Innovation Team Sync, Monday to Thursday — a meeting that still happens. A published join code
+    for a live recurring call invites join attempts and disruption, even when every attempt is
+    refused.
+  - `rtd-siqf-aup` (`0048`, `0050`) is the one-off CDT client kick-off of 2026-09-01, now past. The
+    same migration records in prose that the engagement is **pre-contract, with commercial terms**,
+    which is the more sensitive half of that entry.
+
+  None of these are credentials, and Workspace enforces membership on every one, so publishing them
+  grants nobody access. Of everything in this section, the recurring code is the part worth deciding
+  first.
+- **Nineteen employee email addresses** appear in seeds, tests and runbooks, and eleven surname
+  references (`Demenech`, `Okungbowa`, `Popova`, `Rubaj`) name who is accountable for which client.
 - **Infrastructure hostnames** (`work-staging.openbases.com`, `ssh-staging…`, `ssh-exec-staging…`) are
   throughout. They have no inbound port and sit behind Access, so this is reconnaissance value rather
   than access — but it is a decision, not an accident.
+
+### A correction to an earlier count
+
+The first version of this audit reported `nged` in **127 files**. That number was wrong: it came from
+a substring grep, and `nged` is a substring of **"changed"**. 120 of those 129 matches were `changed`
+and `unchanged` in ordinary prose and code. The real figure is 36 files, above, counted with
+`git grep -lw` against tracked files in both cases.
+
+Two lessons worth keeping, because the mistake inflated a disclosure risk rather than hiding one:
+short identifiers need `-w`, and `grep -i` with a negated class like `[^a-z]` does not reliably act
+as a word boundary. Under zsh, also note that `set -- $var` does not word-split, so a loop built that
+way silently searches for the whole string and reports zero.
 
 ## Conclusion
 
 **No credential, key, token or password was found in any of the 581 commits.** Nothing here requires a
 rotation or a history rewrite on security grounds.
 
-What remains before publishing is not a security question: whether client names and employee addresses
-may be published, which is Datopian's to answer.
+What remains before publishing is not a security question: whether client names, the Google Meet and
+shared-drive identifiers, and employee addresses may be published, which is Datopian's to answer.
 
 ## Reproducing this
 
@@ -94,3 +130,9 @@ gitleaks git . --redact --log-opts="--all"               # 581 commits, not 242
 ```
 
 And for any archive found in history, extract it and scan the contents — the git scan cannot.
+
+Counting a short identifier needs `-w`, and both cases, against tracked files only:
+
+```bash
+{ git grep -lw nged; git grep -lw NGED; } | sort -u | wc -l   # 36, not the 127 a substring grep claims
+```
