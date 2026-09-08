@@ -39,6 +39,17 @@ OWNER_ONLY = {
         "caller, so the property under test is attribution rather than "
         "visibility. Who may READ work_refs is covered by "
         "project_creation_visibility.sql and rls_isolation.sql.",
+    "dispatch_routing.sql":
+        "asserts which rig a bead routes to, and — since the guard against "
+        "dispatching an id that exists nowhere — whether a bead has been "
+        "PROJECTED at all. Both are questions about whether a row exists, not "
+        "about who may see it: the router runs the same EXISTS check as a "
+        "service caller through a SECURITY DEFINER function, so a policy could "
+        "not change the answer. Dropping to workgraph_app here would make the "
+        "fixtures invisible and the test would fail for a reason unrelated to "
+        "the property. Who may READ work_refs is covered by "
+        "project_creation_visibility.sql and rls_isolation.sql, and the "
+        "service-caller path specifically by landing_a_change.sql.",
     "invariants.sql":
         "asserts CHECK constraints and triggers, which apply to every role "
         "including the owner. RLS is not the property under test.",
