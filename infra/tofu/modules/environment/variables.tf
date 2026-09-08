@@ -1,10 +1,23 @@
 variable "environment" {
-  description = "Deployment environment. Drives naming, sizing and firewall posture."
+  description = <<-EOT
+    Deployment environment. Drives naming, sizing and firewall posture.
+
+    ONLY the exact value "production" gets the production posture (see is_prod
+    in main.tf). Anything else is treated as non-production, so a typo is a
+    downgrade rather than an error — check this value before applying to
+    something that matters.
+
+    This used to be restricted to staging or production, which was our own
+    two-environment assumption written into the module, and it refused
+    envs/example outright. Any deployment that is not Datopian's needs its own
+    names, so the constraint is now on the SHAPE: the value appears in resource
+    names, DNS records and Access application names.
+  EOT
   type        = string
 
   validation {
-    condition     = contains(["staging", "production"], var.environment)
-    error_message = "environment must be staging or production."
+    condition     = can(regex("^[a-z][a-z0-9-]{1,20}$", var.environment))
+    error_message = "environment must be lowercase letters, digits and dashes, starting with a letter, 2-21 characters. It appears in resource and DNS names."
   }
 }
 
