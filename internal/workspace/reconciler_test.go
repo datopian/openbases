@@ -636,13 +636,15 @@ func TestTheVerifiedSourcesAreUsableAsWants(t *testing.T) {
 	// visibility: an artefact inherits its source's classification, and a
 	// source nobody classified is how confidential material ends up in a
 	// summary the whole company can read.
+	// Identifiers are asserted where they live, in event_sources. What this
+	// file must never be missing is the classification.
 	for _, d := range v.Drives {
-		if d.ID == "" || d.Visibility == "" || d.Why == "" {
-			t.Errorf("drive %q is missing an id, a visibility or a reason", d.Name)
+		if d.Visibility == "" || d.Why == "" {
+			t.Errorf("drive %q is missing a visibility or a reason", d.Name)
 		}
 	}
-	if v.Meet.SpaceID == "" || v.Meet.Visibility == "" {
-		t.Error("the Meet source is missing a space id or a visibility")
+	if v.Meet.DisplayName == "" || v.Meet.Visibility == "" {
+		t.Error("the Meet source is missing a display name or a visibility")
 	}
 }
 

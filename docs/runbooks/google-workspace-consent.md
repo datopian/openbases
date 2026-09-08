@@ -137,7 +137,7 @@ client-confidential document ends up quoted in a summary the whole company reads
 No fallback is needed and WP-H1 builds the event path.
 
 Probed rather than asked: a `subscriptions.create` with `validateOnly=true`
-against `//drive.googleapis.com/drives/0ACuIgKcIt7SPUk9PVA` got past event-type
+against the `All` shared drive (`//drive.googleapis.com/drives/<id>`) got past event-type
 validation and past any tenant gate, failing only on our own Pub/Sub IAM —
 "You don't have permission to access Pub/Sub topic ...", which is the publisher
 grant the apply had not yet made. A tenant without Drive events refuses earlier

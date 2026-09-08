@@ -24,9 +24,11 @@ var sourcesJSON []byte
 
 // VerifiedSources is the contents of sources.json.
 type VerifiedSources struct {
+	// No id field, and none in the file: the addressable identifiers live in
+	// event_sources (migration 0045), which is what the reconciler reads. This
+	// file is the subscription shape and the visibility policy.
 	Drives []struct {
 		Name       string `json:"name"`
-		ID         string `json:"id"`
 		Visibility string `json:"visibility"`
 		Why        string `json:"why"`
 	} `json:"drives"`
@@ -36,9 +38,7 @@ type VerifiedSources struct {
 		Verified           string   `json:"verified"`
 	} `json:"drive_subscription"`
 	Meet struct {
-		SpaceCode    string `json:"space_code"`
 		DisplayName  string `json:"display_name"`
-		SpaceID      string `json:"space_id"`
 		Visibility   string `json:"visibility"`
 		Subscription struct {
 			EventTypes []string `json:"eventTypes"`
