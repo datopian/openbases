@@ -80,12 +80,15 @@ func main() {
 		// survived here is worse than it surviving in the API, because this is
 		// the tool somebody reaches for during a demo or an incident, when
 		// nobody is going to notice that `done` meant nothing.
-		rig, why, err := dispatchroute.For(ctx, db, bead, cell, rigOr(args, 2))
+		rig, refused, err := dispatchroute.For(ctx, db, bead, cell, rigOr(args, 2))
 		if err != nil {
 			fail(err)
 		}
-		if why != "" {
-			fmt.Fprintf(os.Stderr, "not dispatched: %s\n", why)
+		if refused != nil {
+			// The code as well as the prose: a script wrapping this should be
+			// able to tell a wrong id from a missing rig without matching on
+			// English.
+			fmt.Fprintf(os.Stderr, "not dispatched (%s): %s\n", refused.Code, refused.Why)
 			os.Exit(5)
 		}
 		if rig == "" {

@@ -17,6 +17,31 @@ import (
 	"strings"
 )
 
+// The codes a refusal can carry.
+//
+// Separate codes because they need different actions, and a client that can
+// only read prose cannot branch. Both used to be no_rig_for_project, which was
+// wrong the moment the not-projected case existed: a bead id that does not
+// exist is not a rig problem, and telling somebody to provision a rig for a
+// typo sends them to fix the wrong thing.
+const (
+	// CodeNoRig: the bead is real and no rig can run it. Fixed by attaching a
+	// repository or provisioning a rig, or by naming one of several.
+	CodeNoRig = "no_rig_for_project"
+	// CodeNotProjected: no cell has this bead. Fixed by correcting the id, or
+	// by waiting for the next projection pass.
+	CodeNotProjected = "bead_not_projected"
+)
+
+// Refusal is why a bead cannot be dispatched, in terms a client can branch on
+// and a person can read.
+type Refusal struct {
+	Code string
+	Why  string
+}
+
+func (r *Refusal) Error() string { return r.Why }
+
 // candidate is one rig that could run a bead, and the repository that makes it
 // able to.
 type candidate struct{ rig, repo string }
@@ -29,7 +54,7 @@ type candidate struct{ rig, repo string }
 // choice within it. `decided` is false only when nothing matched, which leaves
 // the caller to explain WHY nothing matched -- a question that needs the
 // database again.
-func Choose(found []candidate, wanted string) (rig, why string, decided bool) {
+func Choose(found []candidate, wanted string) (rig string, refusal *Refusal, decided bool) {
 	names := func() string {
 		out := make([]string, 0, len(found))
 		for _, c := range found {
@@ -47,24 +72,26 @@ func Choose(found []candidate, wanted string) (rig, why string, decided bool) {
 	if w := strings.TrimSpace(wanted); w != "" && len(found) > 0 {
 		for _, c := range found {
 			if c.rig == w {
-				return c.rig, "", true
+				return c.rig, nil, true
 			}
 		}
-		return "", "no rig called " + w + " in this cell holds a repository for this " +
-			"bead's project; the ones that do are: " + names(), true
+		return "", &Refusal{Code: CodeNoRig,
+			Why: "no rig called " + w + " in this cell holds a repository for this " +
+				"bead's project; the ones that do are: " + names()}, true
 	}
 
 	if len(found) == 1 {
-		return found[0].rig, "", true
+		return found[0].rig, nil, true
 	}
 	if len(found) > 1 {
 		// Several rigs could do it, so the choice is the caller's rather than
 		// ours. Picking one would be arbitrary and would hide the ambiguity
 		// until somebody wondered why their work ran in the wrong checkout.
-		return "", "several rigs in this cell hold a repository for this bead's project, " +
-			"so name one: " + names(), true
+		return "", &Refusal{Code: CodeNoRig,
+			Why: "several rigs in this cell hold a repository for this bead's project, " +
+				"so name one: " + names()}, true
 	}
-	return "", "", false
+	return "", nil, false
 }
 
 // For is the rig that should run a bead, or the reason none can.
@@ -72,7 +99,7 @@ func Choose(found []candidate, wanted string) (rig, why string, decided bool) {
 // wanted is the rig the caller asked for, or empty to let the registry choose.
 // A caller who names one is choosing among the rigs that can do the work; it is
 // not a way past the check.
-func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig, why string, err error) {
+func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig string, refusal *Refusal, err error) {
 	// Read outside authz.WithUser deliberately: this is the dispatch path's own
 	// routing decision, not a read on the caller's behalf, and the caller's
 	// permission to dispatch this bead has already been settled above. The
@@ -81,7 +108,7 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig, why s
 	rows, qerr := db.QueryContext(ctx,
 		`SELECT rig, repository FROM system_rigs_for_bead($1, $2)`, bead, cell)
 	if qerr != nil {
-		return "", "", qerr
+		return "", nil, qerr
 	}
 	defer rows.Close()
 
@@ -89,16 +116,16 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig, why s
 	for rows.Next() {
 		var c candidate
 		if scanErr := rows.Scan(&c.rig, &c.repo); scanErr != nil {
-			return "", "", scanErr
+			return "", nil, scanErr
 		}
 		found = append(found, c)
 	}
 	if rerr := rows.Err(); rerr != nil {
-		return "", "", rerr
+		return "", nil, rerr
 	}
 
-	if rig, why, decided := Choose(found, wanted); decided {
-		return rig, why, nil
+	if rig, refused, decided := Choose(found, wanted); decided {
+		return rig, refused, nil
 	}
 
 	// None matched. Distinguish the two reasons, because they have different
@@ -130,7 +157,7 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig, why s
 			if err := db.QueryRowContext(ctx,
 				`SELECT EXISTS (SELECT 1 FROM work_refs WHERE bead_id = $1)`,
 				bead).Scan(&projected); err != nil {
-				return "", "", err
+				return "", nil, err
 			}
 			if !projected {
 				// A bead can be real and not yet here: the node projects its
@@ -138,11 +165,12 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig, why s
 				// ago has not arrived. The message says that, because "no such
 				// bead" would send somebody looking for a typo they did not
 				// make.
-				return "", "no bead " + bead + " has been projected from any cell. Either the " +
-					"id is wrong, or it was created seconds ago and the next projection " +
-					"pass has not run yet -- wait a few seconds and try again. Nothing is " +
-					"dispatched against an id that resolves to nothing, because the agent " +
-					"would have nothing to read and would be billed for finding that out.", nil
+				return "", &Refusal{Code: CodeNotProjected,
+					Why: "no bead " + bead + " has been projected from any cell. Either the " +
+						"id is wrong, or it was created seconds ago and the next projection " +
+						"pass has not run yet -- wait a few seconds and try again. Nothing is " +
+						"dispatched against an id that resolves to nothing, because the agent " +
+						"would have nothing to read and would be billed for finding that out."}, nil
 			}
 			// Projected, but belonging to no project: nothing to route on, and
 			// not an error. A rig the caller named is honoured, and otherwise
@@ -152,17 +180,19 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig, why s
 			// caller assigns this result unconditionally now. That is the
 			// hazard of turning two paths into one, and it is why this returns
 			// `wanted` rather than the empty string.
-			return strings.TrimSpace(wanted), "", nil
+			return strings.TrimSpace(wanted), nil, nil
 		}
-		return "", "", qerr
+		return "", nil, qerr
 	}
 
 	if repos == 0 {
-		return "", "the project " + project + " has no repository registered, so there is " +
-			"nowhere to run this bead. Attach one with POST /v1/projects/" + project +
-			"/repositories.", nil
+		return "", &Refusal{Code: CodeNoRig,
+			Why: "the project " + project + " has no repository registered, so there is " +
+				"nowhere to run this bead. Attach one with POST /v1/projects/" + project +
+				"/repositories."}, nil
 	}
-	return "", "no rig in cell " + cell + " holds a repository belonging to " + project +
-		". The work would otherwise run in a disposable sandbox and report success " +
-		"without doing anything.", nil
+	return "", &Refusal{Code: CodeNoRig,
+		Why: "no rig in cell " + cell + " holds a repository belonging to " + project +
+			". The work would otherwise run in a disposable sandbox and report success " +
+			"without doing anything."}, nil
 }

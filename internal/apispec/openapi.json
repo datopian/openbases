@@ -68,7 +68,8 @@
           "not_found",
           "origin_refused",
           "no_rig_for_project",
-          "rig_holds_no_repository"
+          "rig_holds_no_repository",
+          "bead_not_projected"
         ],
         "description": "Stable codes. token_scope_insufficient and role_grant_missing are deliberately distinct: one means this credential may not, the other means you may not, and they have different fixes."
       }
@@ -2030,7 +2031,7 @@
             }
           },
           "409": {
-            "description": "This idempotency key was used for a different request, or no rig can run this bead (`no_rig_for_project`)",
+            "description": "This idempotency key was used for a different request, or the bead cannot be dispatched. `bead_not_projected` means no cell has this bead \u2014 the id is wrong, or it was created seconds ago and the next projection pass has not run; retrying later can succeed. `no_rig_for_project` means the bead is real and no rig can run it, or several can and none was named \u2014 retrying without a change will not help. The two need different actions, which is why they are different codes.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2050,7 +2051,7 @@
             }
           }
         },
-        "description": "Runs one bead. The rig is chosen from the repositories the bead's project holds: exactly one candidate is used, none refuses with `no_rig_for_project`, and several refuses asking for one to be named. A named `rig` must be one of the candidates -- it chooses between them rather than opting out of the check, because dispatching a project's bead into a rig that does not hold its code produces a run that reports success having found nothing.",
+        "description": "Runs one bead. The rig is chosen from the repositories the bead's project holds: exactly one candidate is used, none refuses with `no_rig_for_project`, and a bead no cell has projected refuses with `bead_not_projected`, and several refuses asking for one to be named. A named `rig` must be one of the candidates -- it chooses between them rather than opting out of the check, because dispatching a project's bead into a rig that does not hold its code produces a run that reports success having found nothing.",
         "parameters": [
           {
             "name": "bead",
