@@ -85,14 +85,14 @@ type newProjectArgs struct {
 	Portfolio    string `json:"portfolio,omitempty" jsonschema:"Optional. The slug of the portfolio this belongs under, for example bizdev."`
 	Objective    string `json:"objective,omitempty" jsonschema:"Optional. One sentence on what this project is for."`
 	Visibility   string `json:"visibility,omitempty" jsonschema:"Optional: internal (the default), public, or restricted. A restricted project also needs a cell."`
-	Cell         string `json:"cell,omitempty" jsonschema:"Optional. The execution cell where this project's work runs, for example oss. Required when visibility is restricted."`
+	Cell         string `json:"cell,omitempty" jsonschema:"Optional and usually omitted. The execution cell where this project's work runs. Left out, the deployment's shared cell is used, which is the right answer for internal and open-source work. Required when visibility is restricted, because a restricted project runs in its own cell."`
 }
 
 type attachArgs struct {
 	Slug string `json:"slug" jsonschema:"The project's slug."`
 	// A list, because attaching six repositories should not be six round
 	// trips and because the endpoint reports per repository.
-	Repositories []string `json:"repositories" jsonschema:"Repositories as owner/name, for example [\"datopian/portaljs\"]. Several may be given at once; each is reported separately, so some can succeed while others are refused."`
+	Repositories []string `json:"repositories" jsonschema:"Repositories as owner/name, for example [\"datopian/portaljs\"]. Several may be given at once; each is reported separately, so some can succeed while others are refused. An empty repository is fine: one with no commits cannot be checked out, so a first commit is created for it and the result says so."`
 }
 
 type noArgs struct{}
