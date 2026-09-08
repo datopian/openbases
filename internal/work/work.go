@@ -44,6 +44,15 @@ type Job struct {
 	// control plane knows which repository the rig holds and the node does
 	// not.
 	Check string `json:"check,omitempty"`
+	// CloneURL is where the rig's repository comes from, sent so the node can
+	// create the rig if it does not have it yet.
+	//
+	// Travels with the job for the same reason Check does: the node has no
+	// database. Routing sends work to the rig a cell SHOULD hold, not only one
+	// it already has, so that attaching a repository and dispatching against it
+	// needs no deploy in between -- and the node then needs to know what to
+	// clone. Empty when the rig already exists, which is the common case.
+	CloneURL string `json:"clone_url,omitempty"`
 }
 
 // Result is what the node reports back.

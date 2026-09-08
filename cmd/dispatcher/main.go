@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/datopian/openbases/internal/check"
+	"github.com/datopian/openbases/internal/gastown"
 	"github.com/datopian/openbases/internal/landing"
 	"github.com/datopian/openbases/internal/runner"
 	"github.com/datopian/openbases/internal/version"
@@ -51,6 +52,9 @@ func main() {
 		cellRoot = flag.String("cell-root", "", "the cell's home, e.g. /srv/cells/oss")
 		rig      = flag.String("rig", getenv("WG_RIG", "sandbox"), "default rig")
 		runner   = flag.String("runner", "/usr/local/bin/wg-runner", "path to the agent runner")
+		// Pinned by versions.lock and installed with the toolchain. Needed
+		// only to create a rig the town does not have yet.
+		gtBinary = flag.String("gt", getenv("WG_GT_BINARY", "/usr/local/bin/gt"), "path to the pinned gt binary")
 		// The same default and the same environment variable the runner uses,
 		// so the two read one file. A dispatcher pointed at a different
 		// catalogue would report a harness the run did not use, which is worse
@@ -77,6 +81,7 @@ func main() {
 	d := &dispatcher{
 		api: strings.TrimSuffix(*apiURL, "/"), clientID: id, clientSecret: secret,
 		cell: *cell, cellRoot: *cellRoot, rig: *rig, runner: *runner,
+		gtBinary:  *gtBinary,
 		catalogue: *catalogue,
 		deadline:  *deadline, log: log,
 		http: &http.Client{Timeout: 60 * time.Second},
@@ -108,6 +113,7 @@ func main() {
 type dispatcher struct {
 	api, clientID, clientSecret string
 	cell, cellRoot, rig, runner string
+	gtBinary                    string
 	// catalogue is the role/model table the runner reads, so the dispatcher can
 	// report what a run will use without reimplementing the lookup.
 	catalogue string
@@ -161,6 +167,24 @@ func (d *dispatcher) pass(ctx context.Context) {
 	if err := job.Validate(); err != nil {
 		d.log.Error("refusing an unrunnable job", "job", job.ID, "error", err)
 		d.report(ctx, job.ID, work.Result{OK: false, Output: err.Error()})
+		return
+	}
+
+	// The rig may not exist yet, and this is where it gets made.
+	//
+	// Routing sends work to the rig the cell SHOULD hold, not only to one it
+	// already has, so that attaching a repository and dispatching against it
+	// does not need a deploy in between. The clone happens here, once, when
+	// work has actually been asked for -- which is the objection to doing it on
+	// attach: nothing should start cloning a dozen repositories because
+	// somebody attached one from a phone.
+	if err := d.ensureRig(ctx, job); err != nil {
+		d.log.Error("creating the rig for a job", "job", job.ID, "rig", job.Rig, "error", err)
+		// Reported as the job's failure rather than swallowed: the work cannot
+		// run, and a job left claimed with no explanation is worse than one
+		// that says the checkout could not be made.
+		d.report(ctx, job.ID, work.Result{OK: false,
+			Output: "the repository for this work could not be checked out: " + err.Error()})
 		return
 	}
 
@@ -1218,4 +1242,49 @@ func (d *dispatcher) reportPlan(ctx context.Context, job work.Job) {
 		return
 	}
 	d.log.Info("run plan", "job", job.ID, "harness", harness, "model", model)
+}
+
+// ensureRig creates the job's rig if the town does not have it.
+//
+// Does nothing in the common case, which is why it is safe on every job: the
+// directory check is a stat, and a rig that exists returns immediately.
+//
+// The name is never invented here. Both this and routing read it from
+// system_rigs_wanted, so the rig the job names and the rig this creates cannot
+// disagree -- and a rig created under a different name would be invisible to
+// routing however correctly it was cloned, which has happened before.
+func (d *dispatcher) ensureRig(ctx context.Context, job *work.Job) error {
+	rig := strings.TrimSpace(job.Rig)
+	if rig == "" {
+		return nil // the dispatcher's default rig, which exists by construction
+	}
+	town := d.cellRoot + "/town"
+	if st, err := os.Stat(town + "/" + rig); err == nil && st.IsDir() {
+		return nil
+	}
+
+	// What to clone comes with the job. The node has no database -- it has no
+	// inbound port and reaches the control plane outward -- so the control
+	// plane, which knows which repository a rig should hold, sends it. Same
+	// reasoning as the check command.
+	if job.CloneURL == "" {
+		return fmt.Errorf("rig %s does not exist and the job carries no clone URL, so "+
+			"there is nothing to check out. Either the control plane is older than "+
+			"this node, or no repository is registered for this bead's project", rig)
+	}
+
+	d.log.Info("creating a rig for work that needs it",
+		"rig", rig, "cell", d.cell)
+	if err := gastown.AddRig(ctx, d.gtBinary, town, job.CloneURL); err != nil {
+		return err
+	}
+	d.log.Info("rig created", "rig", rig)
+
+	// Registered immediately so routing can see it without waiting for the
+	// next pass. Not fatal if it fails: the checkout exists and the work can
+	// run, and the next pass registers it.
+	if err := d.registerRig(ctx, rig); err != nil {
+		d.log.Warn("registering a rig just created", "rig", rig, "error", err)
+	}
+	return nil
 }

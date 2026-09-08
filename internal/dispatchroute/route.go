@@ -98,7 +98,7 @@ func Choose(found []candidate, wanted string) (rig string, refusal *Refusal, dec
 // wanted is the rig the caller asked for, or empty to let the registry choose.
 // A caller who names one is choosing among the rigs that can do the work; it is
 // not a way past the check.
-func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig string, refusal *Refusal, err error) {
+func For(ctx context.Context, db *sql.DB, bead, cell, requested string) (rig string, refusal *Refusal, err error) {
 	// Read outside authz.WithUser deliberately: this is the dispatch path's own
 	// routing decision, not a read on the caller's behalf, and the caller's
 	// permission to dispatch this bead has already been settled above. The
@@ -123,7 +123,7 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig string
 		return "", nil, rerr
 	}
 
-	if rig, refused, decided := Choose(found, wanted); decided {
+	if rig, refused, decided := Choose(found, requested); decided {
 		return rig, refused, nil
 	}
 
@@ -176,7 +176,28 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig string
 		// Returning "" for a named rig here would CLEAR it, because the caller
 		// assigns this result unconditionally. That is the hazard of turning
 		// two paths into one, and it is why this returns `wanted`.
-		return strings.TrimSpace(wanted), nil, nil
+		return strings.TrimSpace(requested), nil, nil
+	}
+
+	// Held nothing, but the cell may be SUPPOSED to hold something.
+	//
+	// A repository attached a minute ago has no rig: rigs are created by the
+	// provisioner, and until now that only ran during a deploy. So "create a
+	// project, attach a repository, dispatch work" needed an Ansible run in the
+	// middle of it, which is not a thing the person dispatching can do.
+	//
+	// Routing to a rig that does not exist yet is safe because the dispatcher
+	// creates it before running the job, and it is the same name either way --
+	// both sides read it from system_rigs_wanted, so neither can invent one.
+	// The alternative, provisioning on attach, was rejected for a reason that
+	// still holds: nothing should start cloning a dozen repositories because
+	// somebody attached one from a phone.
+	wanted, werr := wantedFor(ctx, db, bead, cell)
+	if werr != nil {
+		return "", nil, werr
+	}
+	if rig, refused, decided := Choose(wanted, requested); decided {
+		return rig, refused, nil
 	}
 
 	if repos == 0 {
@@ -189,4 +210,29 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig string
 		Why: "no rig in cell " + cell + " holds a repository belonging to " + project +
 			". The work would otherwise run in a disposable sandbox and report success " +
 			"without doing anything."}, nil
+}
+
+// wantedFor is the rigs this cell should hold for a bead's project.
+//
+// Separate from the held query rather than folded into it. "What exists" and
+// "what should exist" are different questions with different answers, and a
+// single query returning both would have to be read twice anyway -- once to
+// route, once to know whether the dispatcher must create anything.
+func wantedFor(ctx context.Context, db *sql.DB, bead, cell string) ([]candidate, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT rig, repository FROM system_rigs_wanted_for_bead($1, $2)`, bead, cell)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.rig, &c.repo); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

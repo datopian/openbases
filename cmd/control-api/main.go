@@ -429,6 +429,42 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			} else {
 				job.Check = command.String
 			}
+
+			// Where the repository comes from, so the node can create the rig
+			// when it does not have one. Only meaningful for a bead-scoped job:
+			// the question is "what should this rig be a checkout of for THIS
+			// bead's project", and asking it per cell would return a list.
+			//
+			// Warned rather than fatal, and for the same reason as the check
+			// command: a job that goes out without it still runs when the rig
+			// exists, which is almost always. When it does not, the node
+			// reports that it could not check the repository out, which is a
+			// better failure than no dispatch at all.
+			if job.Bead != "" {
+				var clone, repository sql.NullString
+				var held bool
+				if err := db.QueryRowContext(r.Context(),
+					`SELECT clone_url, repository, held FROM system_rigs_wanted_for_bead($1, $2) WHERE rig = $3`,
+					job.Bead, cell, job.Rig).Scan(&clone, &repository, &held); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					log.Warn("reading a rig's clone URL", "cell", cell,
+						"rig", job.Rig, "bead", job.Bead, "error", err)
+				} else {
+					job.CloneURL = clone.String
+					// The node is about to clone this for the first time, and
+					// `gt rig add` refuses a repository with no commits. The
+					// attach path initialises an empty repository, but only one
+					// it just attached -- a repository attached before that
+					// existed, or emptied since, is still empty here, and the
+					// failure would land on the node as an unrunnable job.
+					//
+					// Checked only when the rig is NOT held: this is a GitHub
+					// round trip, and it is worth it once per repository rather
+					// than on every claim.
+					if !held && clone.String != "" {
+						ensureNotEmpty(r.Context(), gh, log, job.Project, repository.String)
+					}
+				}
+			}
 		}
 
 		log.Info("work claimed", "cell", cell, "job", job.ID, "kind", job.Kind,
@@ -2121,4 +2157,59 @@ func nullableParam(v string) any {
 		return nil
 	}
 	return v
+}
+
+// ensureNotEmpty gives a repository a first commit before a node tries to clone
+// it.
+//
+// `gt rig add` refuses a repository with no commits, correctly -- there is
+// nothing to check out. The attach path already initialises one it attaches,
+// but a repository attached before that behaviour existed is still empty, and
+// the first dispatch against it is where that is discovered. Doing it here
+// means the same repair happens whether the repository was attached today or in
+// August.
+//
+// Best effort and never fatal: if this cannot run, the node still gets the job
+// and reports that the checkout failed, which is a clearer message than a
+// dispatch that never happened. Silence is the only unacceptable outcome, so
+// every path logs.
+// The repository arrives as owner/name from the WANTED view, not from
+// execution_rigs. The rig is by definition not registered yet -- that is the
+// case this runs in -- so system_rig_repository would find nothing, and a first
+// draft of this asked it anyway, which would have silently done nothing at all.
+func ensureNotEmpty(ctx context.Context, gh *githubapp.Client, log *slog.Logger,
+	project, full string) {
+
+	if gh == nil {
+		log.Warn("cannot check whether a repository is empty: the GitHub App is not configured",
+			"repository", full)
+		return
+	}
+	owner, name, err := domain.ParseFullName(full)
+	if err != nil {
+		log.Warn("a rig's repository is not owner/name", "repository", full, "error", err)
+		return
+	}
+	tok, err := gh.InstallationToken(ctx, full)
+	if err != nil {
+		log.Warn("minting a token to check a repository for commits",
+			"repository", full, "error", err)
+		return
+	}
+
+	state, err := gh.InspectRepository(ctx, tok, owner, name)
+	if err != nil {
+		log.Warn("checking a repository for commits", "repository", full, "error", err)
+		return
+	}
+	if !state.Empty {
+		return
+	}
+	if err := gh.InitialiseRepository(ctx, tok, owner, name, state.DefaultBranch, project); err != nil {
+		log.Warn("initialising an empty repository before its first clone",
+			"repository", full, "error", err)
+		return
+	}
+	log.Info("initialised an empty repository so it can be checked out",
+		"repository", full, "branch", state.DefaultBranch)
 }
