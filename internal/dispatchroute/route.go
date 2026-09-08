@@ -114,9 +114,39 @@ func For(ctx context.Context, db *sql.DB, bead, cell, wanted string) (rig, why s
 		 WHERE w.bead_id = $1
 		 LIMIT 1`, bead).Scan(&project, &repos); qerr != nil {
 		if errors.Is(qerr, sql.ErrNoRows) {
-			// No project: nothing to route on, and not an error. A rig the
-			// caller named is honoured, and otherwise the dispatcher's default
-			// stands -- which is what happened before this check existed.
+			// That join finds nothing for TWO different situations, and until
+			// now they collapsed into one answer: a bead with no project, and
+			// a bead id that exists nowhere at all. The first is ordinary --
+			// company-wide work, routed to the cell's default rig. The second
+			// is a typo, and it used to be dispatched.
+			//
+			// Observed rather than imagined: an unquoted shell variable turned
+			// `dispatch $BEAD oss` into `dispatch oss`, and a bead literally
+			// named `oss` was accepted, claimed, given to an agent and billed.
+			// The agent had nothing to read and nothing to do. That is the same
+			// shape as LoadCatalogue("") treating an unset path as an absent
+			// file: two states that need different answers, given the same one.
+			var projected bool
+			if err := db.QueryRowContext(ctx,
+				`SELECT EXISTS (SELECT 1 FROM work_refs WHERE bead_id = $1)`,
+				bead).Scan(&projected); err != nil {
+				return "", "", err
+			}
+			if !projected {
+				// A bead can be real and not yet here: the node projects its
+				// graph every fifteen seconds or so, so one created a moment
+				// ago has not arrived. The message says that, because "no such
+				// bead" would send somebody looking for a typo they did not
+				// make.
+				return "", "no bead " + bead + " has been projected from any cell. Either the " +
+					"id is wrong, or it was created seconds ago and the next projection " +
+					"pass has not run yet -- wait a few seconds and try again. Nothing is " +
+					"dispatched against an id that resolves to nothing, because the agent " +
+					"would have nothing to read and would be billed for finding that out.", nil
+			}
+			// Projected, but belonging to no project: nothing to route on, and
+			// not an error. A rig the caller named is honoured, and otherwise
+			// the dispatcher's default stands.
 			//
 			// Returning "" for a named rig here would CLEAR it, because the
 			// caller assigns this result unconditionally now. That is the
