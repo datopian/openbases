@@ -448,6 +448,14 @@ jobs:
       - name: deliveries for unattached repositories are parked, not retried forever
         run: psql -v ON_ERROR_STOP=1 -f test/integration/parked_deliveries.sql
 
+      # Which cells exist is infrastructure; which project runs in one is data.
+      # Those were conflated in a project-to-cell table in group_vars, which put
+      # client names in the repository and made starting a project an Ansible
+      # run -- and left a project created through the API with no cell at all,
+      # so its work could not be dispatched.
+      - name: a project finds its cell without a deploy
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/a_project_finds_its_cell.sql
+
       # An agent has no shell, so the repository's own command is what says
       # whether its change works. Opt-in per repository, because running it
       # executes code from the repository as the cell user.

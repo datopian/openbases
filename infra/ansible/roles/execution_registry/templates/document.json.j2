@@ -36,7 +36,14 @@
         default, and the gap stays a gap.
       #}
       "cpu_quota_percent": {{ hostvars[node].cell_cpu_percent | default(0) | int }},
-      "memory_limit_mb": {{ hostvars[node].cell_memory_mb | default(0) | int }}
+      "memory_limit_mb": {{ hostvars[node].cell_memory_mb | default(0) | int }},
+      {#
+        Whether this cell may hold more than one project. Infrastructure, and
+        therefore here: a cell is a Linux user with cgroup limits, and which
+        cells exist is a deploy-time fact. WHICH PROJECT runs in one is not --
+        that is data, set when somebody starts a project.
+      #}
+      "shared": {{ (c.shared | default(false)) | to_json }}
     }{{ "," if not loop.last }}
     {% endfor %}
   ],

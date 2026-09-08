@@ -105,15 +105,22 @@ func apply(ctx context.Context, db *sql.DB, doc registry.Document) error {
 
 	for _, c := range doc.Cells {
 		if err := tx.QueryRowContext(ctx,
-			`SELECT system_register_execution_cell($1,$2,$3,$4,$5,$6,$7)`,
+			`SELECT system_register_execution_cell($1,$2,$3,$4,$5,$6,$7,$8)`,
 			doc.Node.Hostname, c.Slug, c.SystemUsername, c.TrustDomain,
 			nullableInt(c.MaxConcurrentAgents), nullableInt(c.CPUQuotaPercent), nullableInt(c.MemoryLimitMB),
+			c.Shared,
 		).Scan(&changed); err != nil {
 			return fmt.Errorf("registering cell %s: %w", c.Slug, err)
 		}
-		fmt.Printf("cell      %-36s user=%s trust=%s cpu=%d%% mem=%dMB agents=%d (%s)\n",
+		shared := ""
+		if c.Shared {
+			// Worth printing: it is what decides where a project with no cell
+			// named goes, so a deploy that changes it should say so.
+			shared = " shared"
+		}
+		fmt.Printf("cell      %-36s user=%s trust=%s cpu=%d%% mem=%dMB agents=%d%s (%s)\n",
 			c.Slug, c.SystemUsername, c.TrustDomain, c.CPUQuotaPercent, c.MemoryLimitMB,
-			c.MaxConcurrentAgents, state(changed))
+			c.MaxConcurrentAgents, shared, state(changed))
 	}
 
 	// Graphs before projects, because a project graph names a project and the
