@@ -32,3 +32,27 @@ project_cell_assignments:
   - project: cdt
     cell: client-cdt
     visibility: restricted
+
+  # MSF runs in the shared oss cell, decided 2026-09-08, and stays there.
+  #
+  # It sits in the client portfolio, so its own cell -- client-msf, like the two
+  # above -- was the first answer. The node cannot host it: per-cell memory is
+  # derived from capacity, and a fourth cell takes the oss cell from 1771 MB to
+  # 1259 MB idle, or 886 MB once msf carries load. PortalJS `npm ci` was
+  # OOM-killed at 932 MB and 1771 MB is what was chosen to fit it, so a fourth
+  # working cell breaks the cell that already has work in it. Measured on the
+  # node rather than estimated.
+  #
+  # NO visibility line, deliberately. The two above tighten to restricted
+  # because their own cell is what backs the claim. Sharing a cell with
+  # open-source work does not, and marking msf restricted here would assert an
+  # isolation that is not there -- worse than leaving it internal, because the
+  # classification is what other decisions are made from.
+  #
+  # The cost, stated rather than discovered: oss now hosts twelve projects, so
+  # system_record_usage cannot attribute its spend by cell -- it refuses to
+  # guess when more than one project matches. Per-BEAD attribution is
+  # unaffected, which is what the cost import actually uses; the cell tag was
+  # already unattributable with eleven.
+  - project: msf
+    cell: oss
