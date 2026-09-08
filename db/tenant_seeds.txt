@@ -1,0 +1,37 @@
+# Migrations that seed Datopian's own records rather than schema.
+#
+# `workgraph-migrate --fresh` records these as applied WITHOUT running them, so
+# a new deployment comes up with the schema and none of our data. It refuses
+# unless the database is empty, so it can never skip a migration on a running
+# deployment. Datopian's own databases are unaffected: these are already
+# applied there, and cmd/migrate still verifies their checksums.
+#
+# Every file here must contain no DDL, which cmd/migrate's tests assert.
+#
+# Seven other migrations (0035, 0057, 0058, 0078, 0082, 0083, 0084) contain
+# `INSERT INTO` against the same tables and are NOT in this list, correctly:
+# those statements sit inside CREATE FUNCTION bodies, so they run when the
+# function is called and never when the migration is applied. The test that
+# guards this list strips dollar-quoted bodies for exactly that reason -- a
+# check on SQL text would flag all seven and be ignored within a day.
+#
+# Verified by running it: with the thirteen below skipped, all seventy-six
+# remaining migrations apply and every tenant table is empty.
+#
+# Do not add to this list to make a new seeding migration acceptable. A record
+# about the real world belongs in the deployment's database, put there by an
+# install step; scripts/check_disclosure.py refuses it in a migration.
+
+0009_pilot_seed.sql
+0016_register_agent_sandbox.sql
+0027_execution_registry.sql
+0045_seed_event_sources.sql
+0048_seed_cdt_kickoff_space.sql
+0049_pilot_operators.sql
+0050_seed_cdt_project.sql
+0052_register_source.sql
+0066_management_role_grants.sql
+0073_roseville_poc_project.sql
+0074_demo_attendees.sql
+0075_standing_poc_project.sql
+0080_restructure_projects.sql

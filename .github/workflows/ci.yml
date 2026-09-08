@@ -150,6 +150,49 @@ jobs:
           psql -v ON_ERROR_STOP=1 -tAc "SELECT count(*) FROM pg_tables WHERE schemaname='public'" \
             | { read -r n; echo "tables created: $n"; [ "$n" -ge 35 ]; }
 
+      # The repository is public and people will install it. Today a plain
+      # migrate produces Datopian: one organisation, eight named employees with
+      # admin grants, thirteen projects including two client engagements. So
+      # `migrate -fresh` skips the migrations in db/tenant_seeds.txt, and this
+      # asserts the outcome against a real database rather than trusting the
+      # manifest to be complete.
+      #
+      # It runs the real binary, not a reimplementation of what it does: the
+      # thing that can break is the code path an installer actually uses.
+      #
+      # This is the test that keeps the repository honest about being open
+      # source. cmd/migrate's unit tests refuse a NEW seeding migration; this
+      # catches anything already there, and anything a future migration seeds
+      # by a route the unit test cannot see.
+      - name: a fresh install contains nobody
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -q -c 'CREATE DATABASE openbases_fresh'
+          go run ./cmd/migrate \
+            -dsn "postgres://postgres:ci@localhost:5432/openbases_fresh?sslmode=disable" \
+            -fresh
+          psql -v ON_ERROR_STOP=1 -d openbases_fresh \
+            -f test/integration/fresh_install_has_no_tenant.sql
+
+      # -fresh must refuse a database that has anything applied, or it is a way
+      # to skip a migration on a running deployment -- the one thing cmd/migrate
+      # exists to prevent.
+      #
+      # Pointed at openbases_fresh, which the previous step just migrated, NOT
+      # at the main database: the job applies migrations there with a psql loop,
+      # so nothing writes schema_migrations and -fresh would correctly find it
+      # empty and accept. Asserting a refusal there would have failed for a
+      # reason that has nothing to do with the guard.
+      - name: fresh install refuses a database that is not empty
+        run: |
+          set -euo pipefail
+          if go run ./cmd/migrate -fresh \
+               -dsn "postgres://postgres:ci@localhost:5432/openbases_fresh?sslmode=disable"; then
+            echo "-fresh was accepted against a database with migrations applied" >&2
+            exit 1
+          fi
+          echo "refused, as it must"
+
       # The invariants are the point of the schema. If these stop being
       # enforced, the application's guarantees are gone whatever the code says.
       - name: schema invariants refuse what they must refuse
