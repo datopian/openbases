@@ -16,6 +16,26 @@ name: external-probe
 # reaches the origin, so it would report 200 with the machine switched off — the
 # naive version of this check is theatre.
 
+# ---------------------------------------------------------------------------
+# THIS WORKFLOW CANNOT RUN WHILE THE REPOSITORY IS PUBLIC. Decided 2026-09-08.
+#
+# It needs a self-hosted runner, and the org runner group sets
+# allows_public_repositories=false. That flag gates on repository VISIBILITY,
+# not on the trigger -- so it blocks this workflow even though no fork can
+# trigger it (a fork cannot push to main, and schedules only ever run on the
+# base repository's default branch). Jobs queue indefinitely against idle
+# runners rather than failing, which is why this notice is here and not in a
+# commit message somebody would have to find.
+#
+# The alternative was allows_public_repositories=true, with pull-request CI
+# already moved to GitHub's hosted fleet and fork runs gated on maintainer
+# approval. That was declined deliberately: no fork code on Datopian machines,
+# at the price of these workflows.
+#
+# CONSEQUENCE: there is no external monitoring while this is blocked.
+# Nothing is watching staging from outside, and nothing will say so.
+# ---------------------------------------------------------------------------
+
 on:
   schedule:
     # Every fifteen minutes, matching the recovery-point cadence the rest of the

@@ -5,6 +5,33 @@ name: staging-deploy
 # provisions it, the job skips rather than reporting a deployment that did not
 # happen.
 
+# ---------------------------------------------------------------------------
+# THIS WORKFLOW CANNOT RUN WHILE THE REPOSITORY IS PUBLIC. Decided 2026-09-08.
+#
+# It needs a self-hosted runner, and the org runner group sets
+# allows_public_repositories=false. That flag gates on repository VISIBILITY,
+# not on the trigger -- so it blocks this workflow even though no fork can
+# trigger it (a fork cannot push to main, and schedules only ever run on the
+# base repository's default branch). Jobs queue indefinitely against idle
+# runners rather than failing, which is why this notice is here and not in a
+# commit message somebody would have to find.
+#
+# The alternative was allows_public_repositories=true, with pull-request CI
+# already moved to GitHub's hosted fleet and fork runs gated on maintainer
+# approval. That was declined deliberately: no fork code on Datopian machines,
+# at the price of these workflows.
+#
+# Deploy by hand instead:
+#
+#   cd infra/ansible
+#   ../../scripts/with_secrets.sh staging \
+#     ansible-playbook -i inventory/staging.yml site.yml --tags code
+#
+# Run it from infra/ansible (ansible.cfg carries the ProxyCommand that
+# reaches the nodes) and through with_secrets.sh, or it fails on an empty
+# postgres password. Expect the Access tunnel to drop; re-run.
+# ---------------------------------------------------------------------------
+
 on:
   push:
     branches: [main]
