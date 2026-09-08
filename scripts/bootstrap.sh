@@ -84,8 +84,43 @@ install_tool gastown gt
 # Compensating control for ADR-0016 while branch protection is unavailable.
 if [ -d .git ]; then
   echo "==> git hooks"
-  install -m 0755 scripts/hooks/pre-push .git/hooks/pre-push
-  echo "    installed .git/hooks/pre-push (refuses direct pushes to main)"
+  # Install into the hooks directory git ACTUALLY reads. This used to write
+  # .git/hooks/pre-push unconditionally, which git ignores entirely once
+  # core.hooksPath is set -- and `bd` sets it to .beads/hooks. The effect was a
+  # guardrail that looked installed, was reported as installed, and never ran
+  # once. A hook that silently does not run is worse than no hook, because
+  # people stop checking.
+  hooks_dir="$(git config core.hooksPath || true)"
+  if [ -z "$hooks_dir" ]; then
+    hooks_dir="$(git rev-parse --git-dir)/hooks"
+  fi
+  mkdir -p "$hooks_dir"
+  target="$hooks_dir/pre-push"
+
+  # A shim rather than a copy, so editing scripts/hooks/pre-push takes effect
+  # without re-running bootstrap. Appended between markers so it survives
+  # alongside a hook another tool manages (beads owns a section of this file),
+  # and replaced rather than duplicated when bootstrap runs twice.
+  begin="# --- BEGIN WORKGRAPH HOOK ---"
+  end="# --- END WORKGRAPH HOOK ---"
+  if [ ! -f "$target" ]; then
+    printf '#!/usr/bin/env sh\n' > "$target"
+  fi
+  if grep -qF "$begin" "$target"; then
+    tmp="$(mktemp)"
+    awk -v b="$begin" -v e="$end" '
+      $0 == b { skip = 1 } !skip { print } $0 == e { skip = 0 }' \
+      "$target" > "$tmp"
+    mv "$tmp" "$target"
+  fi
+  {
+    echo "$begin"
+    echo '# Managed by scripts/bootstrap.sh. Logic lives in scripts/hooks/pre-push.'
+    echo 'exec "$(git rev-parse --show-toplevel)/scripts/hooks/pre-push" "$@"'
+    echo "$end"
+  } >> "$target"
+  chmod 0755 "$target"
+  echo "    installed $target (refuses pushes to main and new client data)"
 fi
 
 echo "==> Go modules"

@@ -490,6 +490,19 @@ jobs:
       - name: secret scan
         run: bash scripts/secret_scan.sh
 
+      # gitleaks looks for credentials. Neither a client's name nor a Google
+      # Meet space code is a credential, so nothing above catches either, and
+      # the repository is public. This is the check for data that belongs in
+      # the deployment's database rather than in the source tree.
+      - name: no new client or operational data
+        run: python3 scripts/check_disclosure.py
+
+      # The baseline is how this check fails quietly: record too much and every
+      # later occurrence is accepted. So the check is tested, including a real
+      # identifier added to an already-baselined file.
+      - name: the disclosure check refuses what it should
+        run: python3 test/acceptance/disclosure_check.py
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

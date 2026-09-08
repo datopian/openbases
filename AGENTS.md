@@ -41,13 +41,36 @@ committed script.
 An undocumented manual change is an incident. If you make an emergency change, it is a break-glass
 event: named actor, command log, audit event, and a follow-up pull request in the same session.
 
-## 4. Never commit a secret
+## 4. Never commit a secret, a client's data, or a live identifier
 
 No plaintext `.env`, no secret in Terraform state, no credential in a prompt, a Bead description, a
 commit message, a log line, or a source snapshot. Host secrets use SOPS with age encryption and are
 decrypted only at deployment into systemd credentials.
 
 If you expose a secret, follow `docs/runbooks/` runbook 10 immediately: revoke first, then clean up.
+
+**This repository is public.** Two things that are not secrets must also stay out of it, because
+nothing above catches them — gitleaks and GitHub push protection look for credential formats, and a
+client's name is not a credential:
+
+- **Records about the real world.** A client project, a person, a repository attachment, a meeting.
+  These belong in the deployment's database. Seed them with an idempotent bootstrap against the live
+  schema, or through the API. **Never from a migration** — a migration is schema and backfill
+  (`db/migrations/README.md` rule 4), and once applied it cannot be edited at all, because
+  `cmd/migrate` refuses any deploy whose migration no longer matches its recorded checksum. A client
+  name seeded from a migration is in the source tree permanently. This is exactly how `nged` and
+  `cdt` got here.
+- **Live external identifiers.** Google Meet space codes and ids, Drive ids, the addresses of real
+  people. None grants access on its own, and all of them name something real. Keep them in
+  `event_sources` or in deployment configuration and refer to them here by name or by role.
+
+`scripts/check_disclosure.py` enforces both, in CI and in the pre-push hook. It compares against
+`scripts/disclosure_baseline.txt`, so it fails on what is new rather than on what is already
+applied and unchangeable. The baseline records SHA-256 prefixes, not the values.
+
+Do not reach for `--update` to make it pass. Read the finding: if the data is about the real world,
+it belongs in the database, and baselining it is how the rule stops meaning anything. Baseline only
+what is already applied and immutable, or a fixture you have read and know to be synthetic.
 
 ## 5. Never upgrade `gt`, `bd`, or `dolt` independently
 

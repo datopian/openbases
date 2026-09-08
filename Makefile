@@ -45,7 +45,7 @@ dev: ## Run the local stack (API, worker, web, PostgreSQL, fixture Beads)
 ## Quality gates — `make check` is what CI runs
 ## ---------------------------------------------------------------------------
 
-check: fmt vet test verify-versions pins-check sql-check infra-check secrets-check ## Run every gate CI runs
+check: fmt vet test verify-versions pins-check sql-check infra-check secrets-check disclosure-check ## Run every gate CI runs
 
 fmt: ## Fail if Go source is not gofmt-clean
 	@out="$$(gofmt -l ./cmd ./internal)"; \
@@ -131,6 +131,10 @@ live-zones: ## Smoke-check the Datopian production zones sharing this Cloudflare
 
 secrets-check: ## Fail if a credential in infra/secrets is not encrypted
 	@python3 scripts/check_secrets_encrypted.py
+
+disclosure-check: ## Fail if new client or operational data entered a public repository
+	@python3 scripts/check_disclosure.py
+	@python3 test/acceptance/disclosure_check.py
 
 infra-check: ## Structural guards on the infrastructure security posture
 	@python3 scripts/check_infra.py

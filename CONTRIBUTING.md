@@ -16,6 +16,20 @@ make check                     # exactly what CI runs
 
 `make check` is the gate. Run it before you push, not after CI tells you.
 
+### Install the hooks
+
+`scripts/bootstrap.sh` installs the pre-push hook, which refuses a direct push to `main` and runs the
+disclosure check. It installs into the hooks directory git actually reads — `core.hooksPath` when it
+is set, which `bd` sets — and appends itself between markers so it coexists with the section beads
+manages there.
+
+```bash
+git config core.hooksPath          # where the hook has to go
+grep WORKGRAPH "$(git config core.hooksPath || echo .git/hooks)/pre-push"
+```
+
+If that greps nothing, the hook is not installed and pushes are unguarded locally. CI still checks.
+
 ## One bead, one branch, one pull request
 
 Every change is attached to a bead — the work item, in the graph, that says why the change exists.
@@ -47,6 +61,15 @@ Close a bead with evidence, not an opinion. "Works now" is not a close; the outp
 
 - **Never commit a secret.** Secrets are SOPS-encrypted in `infra/secrets/`. `make check` runs a
   history scan; if it fires, do not force it through.
+- **Never commit data about the real world.** This repository is public, and a client's name is not a
+  credential, so the secret scanners do not catch it. A client project, a person, a meeting, a
+  repository attachment: all of it belongs in the deployment's database, seeded by an idempotent
+  bootstrap or through the API. **Never from a migration** — an applied migration can never be
+  edited, so a name seeded there is permanent. Live Google identifiers (Meet space codes and ids,
+  Drive ids) belong in `event_sources` or in deployment configuration.
+  `scripts/check_disclosure.py` enforces this in CI and on pre-push. It has a baseline for what is
+  already applied; `--update` is for immutable history and read-and-verified fixtures, not for making
+  a finding go away.
 - **Never publish unreviewed model extraction.** A model's output about the company becomes a
   *candidate*. A named human accepts it before it is a record.
 - **Never widen a classification.** Not by an agent, not by a migration, not as a side effect.
