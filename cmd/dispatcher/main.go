@@ -34,6 +34,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -355,8 +356,116 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 	// is never logged; wg-runner writes it into a settings file outside the run
 	// directory so the agent itself cannot read it back.
 	cmd.Env = append(os.Environ(), "WG_AI_GATEWAY_TOKEN="+token)
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+
+	// Started rather than run to completion, so the run can be reported on
+	// while it happens.
+	//
+	// CombinedOutput blocks until the process exits, which is why a two-hour
+	// run and a wedged one looked identical from the control plane: it heard
+	// nothing between claim and finish. The output is still collected in full
+	// and returned exactly as before -- what changes is that its SIZE and the
+	// time of the last write are observable meanwhile, and those two facts are
+	// the difference between "thinking" and "stuck".
+	var buf syncBuffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	// Thirty seconds: frequent enough that a stalled run is obvious within a
+	// minute, rare enough that a two-hour run costs 240 requests rather than
+	// one per second. The dispatcher already talks to the control plane on
+	// every pass, so this is the same connection doing more.
+	tick := time.NewTicker(30 * time.Second)
+	defer tick.Stop()
+
+	for {
+		select {
+		case err := <-done:
+			return strings.TrimSpace(buf.String()), err
+		case <-tick.C:
+			d.heartbeat(ctx, job.ID, buf.progress())
+		}
+	}
+}
+
+// syncBuffer collects the run's output and can be read while it is being
+// written.
+//
+// A plain bytes.Buffer would race: the child's output arrives on the exec
+// package's goroutine and the heartbeat reads from this one. Not a hypothetical
+// -- the race detector runs in CI and would have caught it, which is a slower
+// way to learn it than a mutex.
+type syncBuffer struct {
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	last time.Time
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.last = time.Now()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// progress is what the node can honestly say about a run in flight.
+//
+// Bytes written and how long since the last write. Neither proves the agent is
+// making progress -- an agent can write nonsense -- but silence is real
+// evidence: an agent that has produced nothing for ten minutes is not thinking
+// out loud, and that is the judgement a person wants to make for themselves.
+func (b *syncBuffer) progress() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := b.buf.Len()
+	if b.last.IsZero() {
+		return "no output yet"
+	}
+	return fmt.Sprintf("%s of output, last wrote %s ago",
+		humanBytes(n), time.Since(b.last).Round(time.Second))
+}
+
+func humanBytes(n int) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%d B", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.0f KB", float64(n)/1024)
+	default:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
+	}
+}
+
+// heartbeat tells the control plane the run is still alive.
+//
+// Best effort and never fatal: a heartbeat that fails must not end a run that
+// is working. The reply says whether the control plane still considers the job
+// live, and a false stops the reporting -- writing heartbeats into a job
+// somebody has already cancelled is noise, and noise is what makes a signal
+// like this stop being read.
+func (d *dispatcher) heartbeat(ctx context.Context, jobID, note string) {
+	if jobID == "" {
+		return
+	}
+	body, err := json.Marshal(map[string]any{"note": note})
+	if err != nil {
+		return
+	}
+	if _, err := d.call(ctx, http.MethodPost,
+		"/v1/node/work/"+jobID+"/heartbeat", bytes.NewReader(body)); err != nil {
+		d.log.Debug("reporting a heartbeat", "job", jobID, "error", err)
+	}
 }
 
 // gatewayToken reads the cell's AI Gateway token out of its agent settings.

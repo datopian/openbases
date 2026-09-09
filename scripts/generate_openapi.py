@@ -33,6 +33,8 @@ DESC = {
  "POST /v1/agent-health": ("Report agent health", "Execution-node path (ADR-0019)."),
  "POST /v1/node/work/claim": ("Claim a queued job", "Execution-node path."),
  "POST /v1/node/work/{id}/result": ("Report a job result", "Execution-node path."),
+ "POST /v1/node/work/{id}/heartbeat": ("Report that a running job is still alive",
+   "Execution-node path. Bytes produced and time since the last write, so a long run can be told from a stuck one."),
  "POST /v1/node/work/project": ("Project work into the graph", "Execution-node path."),
  "POST /v1/integrations/github/installation-token": ("Mint a repository-scoped git credential", "Execution-node path. Short-lived by construction (plan section 9.2)."),
 }
