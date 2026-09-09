@@ -132,8 +132,9 @@ func apply(ctx context.Context, db *sql.DB, doc registry.Document) error {
 		// registered, updated or unchanged, and Ansible greps for "(updated)".
 		var result string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT system_register_beads_graph($1,$2,$3,$4,$5)`,
+			`SELECT system_register_beads_graph($1,$2,$3,$4,$5,$6)`,
 			g.Name, g.Path, doc.Node.Hostname, g.Scope, nullableStr(g.Project),
+			nullableStr(g.Prefix),
 		).Scan(&result); err != nil {
 			return fmt.Errorf("registering graph %s: %w", g.Name, err)
 		}

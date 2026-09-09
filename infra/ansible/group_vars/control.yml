@@ -1,33 +1,39 @@
 ---
 # Inventory data for the control node.
 #
-# The Beads graphs live here rather than in roles/beads_hq/defaults because TWO
-# roles need them and they must not disagree: beads_hq provisions the
-# directories, and execution_registry records them in the control plane. Role
-# defaults are visible only to their own role, so the second copy would be free
-# to drift -- and drift here means the database points at a path nothing
-# created.
-#
-# Same reason execution_cells lives in group_vars/execution.yml rather than in
-# the execution_cell role.
+# The graph ROOT lives here rather than in roles/beads_hq/defaults because TWO
+# roles need it and they must not disagree: beads_hq provisions the directory,
+# and execution_registry records what is in it. Role defaults are visible only
+# to their own role, so a second copy would be free to drift -- and drift here
+# means the database points at a path nothing created.
 beads_hq_root: /srv/graphs
 
-# company-hq carries company-wide decisions; a project graph carries the work
-# accepted from that project's meetings.
+# Only company-hq is declared, and that is the whole point.
 #
-# Prefixes differ so an id says which graph it came from. Beads graphs cannot
-# reference each other (plan section 2.3), so a bare id with no prefix is
-# ambiguous the moment there is more than one graph -- which is now.
+# This list used to hold one entry per client engagement, each naming the
+# client and its hand-picked prefix, which was wrong twice over. Client names
+# were configuration in a repository that is now public. And a project
+# could not have a graph until somebody deployed, so the first candidate
+# accepted for a new project was blocked on "no graph for project X" with no fix
+# available to the person who accepted it.
+#
+# company-hq stays because it is genuinely infrastructure: a singleton, about no
+# client, and needed before any project exists. Its prefix is `wg`, and prefixes
+# differ per graph so an id says which graph it came from -- Beads graphs cannot
+# reference each other (plan section 2.3), so a bare id is ambiguous the moment
+# there is more than one graph.
+#
+# Project graphs are now created on demand by the publisher, as the account that
+# owns them, when a project's first accepted candidate needs somewhere to go.
+# The reason that is at the point of NEED rather than at project creation is the
+# one this role already recorded: "a graph appearing because a row appeared is
+# not a change anybody reviewed". A person accepting a candidate IS the review,
+# and it is the same reasoning that puts rig creation at dispatch rather than at
+# attach.
 #
 # `project` present makes a graph project-scoped and names the project it
 # belongs to; absent makes it company-scoped. The registry refuses either half
-# of that pair on its own.
+# of that pair on its own, which is why the on-demand path passes both.
 beads_graphs:
   - name: company-hq
     prefix: wg
-  - name: project-cdt
-    prefix: cdt
-    project: cdt
-  - name: project-nged
-    prefix: ngd
-    project: nged

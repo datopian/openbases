@@ -25,7 +25,15 @@
     {
       "name": {{ g.name | to_json }},
       "path": {{ (beads_hq_root ~ '/' ~ g.name) | to_json }},
-      "scope": {{ (g.project is defined) | ternary('project', 'company') | to_json }}
+      "scope": {{ (g.project is defined) | ternary('project', 'company') | to_json }},
+      {#
+        The prefix, so the database records it. It appears in every bead id in
+        the graph and an id is never rewritten, and until now the only copies
+        were this file and the graph's own config on disk -- so removing a
+        declaration would have left a rebuilt node free to derive a different
+        one and orphan every id.
+      #}
+      "prefix": {{ g.prefix | to_json }}
       {%- if g.project is defined %}, "project": {{ g.project | to_json }}{% endif %}
     }{{ "," if not loop.last else "" }}
     {% endfor %}

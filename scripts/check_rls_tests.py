@@ -32,6 +32,13 @@ TESTS = ROOT / "test" / "integration"
 # Tests that legitimately run as the owner, with the reason. An entry here is a
 # claim that the file asserts nothing about who may READ a protected table.
 OWNER_ONLY = {
+    "a_project_graph_is_wanted.sql":
+        "asserts what system_graph_wanted_for_project returns: the RECORDED "
+        "prefix for a graph that exists, because every bead id in it depends "
+        "on that, and a derived one otherwise. Read through a SECURITY DEFINER "
+        "function the publisher calls with no app user, and the property is "
+        "what the function answers rather than who may see beads_databases -- "
+        "which hq_graph.sql and rls_isolation.sql cover.",
     "a_project_finds_its_cell.sql":
         "asserts what the cell registration functions wrote and what "
         "system_default_cell resolves to, including that it refuses to guess "

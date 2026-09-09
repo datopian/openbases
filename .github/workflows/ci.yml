@@ -456,6 +456,14 @@ jobs:
       - name: a project finds its cell without a deploy
         run: psql -v ON_ERROR_STOP=1 -f test/integration/a_project_finds_its_cell.sql
 
+      # Project graphs used to be declared in group_vars, one entry per client
+      # engagement -- client names in a public repository, and a project's
+      # first accepted candidate blocked until somebody deployed. The prefix is
+      # what this guards: it is in every bead id in the graph and a bead id is
+      # never rewritten, so an existing graph must keep the prefix it has.
+      - name: a project graph keeps its prefix and a new one derives a stable one
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/a_project_graph_is_wanted.sql
+
       # An agent has no shell, so the repository's own command is what says
       # whether its change works. Opt-in per repository, because running it
       # executes code from the repository as the cell user.
