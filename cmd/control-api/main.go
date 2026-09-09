@@ -725,6 +725,24 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 		reused := pr != nil
+		if reused {
+			// Reused, so its description is the FIRST landing's and the diff
+			// beside it is the latest. Refreshed rather than left, because a
+			// description that contradicts its own diff is worse than none:
+			// datopian/msf#1 listed `node_modules/` among its files for hours
+			// after the branch stopped containing any, and a reviewer cannot
+			// tell which half is stale.
+			//
+			// A failure here is logged and not returned: the pull request
+			// exists and its URL is what the caller needs. A stale
+			// description is a smaller problem than a landing reported as
+			// broken.
+			if err := gh.UpdatePullRequest(r.Context(), tok, owner, repo,
+				pr.Number, body.Title, body.Body); err != nil {
+				log.Error("refreshing a reused pull request's description",
+					"repository", owner+"/"+repo, "number", pr.Number, "error", err)
+			}
+		}
 		if pr == nil {
 			pr, err = gh.OpenPullRequest(r.Context(), tok, githubapp.OpenPullRequestRequest{
 				Owner: owner, Repo: repo,

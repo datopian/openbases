@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -161,4 +162,51 @@ func (c *Client) FindPullRequest(ctx context.Context, tok *InstallationToken, ow
 		return nil, nil
 	}
 	return &out[0], nil
+}
+
+// UpdatePullRequest rewrites an open pull request's title and body.
+//
+// A re-dispatched bead pushes to the same branch and reuses its pull request,
+// which is deliberate -- work re-dispatched must not multiply pull requests.
+// But the description was written by the FIRST landing and never touched
+// again, so it went stale the moment a second run changed the diff:
+// datopian/msf#1 said `Files: README.md, ARCHITECTURE.md, docs/,
+// node_modules/, portal/` for hours after the run that produced that list had
+// been superseded, and the node_modules it named was no longer in the branch.
+//
+// A description that contradicts the diff beside it is worse than none: a
+// reviewer cannot tell which of the two is out of date.
+func (c *Client) UpdatePullRequest(ctx context.Context, tok *InstallationToken,
+	owner, repo string, number int, title, body string) error {
+
+	if tok == nil || tok.Token == "" {
+		return errors.New("no installation token")
+	}
+	if owner == "" || repo == "" || number == 0 {
+		return errors.New("updating a pull request needs an owner, a repository and a number")
+	}
+
+	payload, err := json.Marshal(map[string]any{"title": title, "body": body})
+	if err != nil {
+		return err
+	}
+	u := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.baseURL(), owner, repo, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.Token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode/100 != 2 {
+		reasons, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("updating pull request %d: %s: %s", number, resp.Status, strings.TrimSpace(string(reasons)))
+	}
+	return nil
 }
