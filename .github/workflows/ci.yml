@@ -496,6 +496,14 @@ jobs:
       - name: a bead says what blocks it, in the right direction
         run: psql -v ON_ERROR_STOP=1 -f test/integration/a_bead_says_what_blocks_it.sql
 
+      # The outcome is derived twice -- once for one bead, once for a list --
+      # and the two must agree, or the project page and the bead page tell a
+      # reader different things about the same bead. Compared over every bead
+      # in the database rather than a fixture, because the interesting cases
+      # are the ones real data produces.
+      - name: the two outcome derivations agree
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/a_bead_says_what_happened.sql
+
       # A heartbeat must never land on a finished job. A stale heartbeat is
       # what tells somebody a run is stuck, so one that can be recorded against
       # a completed row destroys the signal it exists to provide.

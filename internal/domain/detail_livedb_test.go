@@ -133,6 +133,13 @@ func TestProjectDetailReadsListsThroughTheDriver(t *testing.T) {
 			}
 		case "drv-1":
 			sawBlocker = true
+			// The outcome column, read through the same driver. Neither
+			// fixture bead has a job, so both are never_dispatched -- and a
+			// list that cannot say this showed a bead that ran and delivered
+			// nothing as though nobody had touched it.
+			if w.Outcome != "never_dispatched" {
+				t.Errorf("drv-1 outcome is %q, wanted never_dispatched", w.Outcome)
+			}
 			// The direction again, from the Go side this time.
 			if len(w.Blocking) != 1 || w.Blocking[0] != "drv-2" {
 				t.Errorf("drv-1 blocking is %v, wanted [drv-2]", w.Blocking)

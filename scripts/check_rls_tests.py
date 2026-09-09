@@ -32,6 +32,13 @@ TESTS = ROOT / "test" / "integration"
 # Tests that legitimately run as the owner, with the reason. An entry here is a
 # claim that the file asserts nothing about who may READ a protected table.
 OWNER_ONLY = {
+    "a_bead_says_what_happened.sql":
+        "compares two SECURITY DEFINER derivations of the same outcome over "
+        "every bead, and the property is that they AGREE. As the owner it sees "
+        "every bead, which is what makes the comparison exhaustive -- dropping "
+        "to workgraph_app would narrow the set and weaken the pin. Who may "
+        "read work_refs is covered by rls_isolation.sql and "
+        "project_creation_visibility.sql.",
     "a_bead_says_what_blocks_it.sql":
         "asserts which dependency edges system_project_bead_blockers recorded "
         "and, above all, in which DIRECTION -- from blocks to. Every write is "

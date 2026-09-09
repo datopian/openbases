@@ -11,6 +11,8 @@ export interface DepNode {
   title: string;
   status: string;
   blockedBy: string[];
+  /** What happened to it, when something has. */
+  outcome?: string;
 }
 
 export type Readiness =
@@ -20,6 +22,20 @@ export type Readiness =
   | "ready"
   /** Open, with at least one open blocker. */
   | "blocked"
+  /**
+   * Dispatched already, and it did not deliver.
+   *
+   * The state this whole field exists for. A run that exits zero and leaves
+   * the bead open is an agent reporting it could not finish, and a run that
+   * failed outright is worse -- and both used to be drawn as `ready`, in
+   * green, identical to work nobody had touched. Somebody looking at the
+   * graph to decide what to do next would pick it up again and get the same
+   * nothing.
+   *
+   * Ranked ahead of readiness deliberately: whether a bead is startable
+   * matters less than whether starting it has already been tried.
+   */
+  | "attention"
   /** Named as a blocker but not in this project's work. */
   | "external";
 
@@ -71,6 +87,22 @@ export function layout(nodes: DepNode[]): Layout {
       hasEdge.add(b);
     }
   }
+
+  // A bead that has already been tried and delivered nothing is drawn even
+  // with no edges.
+  //
+  // The reason for hiding an unconnected bead is noise: thirty-eight dots
+  // would drown a chain of twelve. That reason does not apply here, and the
+  // reason against hiding it is stronger -- sa-iyu ran for 5m45s, delivered
+  // nothing, has no dependencies, and was therefore not in the graph AT ALL.
+  // The one bead a reader most needed to see was the one the noise rule
+  // removed.
+  const needsAttention = (n: DepNode) =>
+    !isClosed(n.status) && (n.outcome === "blocked" || n.outcome === "failed");
+  for (const n of nodes) {
+    if (needsAttention(n)) hasEdge.add(n.bead);
+  }
+
   const isolated = nodes.filter((n) => !hasEdge.has(n.bead)).map((n) => n.bead);
 
   // Blockers named but not present: another project's work, or a cross-graph
@@ -122,6 +154,9 @@ export function layout(nodes: DepNode[]): Layout {
     const n = byId.get(id);
     if (!n) return "external";
     if (isClosed(n.status)) return "done";
+    // Before readiness, because "this was already tried and produced nothing"
+    // is more useful than "this could be started".
+    if (n.outcome === "blocked" || n.outcome === "failed") return "attention";
     // Ready means every blocker is CLOSED, which is what `bd ready` means. A
     // blocker this page cannot see is treated as unfinished: claiming work is
     // ready on the strength of a status nobody knows is the wrong way to be
@@ -135,7 +170,15 @@ export function layout(nodes: DepNode[]): Layout {
 
   // Ordered within a layer by readiness then id, so the eye finds startable
   // work first and the arrangement does not move between renders.
-  const rank: Record<Readiness, number> = { ready: 0, blocked: 1, external: 2, done: 3 };
+  // attention first: a bead that has already been tried and delivered nothing
+  // is the thing a reader most needs to see.
+  const rank: Record<Readiness, number> = {
+    attention: 0,
+    ready: 1,
+    blocked: 2,
+    external: 3,
+    done: 4,
+  };
   const placed: Placed[] = ids
     .map((id) => {
       const n = byId.get(id);

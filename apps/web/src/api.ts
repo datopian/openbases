@@ -110,6 +110,22 @@ export interface ProjectWorkItem {
   blocked_by?: string[];
   /** Beads waiting on this one: what finishing it releases. */
   blocking?: string[];
+  /**
+   * What happened to it, when something has.
+   *
+   * `blocked` is the important one: a run that exited zero and left the bead
+   * open, which is an agent reporting it could not finish. Without this a
+   * bead that ran for six minutes and delivered nothing looked exactly like
+   * one nobody had picked up.
+   */
+  outcome?:
+    | "never_dispatched"
+    | "queued"
+    | "running"
+    | "failed"
+    | "landed"
+    | "blocked"
+    | "done";
 }
 
 export interface ProjectDetail extends ProjectSummary {
