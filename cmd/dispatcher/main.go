@@ -289,7 +289,7 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// fixed; the pull request body says which it was, so a reviewer is not
 	// misled about how finished it is.
 	if job.Kind == work.KindWork {
-		d.landWork(ctx, *job, jobRig, out, tree, checked, runErr == nil)
+		d.landWork(ctx, *job, jobRig, out, tree, checked, runErr)
 	}
 
 	d.report(ctx, job.ID, work.Result{OK: runErr == nil, Output: out})
@@ -1190,7 +1190,7 @@ func parseGitHubRemote(url string) (owner, name string, ok bool) {
 // failed job would misreport the work, and the changes stay in the working
 // tree either way, which is where they were before any of this existed.
 func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string,
-	before []landing.Change, checked *check.Result, ok bool) {
+	before []landing.Change, checked *check.Result, runErr error) {
 	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
 	if _, err := os.Stat(dir); err != nil {
 		// A rig with no refinery working tree holds no code to change. The
@@ -1240,7 +1240,7 @@ func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string
 		d.log.Warn("the landing was not clean", "bead", job.Bead, "warning", res.Warning)
 	}
 
-	url, err := d.openPullRequest(ctx, job, rig, res, base, summary, title, checked, ok)
+	url, err := d.openPullRequest(ctx, job, rig, res, base, summary, title, checked, runErr)
 	if err != nil {
 		d.log.Error("opening a pull request", "bead", job.Bead,
 			"branch", res.Branch, "error", err)
@@ -1263,14 +1263,28 @@ func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string
 // openPullRequest asks the control plane to open it. The node cannot: opening
 // one needs the App key, and the key stays on the control node.
 func (d *dispatcher) openPullRequest(ctx context.Context, job work.Job, rig string,
-	res *landing.Result, base, summary, title string, checked *check.Result, ok bool) (string, error) {
+	res *landing.Result, base, summary, title string, checked *check.Result, runErr error) (string, error) {
+
+	ok := runErr == nil
 
 	// What the reviewer needs to know first is whether the agent thought it
 	// had finished, because a pull request from an unfinished run looks
 	// identical to one from a finished one.
 	state := "The agent closed the bead."
 	if !ok {
-		state = "The run FAILED. The change is here because it exists, not because it is finished."
+		// Named, not merely reported.
+		//
+		// "The run FAILED" on its own is what a reviewer got, and with the
+		// stall stop it is all they got: wg-runner is signalled, so it prints
+		// no status line, agentSummary finds no marker and returns nothing,
+		// and the pull request carries a failure with no evidence anywhere in
+		// it. The dispatcher knows the reason -- "nothing written for 10m1s
+		// (no output, no file changed)" -- and it is one sentence.
+		state = "The run FAILED. The change is here because it exists, not " +
+			"because it is finished."
+		if reason := strings.TrimSpace(runErr.Error()); reason != "" {
+			state += "\n\nWhy it ended: `" + reason + "`"
+		}
 	} else if job.Bead != "" {
 		state = "The agent completed its run. See the bead for whether it closed it."
 	}
@@ -1296,7 +1310,7 @@ func (d *dispatcher) openPullRequest(ctx context.Context, job work.Job, rig stri
 	}
 
 	body := "Bead `" + job.Bead + "`.\n\n" + state + "\n\n" + checkedLine + "\n\n" +
-		"Files: `" + strings.Join(res.Files, "`, `") + "`\n\n" +
+		fileSummary(res.Files) + "\n\n" +
 		"Opened by a Workgraph agent run. Nobody has reviewed this."
 	body += tail(summary)
 
@@ -1415,6 +1429,57 @@ func agentSummary(bead, out string) string {
 		}
 	}
 	return ""
+}
+
+// fileSummary describes what changed, at a size a person will read.
+//
+// The list used to be every path inline, backticked and comma-separated. For a
+// scaffold that is 77 of them in one paragraph -- accurate, and the least
+// readable thing in the pull request once the transcript had been folded away.
+// A reviewer wants the shape first: which trees were touched and how much.
+//
+// Small changes are still listed in full, because for three files a summary is
+// worse than the thing it summarises.
+func fileSummary(files []string) string {
+	if len(files) == 0 {
+		return "No files changed."
+	}
+	if len(files) <= 10 {
+		return "Files: `" + strings.Join(files, "`, `") + "`"
+	}
+
+	// Grouped by top-level entry, in the order they first appear, so the
+	// summary reads like the tree rather than like a sorted index.
+	type group struct {
+		name string
+		n    int
+	}
+	var groups []group
+	at := map[string]int{}
+	for _, f := range files {
+		top := f
+		if i := strings.Index(f, "/"); i >= 0 {
+			top = f[:i] + "/"
+		}
+		if idx, ok := at[top]; ok {
+			groups[idx].n++
+			continue
+		}
+		at[top] = len(groups)
+		groups = append(groups, group{name: top, n: 1})
+	}
+
+	parts := make([]string, 0, len(groups))
+	for _, g := range groups {
+		if g.n == 1 && !strings.HasSuffix(g.name, "/") {
+			parts = append(parts, "`"+g.name+"`")
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("`%s` (%d)", g.name, g.n))
+	}
+
+	return fmt.Sprintf("**%d files changed:** %s\n\n<details><summary>every path</summary>\n\n```\n%s\n```\n\n</details>",
+		len(files), strings.Join(parts, ", "), strings.Join(files, "\n"))
 }
 
 // ansi matches the escape sequences a terminal harness writes.

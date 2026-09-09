@@ -465,7 +465,8 @@ func TestThePostedPullRequestBodyIsReadable(t *testing.T) {
 	_, err := d.openPullRequest(context.Background(),
 		work.Job{ID: "j1", Bead: "sa-7dc"}, "msf",
 		&landing.Result{Branch: "bead/sa-7dc", Commit: "abc", Files: []string{"README.md"}},
-		"main", transcript, "Scaffold a portal", nil, false)
+		"main", transcript, "Scaffold a portal", nil,
+		errors.New("stalled: nothing written for 10m1s"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,6 +479,17 @@ func TestThePostedPullRequestBodyIsReadable(t *testing.T) {
 	if !strings.Contains(body, "<details><summary>Run log") {
 		t.Errorf("the transcript was not folded away in the posted body:\n%s", body)
 	}
+	// The reason the run ended reaches the body, from the error the caller
+	// passed. Asserted on the POSTED body rather than on a helper, because
+	// that distinction is what let the raw-transcript bug survive its first
+	// test: a check on a helper the caller might not use is not a check.
+	if !strings.Contains(body, "Why it ended:") {
+		t.Errorf("a failed run's body does not say why it ended:\n%s", body)
+	}
+	if !strings.Contains(body, "nothing written for 10m1s") {
+		t.Errorf("the body does not carry the stall reason:\n%s", body)
+	}
+
 	// The things a reviewer needs are still there and still plain.
 	for _, want := range []string{"sa-7dc", "The run FAILED", "README.md"} {
 		if !strings.Contains(body, want) {
@@ -593,5 +605,52 @@ func TestARunIsStoppedWhenItStopsProducingNotWhenTheClockRunsOut(t *testing.T) {
 	// A stall stop must not be a rollback.
 	if _, err := os.Stat(filepath.Join(checkout, "file-6.txt")); err != nil {
 		t.Errorf("the stalled run's work was lost: %v", err)
+	}
+}
+
+// A reviewer is told the shape of the change and why the run ended.
+//
+// Both halves were missing from datopian/msf#1 after the transcript was folded
+// away. The file list was 77 backticked paths in one paragraph -- accurate and
+// the least readable thing left in the body -- and the failure was reported as
+// the bare words "The run FAILED", with no reason and, because a signalled
+// wg-runner prints no status line, no log either.
+func TestTheBodySaysTheShapeOfTheChangeAndWhyTheRunEnded(t *testing.T) {
+	// Small changes are still listed in full: for three files a summary is
+	// worse than the thing it summarises.
+	small := fileSummary([]string{"README.md", "portal/package.json"})
+	if !strings.Contains(small, "`README.md`") || strings.Contains(small, "<details>") {
+		t.Errorf("a small change was summarised instead of listed: %s", small)
+	}
+
+	// A big one is grouped, counted, and its full list folded away.
+	var many []string
+	for i := 0; i < 74; i++ {
+		many = append(many, fmt.Sprintf("portal/components/C%d.tsx", i))
+	}
+	many = append(many, "README.md", "ARCHITECTURE.md", "docs/adr/0001-x.md")
+
+	got := fileSummary(many)
+	if !strings.Contains(got, "**77 files changed:**") {
+		t.Errorf("the count is not stated: %s", got)
+	}
+	if !strings.Contains(got, "`portal/` (74)") {
+		t.Errorf("the tree that took the change is not named with its size: %s", got)
+	}
+	// The single files are named rather than counted, because "(1)" tells a
+	// reviewer less than the name does.
+	if !strings.Contains(got, "`README.md`") || !strings.Contains(got, "`ARCHITECTURE.md`") {
+		t.Errorf("single files were not named: %s", got)
+	}
+	if !strings.Contains(got, "<details><summary>every path</summary>") {
+		t.Errorf("the full list is not available at all: %s", got)
+	}
+	// Not 77 paths in the prose.
+	head := strings.SplitN(got, "<details>", 2)[0]
+	if strings.Count(head, "portal/components/") > 1 {
+		t.Errorf("individual paths leaked into the summary line: %s", head)
+	}
+	if got := fileSummary(nil); !strings.Contains(got, "No files changed") {
+		t.Errorf("an empty change reads as %q", got)
 	}
 }

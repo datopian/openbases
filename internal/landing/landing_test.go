@@ -939,3 +939,56 @@ func TestRestoreDoesNotResurrectAnEarlierRunsScratch(t *testing.T) {
 		t.Errorf("this run's own work was not landed:\n%s", out)
 	}
 }
+
+// A log a tool wrote is not the run's work.
+//
+// `portal/.npm-ci.log` reached datopian/msf#1: the agent redirected `npm ci`
+// into it and left it behind, so it arrived in somebody's repository beside
+// the portal.
+func TestAToolsLogIsNotCommitted(t *testing.T) {
+	dir, git := repo(t)
+
+	write(t, dir, "portal/package.json", `{"name":"portal"}`)
+	write(t, dir, "portal/.npm-ci.log", "npm WARN deprecated\n")
+	write(t, dir, "npm-debug.log", "trace\n")
+
+	res, err := Land(git, Spec{Bead: "sa-log", Title: "Scaffold", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed")
+	}
+	out, err := git("show", "--name-only", "--format=", res.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, ".log") {
+		t.Errorf("a tool's log was committed:\n%s", out)
+	}
+	if !strings.Contains(out, "portal/package.json") {
+		t.Errorf("the run's work was not committed:\n%s", out)
+	}
+
+	// But a log the repository TRACKS keeps landing its edits, like anything
+	// else it has decided to keep.
+	write(t, dir, "audit.log", "v1\n")
+	if _, err := git("add", "-f", "audit.log"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("commit", "-m", "the repository tracks this log"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("push", "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "audit.log", "v2, edited by the run\n")
+
+	res, err = Land(git, Spec{Bead: "sa-log2", Title: "Update the log", Base: "main"})
+	if err != nil {
+		t.Fatalf("a tracked log's edit was refused: %v", err)
+	}
+	if res == nil || !slices.Contains(res.Files, "audit.log") {
+		t.Fatalf("the repository tracks audit.log and its edit was dropped: %+v", res)
+	}
+}

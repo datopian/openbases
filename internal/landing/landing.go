@@ -112,6 +112,11 @@ var Ephemeral = []string{
 	// fix; this is here so that when one does it anyway, the mistake does not
 	// reach somebody's repository.
 	".verify-tmp/", ".tmp/", ".scratch/", ".agent-tmp/",
+	// A tool's own log. `portal/.npm-ci.log` reached datopian/msf#1 -- the
+	// agent redirected `npm ci` into it and left it behind. Matched as a
+	// fragment, so `.npm-ci.log` and `npm-debug.log` both go, and only when
+	// untracked and new: a repository that tracks a log file keeps it.
+	"*.log",
 }
 
 // Change is one path the run touched.
