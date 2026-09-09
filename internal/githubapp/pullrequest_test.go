@@ -2,6 +2,9 @@ package githubapp
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -66,5 +69,67 @@ func TestOpenPullRequestRefusesHeadEqualToBase(t *testing.T) {
 		Owner: "o", Repo: "r", Head: "main", Base: "main", Title: "t"})
 	if err == nil || !strings.Contains(err.Error(), "did not create a branch") {
 		t.Fatalf("expected a branch-specific error, got %v", err)
+	}
+}
+
+// A reused pull request's description is rewritten to match its diff.
+//
+// A re-dispatched bead pushes to the same branch and reuses its pull request,
+// deliberately -- work re-dispatched must not multiply pull requests. But the
+// description was written by the FIRST landing and never touched again, so it
+// went stale the moment a later run changed the diff. datopian/msf#1 listed
+// `node_modules/` among its files for hours after the branch stopped
+// containing any, and a reviewer cannot tell which half is out of date.
+func TestUpdatePullRequestRewritesTitleAndBody(t *testing.T) {
+	var method, path, got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		got = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"number":1}`)
+	}))
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, HTTPClient: srv.Client()}
+	tok := &InstallationToken{Token: "tok"}
+
+	if err := c.UpdatePullRequest(context.Background(), tok, "datopian", "msf", 1,
+		"Scaffold a portal (sa-7dc)", "the current description"); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPatch {
+		t.Errorf("method = %s, want PATCH: anything else would open a second "+
+			"pull request rather than correct this one", method)
+	}
+	if path != "/repos/datopian/msf/pulls/1" {
+		t.Errorf("path = %s", path)
+	}
+	for _, want := range []string{"the current description", "Scaffold a portal (sa-7dc)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the request does not carry %q: %s", want, got)
+		}
+	}
+
+	// Refused before a request, the way every other call in this file is, so
+	// the caller gets a sentence rather than a 401 to interpret.
+	if err := c.UpdatePullRequest(context.Background(), nil, "o", "r", 1, "t", "b"); err == nil {
+		t.Error("a nil token must be refused")
+	}
+	if err := c.UpdatePullRequest(context.Background(), tok, "o", "r", 0, "t", "b"); err == nil {
+		t.Error("a zero pull request number must be refused")
+	}
+
+	// A non-2xx is an error rather than a silent success: the whole point is
+	// that the description matches, and a failure that reports ok leaves it
+	// contradicting the diff with nobody told.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = io.WriteString(w, `{"message":"nope"}`)
+	}))
+	defer bad.Close()
+	c2 := &Client{BaseURL: bad.URL, HTTPClient: bad.Client()}
+	if err := c2.UpdatePullRequest(context.Background(), tok, "o", "r", 1, "t", "b"); err == nil {
+		t.Error("a 422 must be reported, not swallowed")
 	}
 }
