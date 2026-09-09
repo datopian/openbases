@@ -37,7 +37,8 @@ ExecStart={{ dispatcher_binary }} \
   -cell-root {{ cells_root }}/{{ cell.name }} \
   -rig {{ dispatcher_rig }} \
   -interval {{ dispatcher_interval }} \
-  -deadline {{ dispatcher_deadline }}
+  -deadline {{ dispatcher_deadline }} \
+  -stall {{ dispatcher_stall }}
 
 # Restart, because this is the thing that makes work happen. A dispatcher that
 # died quietly would look exactly like a queue nobody is adding to.

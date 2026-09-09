@@ -9,10 +9,26 @@ proc_admin_gid: 4
 # Ceiling on how long any agent process may live, enforced by a timer as a
 # backstop to the dispatch script's own teardown.
 #
-# 45 minutes is generous for the work these cells do — a completed task has
-# taken under three minutes — while bounding the cost of a forgotten town to
-# roughly one patrol cycle rather than a day.
-agent_max_runtime_minutes: 45
+# The reaper's backstop: an agent process older than this is killed whatever
+# else is or is not running.
+#
+# Was 45 minutes, on the grounds that "a completed task has taken under three
+# minutes". That stopped being true the day agents got a shell: installing
+# dependencies and running a build are minutes of wall clock, and sa-7dc's
+# useful first run was still working at fifteen.
+#
+# Now above dispatcher_deadline (3h) rather than below it, because the two have
+# swapped roles. The dispatcher stops a run when it STALLS, which is the limit
+# that tracks whether work is happening; this is the last resort for an agent
+# whose dispatcher has died and which is therefore being watched by nobody.
+# check_infra.py asserts the ordering, and caught this file when only one of
+# the two numbers had been changed.
+#
+# The honest cost of the change: a stalled agent whose dispatcher has also died
+# now burns up to wg-runner's own 3h deadline instead of 45 minutes. A stalled
+# agent is usually not calling a model, and the expensive case -- a loop -- is
+# bounded by that same 3h.
+agent_max_runtime_minutes: 240
 
 # The deterministic witness (cmd/witness, ADR-0019). It replaces Gas Town's
 # Witness patrol agent, which is disabled by the gastown role.
@@ -115,7 +131,21 @@ wg_model_limits:
 # backstop for a forgotten agent, and a job deadline at or above it would make
 # the backstop the thing that ends every long run, with no record of which
 # limit was hit.
-dispatcher_deadline: 30m
+dispatcher_deadline: 3h
+
+# How long a run may produce NOTHING before the dispatcher stops it.
+#
+# This is the limit that matters, and the one above is now only a backstop.
+# Elapsed time was the wrong measurement: three of sa-7dc's four runs on
+# 2026-09-09 were killed by it in the middle of real work -- one had installed
+# dependencies and written a whole portal and was stopped at fifteen minutes --
+# while the run that deserved stopping spent thirty minutes writing no file at
+# all and was allowed its full allowance, because elapsed time cannot tell
+# those two apart.
+#
+# Progress is two facts, either sufficient: the agent wrote to its output, or
+# it changed a file in its checkout. Ten minutes of neither is not thinking.
+dispatcher_stall: 10m
 witness_binary: /usr/local/bin/wg-witness
 # How often to look at the event channel. This is a readdir, not a model call,
 # so the interval is chosen for responsiveness rather than cost.

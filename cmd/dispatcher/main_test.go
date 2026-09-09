@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -482,5 +483,115 @@ func TestThePostedPullRequestBodyIsReadable(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("the posted body does not mention %q:\n%s", want, body)
 		}
+	}
+}
+
+// A run that is producing is left alone; one that has gone quiet is stopped.
+//
+// Elapsed time was the wrong measurement and this is the test that says so.
+// Three of sa-7dc's four runs were killed mid-work by the old deadline -- one
+// had installed dependencies and written a whole portal -- while the run that
+// deserved stopping wrote no file for thirty minutes and was allowed its full
+// allowance, because elapsed time cannot tell those two apart.
+func TestARunIsStoppedWhenItStopsProducingNotWhenTheClockRunsOut(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	cellRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cellRoot, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cellRoot, ".claude", "settings.json"),
+		[]byte(`{"env":{"ANTHROPIC_CUSTOM_HEADERS":"cf-aig-authorization: Bearer tok"}}`),
+		0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	// A fake runner that writes to the checkout for a while, then goes silent
+	// without exiting -- the shape of a wedged agent.
+	runner := filepath.Join(t.TempDir(), "runner.sh")
+
+	// The checkout the dispatcher will actually watch.
+	//
+	// run() sets job.Checkout itself, from the cell root and the rig -- a
+	// caller cannot choose it. Passing one in the Job looked like it worked
+	// and was silently discarded, so the progress watcher was pointed at a
+	// directory that did not exist, saw no file change ever, and stopped the
+	// run while it was writing. This test failing that way is what found it.
+	checkout := filepath.Join(cellRoot, "town", "sandbox", "refinery", "rig")
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Writes for about three seconds, then goes quiet WITHOUT exiting.
+	//
+	// `sleep` is deliberately not exec'd, so a grandchild holds the output
+	// pipe open after the shell dies. That is the shape of a real run --
+	// wg-runner starts opencode -- and it is what makes SIGKILL insufficient:
+	// Wait blocks on the pipe until the grandchild finishes. An earlier
+	// version of this test used `exec sleep` to make the hang go away, which
+	// weakened the test to match the code instead of the other way round.
+	script := "#!/bin/sh\n" +
+		"for i in 1 2 3 4 5 6 7 8 9 10; do echo \"working $i\" > " + checkout + "/file-$i.txt; sleep 0.3; done\n" +
+		"sleep 600\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &dispatcher{
+		api: srv.URL, cell: "oss", rig: "sandbox", cellRoot: cellRoot,
+		runner: runner, http: srv.Client(),
+		deadline: time.Hour, // the ceiling must not be what ends this
+		stall:    2 * time.Second,
+		// Often enough to observe the run while it is still writing files,
+		// which is the half of this that must NOT trigger a stop.
+		tick: 200 * time.Millisecond,
+		log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	started := time.Now()
+	_, err := d.run(context.Background(),
+		work.Job{ID: "j1", Bead: "sa-7dc", Kind: "work", Cell: "oss", Rig: "sandbox"},
+		"")
+	took := time.Since(started)
+
+	if err == nil {
+		t.Error("a stalled run must report an error, not success: a run that produced " +
+			"nothing and reported ok is how a wedged agent looks finished")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Errorf("the error does not say why the run ended: %v", err)
+	}
+
+	// It must have survived the productive stretch. The script writes for
+	// ~2.4s, and the heartbeat ticks every 30s, so the first tick lands after
+	// the writing is done -- what this asserts is that the run was not killed
+	// before it finished producing, and was killed reasonably soon after.
+	// It survived the productive stretch. The script writes for ~3s and the
+	// loop looks every 200ms, so ticks land WHILE files are appearing: a run
+	// stopped before 3s was stopped while it was working, which is the bug
+	// this whole change is about. Only file changes signal progress here --
+	// the script writes to files, never to stdout -- so this is also what
+	// proves file changes count.
+	if took < 3*time.Second {
+		t.Errorf("the run was stopped after %s, while it was still writing files", took)
+	}
+	// And it was stopped promptly afterwards, rather than hanging. Without
+	// SIGTERM and WaitDelay, Wait blocks on the pipe the orphaned grandchild
+	// still holds and this run lasts as long as its sleep.
+	if took > 60*time.Second {
+		t.Errorf("the run took %s: it was not stopped promptly, which means the "+
+			"stop left an orphan holding the output pipe", took)
+	}
+
+	// And the work it did produce is still on disk for the landing to find.
+	// A stall stop must not be a rollback.
+	if _, err := os.Stat(filepath.Join(checkout, "file-6.txt")); err != nil {
+		t.Errorf("the stalled run's work was lost: %v", err)
 	}
 }
