@@ -97,3 +97,6 @@ __pycache__/
 /reconcile
 /runner
 /workspaced
+
+# Build output of apps/web's dependency-layout check (npm run check-deps).
+apps/web/.depcheck/
