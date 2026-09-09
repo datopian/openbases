@@ -40,6 +40,17 @@ type WorkItem struct {
 	Status   string     `json:"status"`
 	Cell     string     `json:"cell,omitempty"`
 	LastSeen *time.Time `json:"last_seen"`
+	// BlockedBy is the beads that must finish first, by id.
+	//
+	// Without this a flat list shows work that cannot start as though nobody
+	// had picked it up -- and dependency order is the whole point of `bd
+	// ready`. Empty means nothing blocks it, which is the common case and the
+	// reason the field is omitted rather than rendered as "none".
+	BlockedBy []string `json:"blocked_by,omitempty"`
+	// Blocking is the beads waiting on this one. Shown because it is the
+	// question a reader asks about a stuck bead: not "what is it waiting for"
+	// but "what does finishing it release".
+	Blocking []string `json:"blocking,omitempty"`
 }
 
 // RepositoryStatus is one repository and the pull requests projected for it.
@@ -164,7 +175,17 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 		// exactly one project.
 		work, err := tx.QueryContext(ctx, `
 			SELECT w.bead_id, COALESCE(w.title,''), COALESCE(w.kind,''),
-			       COALESCE(w.status,''), COALESCE(c.slug,''), w.last_seen_at
+			       COALESCE(w.status,''), COALESCE(c.slug,''), w.last_seen_at,
+			       COALESCE(ARRAY(SELECT f.bead_id
+			                        FROM work_links l
+			                        JOIN work_refs f ON f.id = l.from_work_ref
+			                       WHERE l.to_work_ref = w.id AND l.relation = 'blocks'
+			                       ORDER BY f.bead_id), '{}') AS blocked_by,
+			       COALESCE(ARRAY(SELECT t.bead_id
+			                        FROM work_links l
+			                        JOIN work_refs t ON t.id = l.to_work_ref
+			                       WHERE l.from_work_ref = w.id AND l.relation = 'blocks'
+			                       ORDER BY t.bead_id), '{}') AS blocking
 			  FROM work_refs w
 			  LEFT JOIN execution_cells c ON c.id = w.execution_cell_id
 			 WHERE w.project_id = $1::uuid
@@ -177,7 +198,8 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 		for work.Next() {
 			var it WorkItem
 			var seen sql.NullTime
-			if err := work.Scan(&it.Bead, &it.Title, &it.Kind, &it.Status, &it.Cell, &seen); err != nil {
+			if err := work.Scan(&it.Bead, &it.Title, &it.Kind, &it.Status, &it.Cell, &seen,
+				&it.BlockedBy, &it.Blocking); err != nil {
 				return err
 			}
 			if seen.Valid {

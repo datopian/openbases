@@ -811,6 +811,7 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 				Kind      string   `json:"kind"`
 				Status    string   `json:"status"`
 				Labels    []string `json:"labels"`
+				Blockers  []string `json:"blockers"`
 				Comment   string   `json:"comment"`
 				CommentAt string   `json:"comment_at"`
 				CommentBy string   `json:"comment_by"`
@@ -842,6 +843,41 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			}
 			projected++
 		}
+
+		// Links AFTER every bead, never during.
+		//
+		// A link needs both work_refs rows, and a blocker is frequently
+		// projected later in the same batch -- beads arrive in whatever order
+		// bd listed them. Recorded inside the loop, every forward reference
+		// would be silently dropped and the dependency graph would be
+		// half-empty in a way nothing complains about.
+		var unresolved int
+		for _, b := range payload.Beads {
+			if strings.TrimSpace(b.Bead) == "" || len(b.Blockers) == 0 {
+				continue
+			}
+			var missed int
+			if err := db.QueryRowContext(r.Context(),
+				`SELECT system_project_bead_blockers($1,$2,$3)`,
+				payload.Cell, b.Bead, beadLabels(b.Blockers)).Scan(&missed); err != nil {
+				// Logged and carried on. The beads themselves are projected
+				// and useful; failing the whole request over an edge would
+				// lose the work list to save the graph.
+				log.Warn("recording what blocks a bead", "cell", payload.Cell,
+					"bead", b.Bead, "error", err)
+				continue
+			}
+			unresolved += missed
+		}
+		if unresolved > 0 {
+			// Counted rather than silent: Beads expresses a cross-graph
+			// dependency as external:<prefix>:<id>, and a blocker in a graph
+			// this cell does not project cannot be recorded. That is expected
+			// and worth being able to see.
+			log.Info("some blockers are not projected here",
+				"cell", payload.Cell, "unresolved", unresolved)
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{"projected": projected})
 	})
 

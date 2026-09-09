@@ -464,6 +464,14 @@ jobs:
       - name: a project graph keeps its prefix and a new one derives a stable one
         run: psql -v ON_ERROR_STOP=1 -f test/integration/a_project_graph_is_wanted.sql
 
+      # work_links has existed since 0001 with a 'blocks' relation and never
+      # held a row in production: nothing projected dependencies. The direction
+      # is what this guards -- from BLOCKS to -- because inverting it shows a
+      # reader the exact opposite of the truth, and both mistakes look
+      # identical until somebody acts on one.
+      - name: a bead says what blocks it, in the right direction
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/a_bead_says_what_blocks_it.sql
+
       # An agent has no shell, so the repository's own command is what says
       # whether its change works. Opt-in per repository, because running it
       # executes code from the repository as the cell user.

@@ -517,9 +517,17 @@ type beadRow struct {
 	// 4 September three runs exited 0, left their beads open, and explained in
 	// a comment that they could not proceed — and they were reachable only by
 	// reading the graph on this node. Carried up so a person can see them.
-	Comment   string `json:"comment,omitempty"`
-	CommentAt string `json:"comment_at,omitempty"`
-	CommentBy string `json:"comment_by,omitempty"`
+	// Blockers are the beads this one depends on, by id.
+	//
+	// bd has been returning these all along, in `dependencies` with a
+	// depends_on_id and a type, and the projection read past them -- so
+	// work_links held no rows in production and the project page showed work
+	// that cannot start as though nobody had picked it up. Omitted when empty,
+	// so an older control plane sees the payload it always saw.
+	Blockers  []string `json:"blockers,omitempty"`
+	Comment   string   `json:"comment,omitempty"`
+	CommentAt string   `json:"comment_at,omitempty"`
+	CommentBy string   `json:"comment_by,omitempty"`
 	// commentCount is bd's own count, used to decide whether to ask for the
 	// comments at all. Not sent upward.
 	commentCount int
@@ -564,6 +572,24 @@ func (d *dispatcher) readBeads(ctx context.Context, rig string) ([]beadRow, erro
 		row.Status, _ = r["status"].(string)
 		if n, ok := r["comment_count"].(float64); ok {
 			row.commentCount = int(n)
+		}
+		// Only `blocks` dependencies. bd also records `tracks`, which is a
+		// reference rather than an ordering constraint -- treating it as a
+		// blocker would show work as unstartable when it is merely related.
+		if deps, ok := r["dependencies"].([]any); ok {
+			for _, d := range deps {
+				dep, ok := d.(map[string]any)
+				if !ok {
+					continue
+				}
+				if kind, _ := dep["type"].(string); kind != "blocks" {
+					continue
+				}
+				on, _ := dep["depends_on_id"].(string)
+				if strings.TrimSpace(on) != "" {
+					row.Blockers = append(row.Blockers, on)
+				}
+			}
 		}
 		// bd omits the field entirely for a bead with no labels rather than
 		// emitting an empty list, so absence has to be tolerated.
