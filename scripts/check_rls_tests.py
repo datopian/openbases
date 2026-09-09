@@ -32,6 +32,12 @@ TESTS = ROOT / "test" / "integration"
 # Tests that legitimately run as the owner, with the reason. An entry here is a
 # claim that the file asserts nothing about who may READ a protected table.
 OWNER_ONLY = {
+    "a_bead_says_what_blocks_it.sql":
+        "asserts which dependency edges system_project_bead_blockers recorded "
+        "and, above all, in which DIRECTION -- from blocks to. Every write is "
+        "through a SECURITY DEFINER function the node calls with no app user, "
+        "and the property is the edge rather than who may see work_links, "
+        "which rls_isolation.sql and hq_graph.sql cover.",
     "a_project_graph_is_wanted.sql":
         "asserts what system_graph_wanted_for_project returns: the RECORDED "
         "prefix for a graph that exists, because every bead id in it depends "

@@ -106,6 +106,10 @@ export interface ProjectWorkItem {
   status: string;
   cell?: string;
   last_seen: string | null;
+  /** Beads that must finish first. Absent when nothing blocks this one. */
+  blocked_by?: string[];
+  /** Beads waiting on this one: what finishing it releases. */
+  blocking?: string[];
 }
 
 export interface ProjectDetail extends ProjectSummary {

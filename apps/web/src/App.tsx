@@ -479,6 +479,20 @@ export function ProjectWork({
     <>
       <p style={{ ...css.muted, fontSize: "0.8rem", marginTop: 0 }}>
         {rows.length} bead{rows.length === 1 ? "" : "s"}, {open} still open
+        {(() => {
+          // The freshest projection in the list. One fact about the view,
+          // rather than the same timestamp repeated on every row -- and it is
+          // the number that tells a reader whether to trust any of this.
+          const newest = rows
+            .map((r) => r.last_seen)
+            .filter((t): t is string => !!t)
+            .sort()
+            .at(-1);
+          if (!newest) return " — never projected";
+          return isStale(newest)
+            ? ` — last projected ${age(newest)}, so this may be out of date`
+            : ` — projected ${age(newest)}`;
+        })()}
       </p>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
@@ -487,7 +501,21 @@ export function ProjectWork({
             <th style={css.th}>Title</th>
             <th style={css.th}>Kind</th>
             <th style={css.th}>Status</th>
-            <th style={css.th}>Seen</th>
+            {/*
+              No "Seen" column.
+
+              It read "just now" on every row, for ever: the dispatcher
+              projects the whole cell on every pass, a few seconds apart, so
+              last_seen is always now. A column whose value never varies is not
+              information, and worse, it teaches a reader to skip it -- so on
+              the day projection actually stops, the one row that matters is in
+              the column nobody reads.
+
+              The freshness of the whole view is one fact, stated once above
+              the table, and staleness appears per row only when there is
+              something to say.
+            */}
+            <th style={css.th}>Blocked by</th>
           </tr>
         </thead>
         <tbody>
@@ -506,12 +534,35 @@ export function ProjectWork({
                 {w.title || <span style={css.muted}>untitled</span>}
               </td>
               <td style={{ ...css.td, ...css.muted }}>{w.kind || "—"}</td>
-              <td style={css.td}>{w.status || "—"}</td>
-              <td
-                style={{ ...css.td, ...css.muted, fontSize: "0.8rem" }}
-                title={w.last_seen ?? "never projected"}
-              >
-                {age(w.last_seen)}
+              <td style={css.td}>
+                {w.status || "—"}
+                {isStale(w.last_seen) && (
+                  <span
+                    style={{ ...css.muted, fontSize: "0.75rem", color: "#a33" }}
+                    title={w.last_seen ?? "never projected"}
+                  >
+                    {" "}
+                    — not seen {age(w.last_seen)}
+                  </span>
+                )}
+              </td>
+              <td style={{ ...css.td, fontSize: "0.8rem" }}>
+                {w.blocked_by && w.blocked_by.length > 0 ? (
+                  <span title="This bead cannot start until these are closed">
+                    {w.blocked_by.map((b, i) => (
+                      <span key={b}>
+                        {i > 0 ? ", " : ""}
+                        <BeadLink bead={b} />
+                      </span>
+                    ))}
+                  </span>
+                ) : w.blocking && w.blocking.length > 0 ? (
+                  <span style={css.muted} title="Nothing blocks this bead, and these are waiting on it">
+                    ready — {w.blocking.length} waiting
+                  </span>
+                ) : (
+                  <span style={css.muted}>—</span>
+                )}
               </td>
             </tr>
           ))}
