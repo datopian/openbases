@@ -48,6 +48,18 @@ func repo(t *testing.T) (dir string, git Git) {
 	return dir, Exec(dir, root)
 }
 
+// write creates a file and every directory above it.
+func write(t *testing.T, dir, rel, body string) {
+	t.Helper()
+	full := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // gastown's plumbing is never committed to somebody else's repository.
 //
 // `gt rig add` writes .beads/redirect into every rig's refinery checkout --
@@ -600,4 +612,100 @@ func TestARefreshRefusesRatherThanDiscarding(t *testing.T) {
 			t.Errorf("the refresh moved off our own commit:\n%s", out)
 		}
 	})
+}
+
+// A dependency tree the run installed is never committed.
+//
+// This is the regression from datopian/msf#1. The bead asked for a PortalJS
+// scaffold, the agent -- newly holding a shell -- ran `npm install`, and the
+// landing committed what came back: 378 of the 454 files in that pull request
+// were node_modules, +84,804 lines. The repository had just been created and
+// had no root .gitignore, so nothing else was going to stop it.
+func TestADependencyTreeTheRunInstalledIsNotCommitted(t *testing.T) {
+	dir, git := repo(t)
+
+	// What the agent produced: a real edit, and a node_modules beside it.
+	write(t, dir, "portal/package.json", `{"name":"portal"}`)
+	write(t, dir, "node_modules/next/index.js", "module.exports = {}\n")
+	write(t, dir, "node_modules/.package-lock.json", "{}")
+	// And build output, from the `npm run build` the instructions ask for.
+	write(t, dir, "portal/.next/BUILD_ID", "abc123")
+
+	res, err := Land(git, Spec{Bead: "sa-7dc", Title: "Scaffold a portal", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("the real edit was not landed")
+	}
+
+	for _, f := range res.Files {
+		if strings.Contains(f, "node_modules") || strings.Contains(f, ".next") {
+			t.Errorf("committed %q", f)
+		}
+	}
+	// `git status` reports a wholly-new directory as the directory, so the
+	// landed path is `portal/` rather than each file under it. The commit is
+	// asserted below; what matters here is that the work was not dropped.
+	if len(res.Files) == 0 {
+		t.Errorf("the run's actual work was not committed: %v", res.Files)
+	}
+	// Reported rather than silently dropped, so the pull request can say what
+	// was left behind.
+	if len(res.Skipped) == 0 {
+		t.Error("node_modules was skipped and not reported")
+	}
+
+	// And the commit itself, not just the report -- the report is derived from
+	// the same list that decides the staging, so on its own it would agree
+	// with itself while the tree said otherwise.
+	// By BRANCH, not HEAD: the tree is returned to the base after a landing,
+	// so HEAD is main again and this would assert against the wrong commit --
+	// and pass, because main has no node_modules in it either.
+	out, err := git("show", "--name-only", "--format=", res.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "node_modules") || strings.Contains(out, ".next") {
+		t.Errorf("the commit contains build output:\n%s", out)
+	}
+	// And the real work IS in it -- otherwise a landing that committed
+	// nothing at all would satisfy every assertion above.
+	if !strings.Contains(out, "portal/package.json") {
+		t.Errorf("the commit does not contain the run's work:\n%s", out)
+	}
+}
+
+// A repository that TRACKS its dependencies or its built output keeps them.
+//
+// The rule is untracked-and-new, not the name alone. Some repositories commit
+// a vendored dist/ deliberately, and a list of directory names that overrode
+// that would quietly stop landing their edits -- the same class of bug as
+// committing node_modules, in the opposite direction and harder to notice.
+func TestATrackedBuildDirectoryStillLands(t *testing.T) {
+	dir, git := repo(t)
+
+	// The repository commits dist/ itself, before the run.
+	write(t, dir, "dist/bundle.js", "// v1\n")
+	if _, err := git("add", "dist/bundle.js"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("commit", "-m", "vendored dist"); err != nil {
+		t.Fatal(err)
+	}
+	// Pushed, so the landing's fetch-and-ff-only sees no divergence.
+	if _, err := git("push", "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The run edits that tracked file.
+	write(t, dir, "dist/bundle.js", "// v2, edited by the run\n")
+
+	res, err := Land(git, Spec{Bead: "sa-1zz", Title: "Update the bundle", Base: "main"})
+	if err != nil {
+		t.Fatalf("a tracked dist/ edit was refused: %v", err)
+	}
+	if res == nil || !slices.Contains(res.Files, "dist/bundle.js") {
+		t.Fatalf("the repository tracks dist/ and its edit was dropped: %+v", res)
+	}
 }
