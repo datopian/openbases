@@ -1,6 +1,7 @@
 package landing
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -990,5 +991,131 @@ func TestAToolsLogIsNotCommitted(t *testing.T) {
 	}
 	if res == nil || !slices.Contains(res.Files, "audit.log") {
 		t.Fatalf("the repository tracks audit.log and its edit was dropped: %+v", res)
+	}
+}
+
+// A landing that failed does not stop every landing after it.
+//
+// This is the wedge on the msf rig, reproduced. A landing failed at the
+// commit-time assertion AFTER staging, and nothing put the tree back: it was
+// left on bead/sa-7dc with 77 files staged, portal/.npm-ci.log among them.
+//
+// That poisoned every run after it. `git status` reports a leftover staged
+// file as `A `, not `??`, so isEphemeral -- which keys on `??` -- read the npm
+// log as the run's work, staged it, tripped the same assertion, failed, and
+// left the same index behind. The bead could not land again at all, and each
+// attempt reported a refusal about a file no run had chosen to commit.
+func TestAFailedLandingDoesNotWedgeTheRig(t *testing.T) {
+	dir, git := repo(t)
+
+	// Exactly the state found on the node: on the bead's branch, with the
+	// run's work staged and a tool's log staged with it.
+	write(t, dir, "portal/package.json", `{"name":"portal"}`)
+	write(t, dir, "portal/.npm-ci.log", "npm WARN\n")
+	if _, err := git("checkout", "-B", Branch("sa-7dc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("add", "-f", "portal"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The premise: the leftover reads as staged, not untracked, which is what
+	// made the classifier get it wrong.
+	before, err := git("status", "--porcelain", "-uall")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(before, "A  portal/.npm-ci.log") {
+		t.Fatalf("the premise does not hold: the log is not left staged:\n%s", before)
+	}
+
+	// A landing now, from that state.
+	res, err := Land(git, Spec{Bead: "sa-7dc", Title: "Scaffold", Base: "main"})
+	if err != nil {
+		t.Fatalf("a landing after a failed one was refused, which is the wedge: %v", err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed")
+	}
+
+	out, err := git("show", "--name-only", "--format=", res.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, ".npm-ci.log") {
+		t.Errorf("the leftover log was committed:\n%s", out)
+	}
+	if !strings.Contains(out, "portal/package.json") {
+		t.Errorf("the real work was not committed:\n%s", out)
+	}
+
+	// And the tree is back where a run expects to find it: on the base
+	// branch, with nothing staged. Otherwise the NEXT run inherits this one's
+	// branch and index, which is how one failure became permanent.
+	head, err := git("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(head) != "main" {
+		t.Errorf("the tree was left on %q, not the base branch", strings.TrimSpace(head))
+	}
+	staged, err := git("diff", "--cached", "--name-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(staged) != "" {
+		t.Errorf("the index was left staged, which poisons the next run:\n%s", staged)
+	}
+}
+
+// A landing that fails PART WAY THROUGH still puts the tree back.
+//
+// The success path always returned to the base branch, so the gap was
+// invisible until something failed between `checkout -B` and the end: the msf
+// rig was left on bead/sa-7dc with 77 files staged, and every run after it
+// began on the wrong branch with the wrong index.
+//
+// Driven by making the commit fail, because with the classifier fixed there is
+// no longer an input that trips the assertion -- and defence that only works
+// while nothing else can go wrong is not defence.
+func TestALandingThatFailsPartWayThroughStillPutsTheTreeBack(t *testing.T) {
+	dir, real := repo(t)
+
+	write(t, dir, "portal/package.json", `{"name":"portal"}`)
+
+	// Everything works except the commit.
+	git := func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "commit" {
+			return "", errors.New("disk full, or a hook said no")
+		}
+		return real(args...)
+	}
+
+	if _, err := Land(git, Spec{Bead: "sa-7dc", Title: "Scaffold", Base: "main"}); err == nil {
+		t.Fatal("a failed commit must be reported, not swallowed")
+	}
+
+	// The tree is on the base branch, with nothing staged: the state the next
+	// run expects, rather than this run's leftovers.
+	head, err := real("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(head) != "main" {
+		t.Errorf("the tree was left on %q; the next run would start there", strings.TrimSpace(head))
+	}
+	staged, err := real("diff", "--cached", "--name-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(staged) != "" {
+		t.Errorf("the index was left staged; the next run reads these as `A ` "+
+			"rather than `??` and misclassifies them:\n%s", staged)
+	}
+
+	// And the run's work is still in the working tree. A cleanup that reverted
+	// the agent's files would be worse than the wedge it fixes.
+	if _, err := os.Stat(filepath.Join(dir, "portal", "package.json")); err != nil {
+		t.Errorf("the cleanup threw away the run's work: %v", err)
 	}
 }
