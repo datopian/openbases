@@ -251,25 +251,55 @@ var GatewayModels = map[string]ModelLimits{
 var DefaultTools = map[string][]string{
 	"polecat": {
 		"Read", "Grep", "Glob", "Edit", "Write",
-		// bd only, not Bash generally. `Bash(bd:*)` is a prefix match, so this
-		// is the bead tool and nothing else — no `git push`, no `curl`, no
-		// `rm -rf`, and no shelling out to reach any of them.
-		"Bash(bd:*)",
-		// A browser, through one command that decides what may be fetched.
+		// A shell. Decided 2026-09-09, and the reasoning is worth keeping
+		// because the previous line said the opposite for good reasons.
 		//
-		// sa-r5k was asked to confirm a hero tab was "pixel-for-pixel
-		// unchanged", verified everything it could from the source, declared
-		// the criteria satisfied, and had no way to look at the page — which
-		// was the one thing the bead actually asked for.
+		// What it replaced was `Bash(bd:*)` and `Bash(wg-browse:*)`: bd and a
+		// browser and nothing else, on the argument that an agent with a shell
+		// has `git push`, `curl` and `rm -rf`. That argument was sound when
+		// written and it is not what the isolation actually rests on.
 		//
-		// `wg-browse` and NOT the browser. Handing an agent a browser hands it
-		// HTTP GET from inside the execution node, and this node answers 200
-		// on http://169.254.169.254/hetzner/v1/metadata. wg-browse resolves
-		// the host, refuses link-local and private addresses, and pins the
-		// resolution so the name cannot change between the check and the
-		// fetch.
-		"Bash(wg-browse:*)",
+		// The cell is the boundary (ADR-0002): its own Linux user and home,
+		// cgroup limits on CPU, memory and processes, a credential profile,
+		// and no way to read another cell's files. The tool allowlist sat on
+		// top of that as a second belt.
+		//
+		// The two things the allowlist was really protecting turn out to be
+		// protected elsewhere, which is what made this safe rather than
+		// merely desirable:
+		//
+		//   Cloud instance metadata. nftables drops it per cell UID --
+		//   `meta skuid 999 ip daddr 169.254.169.254 drop`, with eleven
+		//   packets already caught on staging -- so it is refused whatever
+		//   command asks. wg-browse's own check is defence in depth, not the
+		//   only line.
+		//
+		//   The gateway credential. It is written into the agent's own
+		//   opencode config as a request header, in the run directory the
+		//   agent owns, so `Read` alone has always been enough to see it. A
+		//   shell adds nothing there. Worth knowing rather than believing the
+		//   older comment, which said the agent could not read it back.
+		//
+		// And what it was costing: sa-iyu was asked to prepare a dataset pack,
+		// had no shell, could not run `ls`, globbed an empty run directory,
+		// fell back to `bd list`, and exited 0 after 5m45s having done
+		// nothing. Four msf beads read `blocked` for the same reason. An agent
+		// that cannot run a build cannot scaffold a portal, and no amount of
+		// Edit and Write substitutes for `npm install`.
+		//
+		// Landing stays with the landing path, and that is a division of
+		// labour rather than a restriction: it snapshots the tree before the
+		// run so only this run's work is committed, pushes with
+		// --force-with-lease, and the pull request is opened by the control
+		// API which holds the App key. An agent doing its own git would be a
+		// second mechanism for the same thing, and two mechanisms for one job
+		// is how they come to disagree. The instructions say so; with a shell
+		// that is guidance rather than a wall, and it is stated as such.
+		"Bash",
 	},
+	// Unchanged. Crew work is review and coordination rather than building,
+	// so the case for a shell has not been made for it -- and granting one
+	// "for symmetry" is how a boundary widens without a reason.
 	"crew": {"Read", "Grep", "Glob", "Edit", "Write", "Bash(bd:*)", "Bash(wg-browse:*)"},
 }
 
@@ -665,11 +695,62 @@ func renderOpenCodeConfig(base, token, model string, limits ModelLimits,
 	return string(out) + "\n", nil
 }
 
+// deniedCommands are refused to every role, in both runtimes, whatever the
+// allowlist says.
+//
+// It stops the ACCIDENT, not the adversary. Since 2026-09-09 the polecat role
+// holds a real shell, and with a shell every one of these is reachable through
+// a script, an alias or python -c. Denying the spelling stops an agent that
+// helpfully tries to commit its own work; it stops nothing that is trying.
+// Said plainly, because a deny list that reads like a boundary and is not one
+// is worse than none: the boundary is the cell (a Linux user with its own uid
+// and cgroups), the per-uid nftables rules that drop cloud metadata, and the
+// gateway that scopes the token. This list is ergonomics on top of that.
+//
+// Landing is here as a division of labour rather than a fear: the landing path
+// snapshots the tree before the run so only this run's work is committed,
+// pushes with --force-with-lease, and opens the pull request through the
+// control API, which holds the App key. Job.Instructions tells the agent so.
+var deniedCommands = []string{"git push", "gh", "curl", "rm"}
+
+// claudeDenies spells deniedCommands the way Claude Code's settings file wants.
+func claudeDenies() []string {
+	out := make([]string, 0, len(deniedCommands))
+	for _, cmd := range deniedCommands {
+		out = append(out, "Bash("+cmd+":*)")
+	}
+	return out
+}
+
 // bashPermissions turns the role's allowlist into OpenCode's bash block.
 //
 // OpenCode matches with the LAST pattern winning, so the catch-all deny goes in
 // first and each allowed prefix after it. `Bash(bd:*)` becomes `bd *`.
 func bashPermissions(tools []string) map[string]string {
+	// A bare `Bash` is a shell, so the catch-all flips to allow and no prefix
+	// list is built. Without this the role granting `Bash` produced
+	// {"*": "deny"} -- an agent told it has a shell, with permission to run
+	// nothing, which is the exact shape of the bug that started this: sa-iyu
+	// had `Bash(bd:*)` and reported "The user has specified a rule which
+	// prevents you from using this specific tool call" for `ls`.
+	//
+	// Checked before the prefix loop, and it wins outright: a role that grants
+	// both `Bash` and `Bash(bd:*)` has granted a shell, and building a deny
+	// list around it would be a fiction.
+	if hasTool(tools, "Bash") {
+		perm := map[string]string{"*": "allow"}
+		// The same deny list Claude Code gets. Without this the two runtimes
+		// disagreed about what a shell is, and which one an agent happened to
+		// run under decided what it was allowed to do.
+		//
+		// Two patterns per command because OpenCode matches a glob against the
+		// whole command line: `rm *` does not match a bare `rm`.
+		for _, cmd := range deniedCommands {
+			perm[cmd] = "deny"
+			perm[cmd+" *"] = "deny"
+		}
+		return perm
+	}
 	perm := map[string]string{"*": "deny"}
 	for _, tool := range tools {
 		rest, ok := strings.CutPrefix(tool, "Bash(")
@@ -741,15 +822,11 @@ func renderSettings(headers string, tools []string, rigDir, beadsDir string) (st
 		// after the fact — an argv is gone when the process is.
 		"permissions": map[string]any{
 			"allow": tools,
-			// Named explicitly even though nothing grants them. A deny list that
-			// states the things an agent must never do survives somebody
-			// widening the allow list without thinking about it.
-			"deny": []string{
-				"Bash(git push:*)",
-				"Bash(gh:*)",
-				"Bash(curl:*)",
-				"Bash(rm:*)",
-			},
+			// Built from deniedCommands so this list and OpenCode's cannot
+			// drift. Named explicitly even though nothing grants them: a deny
+			// list that states the things an agent must never do survives
+			// somebody widening the allow list without thinking about it.
+			"deny": claudeDenies(),
 			// BOTH rigs: the one holding the code, and the one holding the
 			// bead. The sandbox otherwise confines the agent to its own run
 			// directory, and it needs to read both.

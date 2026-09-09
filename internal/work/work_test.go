@@ -125,8 +125,23 @@ func TestAWorkJobNamesTheCheckout(t *testing.T) {
 		{Kind: KindWork, Bead: "sa-kfh", Cell: "oss", Checkout: "/srv/x"},
 		{Kind: KindWork, Bead: "sa-kfh", Cell: "oss"},
 	} {
-		got := j.Instructions()
-		for _, want := range []string{"Do NOT try to commit", "automatically", "close the bead"} {
+		// Matched lowercased, and on the shortest phrase that carries the
+		// meaning. The previous version wanted the exact string "Do NOT try
+		// to commit", which failed when the same instruction was reworded to
+		// "do not commit, branch, push, or open a pull request yourself" --
+		// a test guarding the capitalisation of a sentence rather than what
+		// the agent is told.
+		got := strings.ToLower(j.Instructions())
+		for _, want := range []string{
+			"do not commit",  // landing is not the agent's to do
+			"automatically",  // ...because it happens for it, after the run
+			"close the bead", // the run ends by closing the bead
+			"you have a shell",
+			// And it is told to USE the shell to check its work. Without
+			// this, granting the shell on 2026-09-09 would have changed what
+			// the agent could do and not what it was asked to do.
+			"run the tests",
+		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the instructions do not say %q:\n%s", want, got)
 			}
