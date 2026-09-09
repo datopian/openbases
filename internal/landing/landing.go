@@ -545,6 +545,22 @@ func Land(git Git, s Spec) (*Result, error) {
 		return nil, fmt.Errorf("the bead's branch and the base are both %q", branch)
 	}
 
+	// Unstage whatever a previous attempt left, BEFORE the tree is read.
+	//
+	// A landing that failed after `checkout -B` used to leave the index
+	// staged, and that poisoned every run after it. `git status` reports a
+	// leftover staged file as `A `, not `??`, so isEphemeral -- which keys on
+	// `??` -- classified portal/.npm-ci.log as the run's work, staged it,
+	// tripped the commit-time assertion, failed, and left the same index
+	// behind for the next run. sa-7dc could not land again, at all, and each
+	// attempt reported the same refusal about a file no run had chosen.
+	//
+	// So the index is made to match HEAD first and the status is honest: a
+	// leftover reads as untracked, which is what it is. Errors are ignored on
+	// purpose -- a repository with no commits has nothing staged, and this
+	// must not be the thing that stops a landing.
+	_, _ = git("reset", "--quiet")
+
 	// What the tree holds is read BEFORE the plumbing is excluded, so that what
 	// was deliberately left out can be reported. Excluding first makes the
 	// plumbing invisible to `git status` and Skipped then always reads empty --
@@ -622,6 +638,20 @@ func Land(git Git, s Spec) (*Result, error) {
 	if _, err := git("checkout", "-B", branch); err != nil {
 		return nil, fmt.Errorf("cannot reach branch %s: %w", branch, err)
 	}
+
+	// From here the tree is on the bead's branch with an index being built, so
+	// every exit has to put it back -- including the ones that return an
+	// error.
+	//
+	// It did not, and the consequence was a rig wedged for good: the tree sat
+	// on bead/sa-7dc with 77 files staged, so the next run began on the wrong
+	// branch with the wrong index and failed the same way, forever. A deferred
+	// cleanup rather than a line before each return, because the failure was
+	// exactly a path that had been added without one.
+	defer func() {
+		_, _ = git("reset", "--quiet")
+		_, _ = git("checkout", base)
+	}()
 
 	// Staged by path, not `git add -A`.
 	//
