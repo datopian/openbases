@@ -248,6 +248,41 @@ func restore(git Git, prevTip, base string) ([]string, error) {
 	return done, nil
 }
 
+// beadTip is the ref carrying what this bead has already delivered.
+//
+// The remote-tracking ref FIRST, and that ordering is the whole fix.
+//
+// `checkout -B` resets the local branch to the base on every landing, so after
+// a landing that failed before its commit the local ref points at the base and
+// carries nothing -- while the pushed branch still holds the work, and the
+// pull request is still showing it. The msf rig was in exactly that state:
+// bead/sa-7dc resolved to the initial commit while origin/bead/sa-7dc held 77
+// files, so reclaim and restore both consulted the empty one and the run
+// reported "nothing to land" while a portal sat in the pull request.
+//
+// The local branch is consulted second rather than not at all, for a first
+// landing that has not been pushed yet -- and because the two agree in the
+// ordinary case, where the last landing succeeded.
+//
+// A SHA is returned, not a ref name, and that matters for the local fallback:
+// `checkout -B` MOVES the local branch between the moment this is read and the
+// moment restore uses it, so a name resolves to the base by then and restores
+// nothing. The first version of this returned the name and the test for the
+// scratch case caught it immediately -- it had been passing on a SHA captured
+// before the reset, which is the behaviour to keep.
+func beadTip(git Git, branch string) string {
+	for _, ref := range []string{"origin/" + branch, branch} {
+		out, err := git("rev-parse", "--verify", "--quiet", ref)
+		if err != nil {
+			continue
+		}
+		if sha := strings.TrimSpace(out); sha != "" {
+			return sha
+		}
+	}
+	return ""
+}
+
 // reclaim splits `kept` into the changes the bead's branch already carries and
 // the ones that are genuinely somebody else's.
 //
@@ -259,10 +294,11 @@ func restore(git Git, prevTip, base string) ([]string, error) {
 // A branch that does not exist yet reclaims nothing, which is the ordinary
 // first-run case and not a failure.
 func reclaim(git Git, branch, base string, kept []Change) (reclaimed, rest []Change) {
-	if _, err := git("rev-parse", "--verify", "--quiet", branch); err != nil {
+	tip := beadTip(git, branch)
+	if tip == "" {
 		return nil, kept
 	}
-	out, err := git("diff", "--name-only", base+"..."+branch)
+	out, err := git("diff", "--name-only", base+"..."+tip)
 	if err != nil {
 		return nil, kept
 	}
@@ -601,8 +637,7 @@ func Land(git Git, s Spec) (*Result, error) {
 	// showed why: a file the previous run committed is removed from the
 	// working tree when the landing returns to the base branch, so it is not
 	// on disk to be staged again. Only the commit still has it.
-	prevTip, _ := git("rev-parse", "--verify", "--quiet", branch)
-	prevTip = strings.TrimSpace(prevTip)
+	prevTip := beadTip(git, branch)
 
 	work, skip := Interesting(changes)
 	skip = append(skip, kept...)
