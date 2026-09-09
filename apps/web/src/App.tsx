@@ -5,6 +5,7 @@ import { Work } from "./Work";
 import { Device, deviceCodeFromHash } from "./Device";
 import { Bead, BeadLink, beadFromHash } from "./Bead";
 import { DependencyGraph } from "./DependencyGraph";
+import { dependencyNote } from "./Dependencies";
 import { Platform } from "./Platform";
 import { CreateProject, ManageRepositories } from "./ProjectAdmin";
 import {
@@ -587,22 +588,45 @@ export function ProjectWork({
                 )}
               </td>
               <td style={{ ...css.td, fontSize: "0.8rem" }}>
-                {w.blocked_by && w.blocked_by.length > 0 ? (
-                  <span title="This bead cannot start until these are closed">
-                    {w.blocked_by.map((b, i) => (
-                      <span key={b}>
-                        {i > 0 ? ", " : ""}
-                        <BeadLink bead={b} />
-                      </span>
-                    ))}
-                  </span>
-                ) : w.blocking && w.blocking.length > 0 ? (
-                  <span style={css.muted} title="Nothing blocks this bead, and these are waiting on it">
-                    ready — {w.blocking.length} waiting
-                  </span>
-                ) : (
-                  <span style={css.muted}>—</span>
-                )}
+                {(() => {
+                  // The decision is in Dependencies.ts, where it is checked.
+                  // Inline, it asked only whether anything was waiting on the
+                  // bead, so a CLOSED one still read "ready — 1 waiting".
+                  const note = dependencyNote(w);
+                  switch (note.kind) {
+                    case "blocked":
+                      return (
+                        <span title="This bead cannot start until these are closed">
+                          {note.beads.map((b, i) => (
+                            <span key={b}>
+                              {i > 0 ? ", " : ""}
+                              <BeadLink bead={b} />
+                            </span>
+                          ))}
+                        </span>
+                      );
+                    case "ready":
+                      return (
+                        <span
+                          style={css.muted}
+                          title="Nothing blocks this bead, and these are waiting on it"
+                        >
+                          ready — {note.waiting} waiting
+                        </span>
+                      );
+                    case "released":
+                      return (
+                        <span
+                          style={css.muted}
+                          title="This bead is finished; closing it unblocked these"
+                        >
+                          released {note.count}
+                        </span>
+                      );
+                    default:
+                      return <span style={css.muted}>—</span>;
+                  }
+                })()}
               </td>
             </tr>
           ))}

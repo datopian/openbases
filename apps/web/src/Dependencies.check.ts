@@ -9,7 +9,7 @@
  */
 // The .js extension is what emitted ESM needs at run time; TypeScript
 // resolves it to the .ts source and Vite does the same.
-import { layout, isClosed, type DepNode } from "./Dependencies.js";
+import { layout, isClosed, dependencyNote, type DepNode } from "./Dependencies.js";
 
 const problems: string[] = [];
 function check(what: string, ok: boolean, detail = "") {
@@ -192,6 +192,53 @@ check("open does not", !isClosed("open") && !isClosed("in_progress"));
   const at = (id: string) => l.nodes.find((n) => n.bead === id)!;
   check("a closed bead is done regardless of its last run",
     at("shut").readiness === "done", at("shut").readiness);
+}
+
+// The work list's dependency column, which said "ready — 1 waiting" about a
+// bead that was CLOSED.
+//
+// Two wrong things in three words: sa-7dc was not ready, it was finished, and
+// the "waiting" bead was work its closing had just released. Somebody checking
+// whether the graph had moved was told the opposite.
+{
+  const closedWithDependents = dependencyNote({
+    status: "closed",
+    blocking: ["sa-fj3"],
+  });
+  check("a closed bead is not called ready",
+    closedWithDependents.kind !== "ready", closedWithDependents.kind);
+  check("a closed bead reports what it released",
+    closedWithDependents.kind === "released" && closedWithDependents.count === 1,
+    JSON.stringify(closedWithDependents));
+
+  // `done` as well as `closed`: both mean finished, and isClosed accepts both,
+  // so this column must too.
+  check("done counts as closed here, like everywhere else",
+    dependencyNote({ status: "done", blocking: ["x"] }).kind === "released",
+    dependencyNote({ status: "done", blocking: ["x"] }).kind);
+
+  check("a closed bead with nothing waiting says nothing",
+    dependencyNote({ status: "closed" }).kind === "none");
+
+  // Work can land out of order, so a closed bead may still name an open
+  // blocker. Calling it blocked would say it cannot start, which it plainly
+  // did.
+  const closedButBlocked = dependencyNote({
+    status: "closed",
+    blocked_by: ["sa-zzz"],
+    blocking: ["sa-fj3"],
+  });
+  check("a closed bead is never reported as blocked",
+    closedButBlocked.kind === "released", closedButBlocked.kind);
+
+  // And the open cases are unchanged, which is the half a fix like this
+  // breaks by accident.
+  check("an open bead with a blocker is blocked",
+    dependencyNote({ status: "open", blocked_by: ["a"], blocking: ["b"] }).kind === "blocked");
+  check("an open bead with dependents and no blocker is ready",
+    dependencyNote({ status: "open", blocking: ["b"] }).kind === "ready");
+  check("an open bead on its own says nothing",
+    dependencyNote({ status: "open" }).kind === "none");
 }
 
 // The report goes LAST, and that is not cosmetic.

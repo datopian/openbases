@@ -225,3 +225,48 @@ export function isClosed(status: string): boolean {
   const s = status.toLowerCase();
   return s === "closed" || s === "done";
 }
+
+/** What the work list's dependency column should say about one bead. */
+export type DependencyNote =
+  | { kind: "blocked"; beads: string[] }
+  | { kind: "ready"; waiting: number }
+  | { kind: "released"; count: number }
+  | { kind: "none" };
+
+/**
+ * What to say in the dependency column, given one bead.
+ *
+ * Closed is checked FIRST, and that is the fix. The column asked only whether
+ * anything was waiting on the bead, so a closed one still read
+ *
+ *   ready — 1 waiting
+ *
+ * which is two wrong things at once: sa-7dc was not ready, it was finished, and
+ * "waiting" described work that its closing had just released. A reader
+ * checking whether the graph had moved was told the opposite.
+ *
+ * Both misreadings come from the same place -- readiness and blockage are
+ * questions about work that has NOT happened, and neither applies once it has.
+ * So a closed bead reports what it released, in the past tense, and an open one
+ * answers the readiness question as before.
+ */
+export function dependencyNote(bead: {
+  status: string;
+  blocked_by?: string[];
+  blocking?: string[];
+}): DependencyNote {
+  const blocking = bead.blocking ?? [];
+  const blockedBy = bead.blocked_by ?? [];
+
+  if (isClosed(bead.status)) {
+    // Not "blocked by" either: a closed bead with an open blocker is a real
+    // state -- work landed out of order -- and calling it blocked would say
+    // it cannot start, which it plainly did.
+    return blocking.length > 0
+      ? { kind: "released", count: blocking.length }
+      : { kind: "none" };
+  }
+  if (blockedBy.length > 0) return { kind: "blocked", beads: blockedBy };
+  if (blocking.length > 0) return { kind: "ready", waiting: blocking.length };
+  return { kind: "none" };
+}
