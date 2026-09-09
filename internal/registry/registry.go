@@ -40,6 +40,13 @@ type Document struct {
 type Graph struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+	// Prefix is the bead id prefix the graph was initialised with.
+	//
+	// Recorded so it survives the removal of the group_vars declaration and a
+	// node rebuild: it appears in every id in the graph, an id is never
+	// rewritten, and until now the only copies were group_vars and the graph's
+	// own config on disk.
+	Prefix string `json:"prefix,omitempty"`
 	// Scope is company, project, function or personal. A project graph names
 	// its project; a company graph must not.
 	Scope   string `json:"scope"`

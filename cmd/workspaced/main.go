@@ -72,6 +72,11 @@ func main() {
 		// build in cmd/migrate an hour earlier.
 		ingestOn = flag.Bool("ingest", os.Getenv("WG_WORKSPACE_INGEST") == "true",
 			"this deployment ingests Google Drive and Meet")
+		// Where project graphs live, and the binaries needed to create one.
+		// Empty graph-root disables creation, which is correct on a host that
+		// does not hold graphs.
+		graphRoot  = flag.String("graph-root", envOr("WG_GRAPH_ROOT", "/srv/graphs"), "where Beads graphs live on this host")
+		doltBinary = flag.String("dolt", envOr("WG_DOLT_BINARY", "/usr/local/bin/dolt"), "path to the pinned dolt binary")
 	)
 	flag.Parse()
 
@@ -224,6 +229,13 @@ func main() {
 				DB:   db,
 				Node: *node,
 				Log:  log,
+				// So a project's first accepted candidate does not wait for a
+				// deploy. Project graphs used to be declared in group_vars,
+				// which put client names in the repository and meant a new
+				// project had nowhere to publish until Ansible ran.
+				GraphRoot:  *graphRoot,
+				BdBinary:   *beadsBinary,
+				DoltBinary: *doltBinary,
 				Beads: publish.CLI{CLIClient: &beads.CLIClient{
 					Binary: *beadsBinary,
 					// HOME per graph, because Dolt keeps its config under

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -97,6 +98,21 @@ type Publisher struct {
 	// looks like the real one.
 	Node string
 	Log  *slog.Logger
+
+	// GraphRoot is where project graphs live on this host, and the binaries
+	// needed to create one. Empty disables creation: the publisher then logs a
+	// blocked candidate exactly as it did before, which is the right behaviour
+	// on a host that does not hold graphs.
+	//
+	// Creation happens HERE, at the point of need, rather than when a project
+	// is created. The role that used to declare every graph says why:
+	// "a graph appearing because a row appeared is not a change anybody
+	// reviewed". A graph appearing because a person accepted a candidate for
+	// that project is different -- the acceptance is the review, and it is the
+	// same reasoning that puts rig creation at dispatch rather than at attach.
+	GraphRoot  string
+	BdBinary   string
+	DoltBinary string
 }
 
 // LabelPrefix marks a bead with the candidate that caused it.
@@ -125,6 +141,17 @@ func (p *Publisher) Run(ctx context.Context, limit int) (Result, error) {
 	for _, c := range pending {
 		switch {
 		case c.Blocked != "":
+			// A project with no graph is a fixable block, and the only one.
+			// The others -- a restricted candidate with no project, no company
+			// graph at all -- are decisions, not missing directories.
+			if created := p.createGraph(ctx, c, log); created {
+				// Left pending deliberately. The graph exists now but this
+				// pass read its routing before it did, so republishing here
+				// would use a stale row. The next pass, a minute later, sees
+				// the graph and publishes normally.
+				res.Blocked++
+				continue
+			}
 			res.Blocked++
 			log.Error("an accepted candidate cannot be published",
 				"candidate", c.CandidateID, "type", c.Type,
@@ -363,3 +390,63 @@ func (p *Publisher) pending(ctx context.Context, limit int) ([]Pending, error) {
 type nopWriter struct{}
 
 func (nopWriter) Write(b []byte) (int, error) { return len(b), nil }
+
+// createGraph makes the project graph a blocked candidate is waiting for.
+//
+// Reports whether it created one, so the caller can tell "waiting for a graph
+// that now exists" from "blocked for a reason nothing here can fix".
+//
+// Every failure path logs and returns false, which puts the candidate back on
+// the original blocked message. A publisher that could not create a graph must
+// not look like one that did.
+func (p *Publisher) createGraph(ctx context.Context, c Pending, log *slog.Logger) bool {
+	if p.GraphRoot == "" || c.ProjectSlug == "" {
+		return false
+	}
+
+	// Asked rather than inferred from the blocked message. The message is
+	// prose written for a person -- "no graph for project acme" -- and matching
+	// on it would break the day somebody improves the wording.
+	var name, prefix string
+	var host sql.NullString
+	var held bool
+	if err := p.DB.QueryRowContext(ctx,
+		`SELECT name, prefix, host, held FROM system_graph_wanted_for_project($1)`,
+		c.ProjectSlug).Scan(&name, &prefix, &host, &held); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Error("looking up the graph a project should have",
+				"project", c.ProjectSlug, "error", err)
+		}
+		return false
+	}
+	if held {
+		// Registered already, so the block is something else -- the graph is
+		// on another host, or its row is incomplete. Not ours to fix.
+		return false
+	}
+
+	dir := filepath.Join(p.GraphRoot, name)
+	log.Info("creating the graph a project's accepted work needs",
+		"project", c.ProjectSlug, "graph", name, "prefix", prefix, "path", dir)
+
+	if err := beads.InitGraph(ctx, p.BdBinary, p.DoltBinary, dir, prefix); err != nil {
+		log.Error("creating a project graph", "project", c.ProjectSlug,
+			"graph", name, "error", err)
+		return false
+	}
+
+	// Registered immediately, because a graph on disk that the control plane
+	// does not know about is invisible: routing reads the registry, so the
+	// candidate would stay blocked and the next pass would try to create the
+	// graph again.
+	if _, err := p.DB.ExecContext(ctx,
+		`SELECT system_register_beads_graph($1, $2, $3, $4, $5, $6)`,
+		name, dir, p.Node, "project", c.ProjectSlug, prefix); err != nil {
+		log.Error("registering a project graph just created",
+			"graph", name, "error", err)
+		return false
+	}
+
+	log.Info("project graph created and registered", "graph", name, "project", c.ProjectSlug)
+	return true
+}
