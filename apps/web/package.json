@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "check-deps": "tsc src/Dependencies.ts src/Dependencies.check.ts --outDir .depcheck --module es2022 --target es2022 --moduleResolution bundler --skipLibCheck && node .depcheck/Dependencies.check.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

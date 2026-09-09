@@ -81,6 +81,17 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
+
+      # The dependency graph's layout, which is the only part of the interface
+      # with decisions in it: longest-path layering so every arrow points
+      # forwards, a cycle guard so a loop in Beads does not hang the page, and
+      # readiness that depends on a blocker's STATUS rather than its presence.
+      #
+      # A compiled script rather than a test runner. The logic is pure, so it
+      # needs nothing but a way to call it, and vitest would be a new
+      # devDependency for one file.
+      - run: npm run check-deps
+
       - run: npm run build
 
   database:

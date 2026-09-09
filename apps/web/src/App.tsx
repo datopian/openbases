@@ -4,6 +4,7 @@ import { Inbox } from "./Inbox";
 import { Work } from "./Work";
 import { Device, deviceCodeFromHash } from "./Device";
 import { Bead, BeadLink, beadFromHash } from "./Bead";
+import { DependencyGraph } from "./DependencyGraph";
 import { Platform } from "./Platform";
 import { CreateProject, ManageRepositories } from "./ProjectAdmin";
 import {
@@ -494,7 +495,16 @@ export function ProjectWork({
             : ` — projected ${age(newest)}`;
         })()}
       </p>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      {/*
+        The graph first, then the table.
+
+        The graph answers "what can we start" and the table answers "what is
+        there"; a reader arriving at a project asks the first question, and a
+        list of forty rows does not answer it however well it is sorted.
+      */}
+      <DependencyGraph work={rows} />
+
+      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "1.5rem" }}>
         <thead>
           <tr>
             <th style={css.th}>Bead</th>
