@@ -987,3 +987,80 @@ func TestAnAbsentCatalogueAndAnUnsetPathDiffer(t *testing.T) {
 			"and look like a node with no catalogue")
 	}
 }
+
+// An agent whose bead lives in another rig's graph is told so.
+//
+// Two of sa-7dc's three runs spent themselves on this. The agent works in the
+// msf rig, whose .beads/config.yaml advertises the prefix `msf8`, while its
+// bead is `sa-7dc` and lives in another rig's graph reached through BEADS_DIR.
+// `bd show sa-7dc` works -- but an agent that reads the local config, sees a
+// prefix its bead does not match, and concludes it is in the wrong place goes
+// looking. One transcript ends on a `bd list` dump of the whole graph; the
+// next spent thirty minutes running `find` for .beads directories across every
+// rig in the town and wrote no files at all.
+//
+// The agent was reasoning correctly from what it could see. What it could see
+// did not include the fact that resolves it, so the fact is now stated.
+func TestAnAgentIsToldWhichGraphHoldsItsBead(t *testing.T) {
+	cell := t.TempDir()
+	town := filepath.Join(cell, "town")
+
+	// Two rigs: one holding this bead's graph under the `sa` prefix, and the
+	// one holding the code, which advertises a different prefix.
+	for _, r := range []struct{ name, prefix string }{
+		{"sandbox", "sa"},
+		{"msf", "msf8"},
+	} {
+		dir := filepath.Join(town, r.name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"type":"rig","beads":{"prefix":"` + r.prefix + `"}}`
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := spec()
+	s.CellRoot = cell
+	s.Bead = "sa-7dc"
+	s.Rig = "msf"
+	s.Instructions = "Work the bead sa-7dc."
+
+	p, err := New(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The graph is the sandbox rig's, and the agent is told which.
+	want := filepath.Join(town, "sandbox", ".beads")
+	if p.Env["BEADS_DIR"] != want {
+		t.Fatalf("BEADS_DIR = %q, want %q", p.Env["BEADS_DIR"], want)
+	}
+	argv := strings.Join(p.Argv, " ")
+	if !strings.Contains(argv, want) {
+		t.Errorf("the agent is not told where its bead lives:\n%s", argv)
+	}
+	// And told that the local .beads disagreeing is expected, which is the
+	// half that stops the search.
+	if !strings.Contains(argv, "not a misconfiguration") {
+		t.Errorf("the agent is not told the mismatch is expected:\n%s", argv)
+	}
+
+	// When the graph and the code are the same rig there is nothing to
+	// explain, and saying it anyway would invite the agent to look for a
+	// second graph that does not exist.
+	same := spec()
+	same.CellRoot = cell
+	same.Bead = "msf8-1"
+	same.Rig = "msf"
+	same.Instructions = "Work the bead msf8-1."
+	q, err := New(same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(q.Argv, " "), "lives in the graph at") {
+		t.Errorf("a bead in its own rig's graph was told about another:\n%s",
+			strings.Join(q.Argv, " "))
+	}
+}
