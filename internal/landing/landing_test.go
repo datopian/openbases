@@ -885,3 +885,57 @@ func TestBuildOutputIsSkippedAtAnyDepth(t *testing.T) {
 		t.Errorf("the run's work was not committed:\n%s", out)
 	}
 }
+
+// Restore does not resurrect an earlier run's scratch directory.
+//
+// Without this, restore is a ratchet: whatever a previous run committed comes
+// back on every later run, forever, including its mistakes. One stopped run
+// scaffolded a portal under .verify-tmp/repo/ and its 76 files were then
+// restored into three consecutive pull requests, each reporting success, while
+// the portal the agent had actually built sat unlanded in the tree.
+func TestRestoreDoesNotResurrectAnEarlierRunsScratch(t *testing.T) {
+	dir, git := repo(t)
+
+	// A previous run of this bead committed scratch alongside one real file.
+	write(t, dir, ".verify-tmp/repo/portal/pages/index.tsx", "export default function H() {}\n")
+	write(t, dir, "KEEP.md", "real work\n")
+	if _, err := git("checkout", "-B", Branch("sa-7dc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("add", "-f", ".verify-tmp", "KEEP.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("commit", "-m", "an earlier run"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("checkout", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// This run does something small and unrelated.
+	write(t, dir, "NOTES.md", "this run\n")
+
+	res, err := Land(git, Spec{Bead: "sa-7dc", Title: "Scaffold", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed")
+	}
+
+	out, err := git("show", "--name-only", "--format=", res.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, ".verify-tmp") {
+		t.Errorf("an earlier run's scratch was restored:\n%s", out)
+	}
+	// The real file from the earlier run is still restored -- that is what
+	// restore is for, and the filter must not throw it out with the scratch.
+	if !strings.Contains(out, "KEEP.md") {
+		t.Errorf("restore dropped the earlier run's real work:\n%s", out)
+	}
+	if !strings.Contains(out, "NOTES.md") {
+		t.Errorf("this run's own work was not landed:\n%s", out)
+	}
+}

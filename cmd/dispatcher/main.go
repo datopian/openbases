@@ -1189,9 +1189,7 @@ func (d *dispatcher) openPullRequest(ctx context.Context, job work.Job, rig stri
 	body := "Bead `" + job.Bead + "`.\n\n" + state + "\n\n" + checkedLine + "\n\n" +
 		"Files: `" + strings.Join(res.Files, "`, `") + "`\n\n" +
 		"Opened by a Workgraph agent run. Nobody has reviewed this."
-	if s := strings.TrimSpace(summary); s != "" {
-		body += "\n\n---\n\n" + s
-	}
+	body += tail(summary)
 
 	payload, err := json.Marshal(map[string]any{
 		"cell": d.cell, "rig": rig, "bead": job.Bead,
@@ -1308,6 +1306,71 @@ func agentSummary(bead, out string) string {
 		}
 	}
 	return ""
+}
+
+// ansi matches the escape sequences a terminal harness writes.
+var ansi = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
+
+// tail is the agent's account of the run, as a reviewer should see it.
+//
+// agentSummary returns everything wg-runner printed after its status line,
+// which for the claude harness is the agent's own prose. For opencode -- what
+// every polecat runs -- it is the raw terminal transcript, because opencode
+// buffers its output and flushes the whole session at exit. That went into
+// datopian/msf#1 verbatim: `^[[0m` escape sequences, `$ ls -la` command
+// echoes, and pages of directory listings, under a bare `---`. Unreadable, and
+// it read as though the pull request body were corrupt.
+//
+// Dropping it was the other option and it is worse: for a run that FAILED, the
+// transcript is the most useful thing in the pull request, and a reviewer
+// asking "what did it actually do" has nowhere else to look.
+//
+// So it is presented as what it is. Escape sequences stripped, the last lines
+// only, folded into a <details> block that says it is a log, and inside a
+// fence so that whatever the agent printed cannot be read as markdown. Prose
+// is left alone -- an agent that wrote a real summary gets it shown plainly.
+func tail(summary string) string {
+	clean := strings.TrimSpace(ansi.ReplaceAllString(summary, ""))
+	if clean == "" {
+		return ""
+	}
+	if !looksLikeATranscript(clean) {
+		return "\n\n---\n\n" + clean
+	}
+
+	// The end, not the beginning: a run that failed failed at the end, and the
+	// first lines are the agent orienting itself.
+	lines := strings.Split(clean, "\n")
+	const keep = 40
+	elided := ""
+	if len(lines) > keep {
+		elided = fmt.Sprintf(" — last %d of %d lines", keep, len(lines))
+		lines = lines[len(lines)-keep:]
+	}
+	return "\n\n<details><summary>Run log" + elided + "</summary>\n\n```\n" +
+		strings.Join(lines, "\n") + "\n```\n\n</details>"
+}
+
+// looksLikeATranscript reports whether this is a terminal session rather than
+// something the agent wrote for a person to read.
+//
+// Two signals, either sufficient: the command echoes a harness prints, and the
+// shape of a directory listing. Deliberately generous -- misreading prose as a
+// log folds it into a details block, which is untidy; misreading a log as
+// prose is what produced the unreadable pull request.
+func looksLikeATranscript(s string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "$ "), strings.HasPrefix(line, "> "):
+			return true
+		case strings.HasPrefix(line, "total ") && len(line) < 20:
+			return true
+		case strings.HasPrefix(line, "drwx"), strings.HasPrefix(line, "-rw-"):
+			return true
+		}
+	}
+	return false
 }
 
 // subject is the pull request title: the bead's title when it has one, and the
