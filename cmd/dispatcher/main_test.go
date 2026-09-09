@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/datopian/openbases/internal/landing"
 	"github.com/datopian/openbases/internal/work"
 )
 
@@ -369,5 +372,115 @@ func TestALiveRunIsVisibleWhateverTheHarnessBuffers(t *testing.T) {
 	}
 	if got := touched(""); got != "" {
 		t.Errorf("touched on no checkout = %q, want empty", got)
+	}
+}
+
+// A terminal transcript is presented as a log, not as the agent's words.
+//
+// datopian/msf#1 carried this verbatim under a bare `---`: escape sequences,
+// command echoes and pages of directory listings. agentSummary returns
+// everything wg-runner printed after its status line, which is prose for the
+// claude harness and the whole raw session for opencode -- and opencode is
+// what every polecat runs.
+func TestATranscriptIsFoldedAwayAndProseIsNot(t *testing.T) {
+	// Copied from the pull request, escape sequences included.
+	transcript := "\x1b[0m\n> build · workers-ai/@cf/zai-org/glm-5.3-flash\n\x1b[0m" +
+		"\x1b[0m$ \x1b[0mls -la /srv/cells/oss/runs/sa-7dc\ntotal 8\n" +
+		"drwx------  2 wgcell_oss wgcell_oss 4096 Sep  9 09:49 .\n" +
+		"-rw-r--r--  1 wgcell_oss wgcell_oss  227 Sep  8 20:01 README.md\n"
+
+	got := tail(transcript)
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("escape sequences reached the pull request body: %q", got)
+	}
+	if !strings.Contains(got, "<details><summary>Run log") {
+		t.Errorf("a transcript was not folded away:\n%s", got)
+	}
+	if !strings.Contains(got, "```") {
+		t.Errorf("a transcript was not fenced, so its output can be read as markdown:\n%s", got)
+	}
+
+	// Prose is shown plainly. An agent that wrote a real summary should not
+	// have it hidden behind a disclosure triangle.
+	prose := "I added the DCAT generator and wired it into the build.\n" +
+		"The round-trip test passes."
+	got = tail(prose)
+	if strings.Contains(got, "<details>") {
+		t.Errorf("the agent's own summary was folded away:\n%s", got)
+	}
+	if !strings.Contains(got, "DCAT generator") {
+		t.Errorf("the agent's summary was lost:\n%s", got)
+	}
+
+	// Nothing is nothing, rather than an empty log block.
+	if got := tail("   \n  \x1b[0m \n"); got != "" {
+		t.Errorf("an empty summary produced %q", got)
+	}
+
+	// And a long transcript is trimmed to its end, where a failure happens.
+	var many []string
+	for i := 0; i < 200; i++ {
+		many = append(many, fmt.Sprintf("$ step %d", i))
+	}
+	got = tail(strings.Join(many, "\n"))
+	if !strings.Contains(got, "step 199") {
+		t.Errorf("the end of the log was trimmed away, which is where a failure is:\n%s", got)
+	}
+	if strings.Contains(got, "step 0\n") {
+		t.Errorf("the whole log was included; it should be capped:\n%s", got)
+	}
+	if !strings.Contains(got, "of 200 lines") {
+		t.Errorf("the body does not say the log was trimmed:\n%s", got)
+	}
+}
+
+// The body that is actually POSTed carries no escape sequences.
+//
+// Written because the first version of this test called tail() directly and so
+// proved nothing about the pull request: reverting openPullRequest to append
+// the summary raw -- the exact bug -- left it passing. A check on a helper the
+// caller might not use is not a check.
+func TestThePostedPullRequestBodyIsReadable(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Body string `json:"body"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		body = payload.Body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"url":"https://github.com/x/y/pull/1"}`)
+	}))
+	defer srv.Close()
+
+	d := &dispatcher{
+		api:  srv.URL,
+		cell: "oss",
+		http: srv.Client(),
+		log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	transcript := "\x1b[0m$ \x1b[0mls -la /srv/cells/oss\ntotal 8\ndrwx------ 2 x x 4096 .\n"
+	_, err := d.openPullRequest(context.Background(),
+		work.Job{ID: "j1", Bead: "sa-7dc"}, "msf",
+		&landing.Result{Branch: "bead/sa-7dc", Commit: "abc", Files: []string{"README.md"}},
+		"main", transcript, "Scaffold a portal", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body == "" {
+		t.Fatal("no body was posted; the test proves nothing")
+	}
+	if strings.Contains(body, "\x1b") {
+		t.Errorf("escape sequences reached the posted body:\n%q", body)
+	}
+	if !strings.Contains(body, "<details><summary>Run log") {
+		t.Errorf("the transcript was not folded away in the posted body:\n%s", body)
+	}
+	// The things a reviewer needs are still there and still plain.
+	for _, want := range []string{"sa-7dc", "The run FAILED", "README.md"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the posted body does not mention %q:\n%s", want, body)
+		}
 	}
 }

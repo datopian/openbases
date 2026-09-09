@@ -189,6 +189,17 @@ func (j Job) Instructions() string {
 				"in a comment.%s\n\n"+
 				"You have a shell. Use it: run the build, run the tests, run the linter, "+
 				"install what the project needs, read the code with git log and git diff. "+
+				"Work IN PLACE, at the paths the files belong at: that checkout IS the "+
+				"repository, so a portal that should live at portal/ goes at portal/ and "+
+				"not in a copy of the repository somewhere else. Do not clone it, do not "+
+				"scaffold into a temporary directory meaning to move it in afterwards, "+
+				"and do not create a second checkout to work in. Your run can be stopped "+
+				"at any moment, and whatever is in the tree at that instant is what gets "+
+				"committed -- so a two-step plan that ends in a move leaves the wrong "+
+				"thing in the pull request if it is stopped in the middle. It was: one "+
+				"run scaffolded a whole portal under .verify-tmp/repo/ and was stopped "+
+				"before the move, and the pull request showed that path instead of a "+
+				"portal. "+
 				"Do not report work as done that you could have checked and did not -- if "+
 				"there is a way to verify the change on this machine, run it, and say in the "+
 				"bead what you ran and what it printed. If you make scratch files or a "+

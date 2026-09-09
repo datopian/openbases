@@ -104,6 +104,14 @@ var Ephemeral = []string{
 	"target/", "dist/", "build/", "out/",
 	// Test and tool output
 	"coverage/", ".nyc_output/", ".cache/", ".gradle/",
+	// An agent's own scratch space. Named because one was committed: a run
+	// scaffolded an entire portal under .verify-tmp/repo/, intending to move
+	// it into place, and was stopped at its deadline before it could -- so
+	// the pull request showed 76 files under that path instead of a portal.
+	// The instructions now tell the agent to work in place, which is the real
+	// fix; this is here so that when one does it anyway, the mistake does not
+	// reach somebody's repository.
+	".verify-tmp/", ".tmp/", ".scratch/", ".agent-tmp/",
 }
 
 // Change is one path the run touched.
@@ -210,6 +218,16 @@ func restore(git Git, prevTip, base string) ([]string, error) {
 
 	var done []string
 	for _, path := range strings.Fields(out) {
+		// Filtered the same way the run's own work is.
+		//
+		// Without this, restore is a ratchet: whatever a previous run
+		// committed comes back on every later run, forever, including its
+		// mistakes. That is not hypothetical -- the .verify-tmp/repo/ copy
+		// from one stopped run was resurrected into three consecutive pull
+		// requests, and each one reported success.
+		if isPlumbing(path) || matchesAny(path, Ephemeral) {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
 			// The run has its own version. It is already staged and it wins.
 			continue
