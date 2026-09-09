@@ -472,6 +472,23 @@ jobs:
       - name: a bead says what blocks it, in the right direction
         run: psql -v ON_ERROR_STOP=1 -f test/integration/a_bead_says_what_blocks_it.sql
 
+      # The gap between the two kinds of test above, which is where a driver's
+      # type mapping lives.
+      #
+      # blocked_by and blocking were first written as Postgres arrays scanned
+      # into Go []string. That compiles, the SQL is right in psql, and the
+      # integration test asserting the edges passed -- and at run time the scan
+      # failed with "unsupported Scan, storing driver.Value type string into
+      # type *[]string", so the project page answered 500. Unit tests have no
+      # database and SQL tests have no Go; nothing on either side could see it.
+      #
+      # -v so a SKIP is visible. A test that silently skips because the DSN is
+      # unset is worse than no test, because the log says ok.
+      - name: the project detail reads its lists through the real driver
+        env:
+          WG_TEST_DSN: postgres://postgres:ci@localhost:5432/workgraph?sslmode=disable
+        run: go test ./internal/domain/ -run TestProjectDetailReadsLists -v
+
       # An agent has no shell, so the repository's own command is what says
       # whether its change works. Opt-in per repository, because running it
       # executes code from the repository as the cell user.

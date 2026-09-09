@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/datopian/openbases/internal/authz"
@@ -176,16 +177,22 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 		work, err := tx.QueryContext(ctx, `
 			SELECT w.bead_id, COALESCE(w.title,''), COALESCE(w.kind,''),
 			       COALESCE(w.status,''), COALESCE(c.slug,''), w.last_seen_at,
-			       COALESCE(ARRAY(SELECT f.bead_id
-			                        FROM work_links l
-			                        JOIN work_refs f ON f.id = l.from_work_ref
-			                       WHERE l.to_work_ref = w.id AND l.relation = 'blocks'
-			                       ORDER BY f.bead_id), '{}') AS blocked_by,
-			       COALESCE(ARRAY(SELECT t.bead_id
-			                        FROM work_links l
-			                        JOIN work_refs t ON t.id = l.to_work_ref
-			                       WHERE l.from_work_ref = w.id AND l.relation = 'blocks'
-			                       ORDER BY t.bead_id), '{}') AS blocking
+			       -- Comma-joined rather than a Postgres array, and that is
+			       -- not a style choice. This driver hands an array back as
+			       -- its text form -- {a,b} -- so scanning one into a Go
+			       -- []string fails at RUN TIME with "unsupported Scan,
+			       -- storing driver.Value type string into type *[]string".
+			       -- It compiles either way, which is how it reached staging
+			       -- and 500'd the project page. string_agg is what
+			       -- create.go already uses for the same reason.
+			       (SELECT COALESCE(string_agg(f.bead_id, ',' ORDER BY f.bead_id), '')
+			          FROM work_links l
+			          JOIN work_refs f ON f.id = l.from_work_ref
+			         WHERE l.to_work_ref = w.id AND l.relation = 'blocks') AS blocked_by,
+			       (SELECT COALESCE(string_agg(t.bead_id, ',' ORDER BY t.bead_id), '')
+			          FROM work_links l
+			          JOIN work_refs t ON t.id = l.to_work_ref
+			         WHERE l.from_work_ref = w.id AND l.relation = 'blocks') AS blocking
 			  FROM work_refs w
 			  LEFT JOIN execution_cells c ON c.id = w.execution_cell_id
 			 WHERE w.project_id = $1::uuid
@@ -198,10 +205,13 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 		for work.Next() {
 			var it WorkItem
 			var seen sql.NullTime
+			var blockedBy, blocking string
 			if err := work.Scan(&it.Bead, &it.Title, &it.Kind, &it.Status, &it.Cell, &seen,
-				&it.BlockedBy, &it.Blocking); err != nil {
+				&blockedBy, &blocking); err != nil {
 				return err
 			}
+			it.BlockedBy = splitIDs(blockedBy)
+			it.Blocking = splitIDs(blocking)
 			if seen.Valid {
 				t := seen.Time.UTC()
 				it.LastSeen = &t
@@ -343,4 +353,16 @@ func (d ProjectDetail) MarshalJSON() ([]byte, error) {
 		}
 	}
 	return json.Marshal(out)
+}
+
+// splitIDs turns a comma-joined bead list into a slice, or nil when empty.
+//
+// nil rather than an empty slice, so the field is omitted from the JSON
+// entirely: "blocked_by": [] and no field at all mean the same thing to a
+// reader, and the interface treats absence as "nothing blocks this".
+func splitIDs(joined string) []string {
+	if joined == "" {
+		return nil
+	}
+	return strings.Split(joined, ",")
 }
