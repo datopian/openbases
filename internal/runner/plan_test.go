@@ -326,7 +326,12 @@ func TestTheAgentIsAllowedToDoItsWork(t *testing.T) {
 
 	// It must be able to drive the bead it was given, or the dispatch is a
 	// no-op that costs money.
-	if !strings.Contains(allow, "Bash(bd:") {
+	//
+	// Either spelling does it, and the capability is what matters: a shell
+	// runs bd like any other command, and a narrowed role names it. The
+	// failure to catch is NEITHER -- which is what sa-iyu hit, spending 5m45s
+	// unable to touch the bead it was dispatched for.
+	if !strings.Contains(allow, "Bash(bd:") && !slices.Contains(doc.Permissions.Allow, "Bash") {
 		t.Errorf("the agent cannot use bd, so it cannot read or close its bead: %s", allow)
 	}
 	if !strings.Contains(allow, "Read") {
@@ -334,9 +339,20 @@ func TestTheAgentIsAllowedToDoItsWork(t *testing.T) {
 	}
 }
 
-// Short in a specific direction: read widely, write almost nothing. Unrestricted
-// Bash would make every other restriction decorative, because everything else is
-// reachable through it.
+// The four commands on the shared deny list are denied, in both runtimes.
+//
+// This test used to assert the opposite of what it asserts now: that no role
+// held unrestricted Bash, "which makes every other limit decorative". That was
+// true and it was also why an agent dispatched to write code could not run a
+// build, so on 2026-09-09 polecat was given a real shell on purpose and the
+// premise was retired rather than worked around.
+//
+// What survives is narrower and honest. These four stop the ACCIDENT -- an
+// agent that helpfully tries to commit and push its own work -- and not the
+// adversary, who has python. The real boundary is the cell, the per-uid
+// nftables rules and the gateway; see deniedCommands. The invariant worth
+// testing is that the list is applied CONSISTENTLY, because the failure this
+// catches is one runtime quietly disagreeing with the other.
 func TestTheAgentCannotShellOutOrPush(t *testing.T) {
 	p, err := New(spec())
 	if err != nil {
@@ -352,16 +368,58 @@ func TestTheAgentCannotShellOutOrPush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, granted := range doc.Permissions.Allow {
-		if granted == "Bash" || granted == "Bash(*)" || granted == "Bash(*:*)" {
-			t.Fatalf("unrestricted Bash is granted (%q), which makes every other limit decorative", granted)
-		}
-	}
+	// Spelled out here rather than derived from deniedCommands, so that
+	// dropping a command from that list fails this test instead of quietly
+	// agreeing with itself. Removing one should be a deliberate edit in two
+	// places.
 	deny := strings.Join(doc.Permissions.Deny, " ")
 	for _, must := range []string{"git push", "gh", "curl", "rm"} {
 		if !strings.Contains(deny, must) {
 			t.Errorf("%q is not denied; a widened allow list would silently pick it up: %s", must, deny)
 		}
+	}
+
+	// And OpenCode denies the same four. The deny list lived only in the
+	// Claude settings file until 2026-09-09, so an agent on OpenCode -- the
+	// default runtime for polecat -- was never subject to it.
+	op, err := New(openCodeSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oc struct {
+		Permission struct {
+			Bash map[string]string `json:"bash"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal([]byte(op.Settings), &oc); err != nil {
+		t.Fatal(err)
+	}
+	for _, must := range []string{"git push", "gh", "curl", "rm"} {
+		if oc.Permission.Bash[must] != "deny" {
+			t.Errorf("OpenCode does not deny %q: %v", must, oc.Permission.Bash)
+		}
+	}
+}
+
+// assertDeniesMirrored checks that a shell's bash block carries every command
+// on the shared deny list, in both spellings OpenCode needs, and nothing
+// beyond the allow plus those.
+//
+// Two spellings because OpenCode globs against the whole command line, so
+// `rm *` alone leaves a bare `rm` allowed -- the kind of gap that reads
+// correct in a diff.
+func assertDeniesMirrored(t *testing.T, role string, got map[string]string) {
+	t.Helper()
+	for _, cmd := range deniedCommands {
+		for _, pattern := range []string{cmd, cmd + " *"} {
+			if got[pattern] != "deny" {
+				t.Errorf("%s does not deny %q: %v", role, pattern, got)
+			}
+		}
+	}
+	if want := 1 + 2*len(deniedCommands); len(got) != want {
+		t.Errorf("%s bash block has %d entries, want %d (one allow plus the deny list): %v",
+			role, len(got), want, got)
 	}
 }
 
@@ -563,11 +621,16 @@ func TestOpenCodeDeniesFirstAndAllowsBackOnlyBd(t *testing.T) {
 		t.Errorf(`permission["*"] = %q, want deny — without a catch-all deny, `+
 			`anything OpenCode adds later is allowed by default`, doc.Permission.Star)
 	}
-	if doc.Permission.Bash["*"] != "deny" {
-		t.Errorf(`permission.bash["*"] = %q, want deny`, doc.Permission.Bash["*"])
-	}
-	if doc.Permission.Bash["bd *"] != "allow" {
-		t.Error("the agent cannot drive its own bead without bd")
+	// The agent must be able to drive its own bead. Either spelling does it:
+	// a shell runs bd like anything else, and a narrowed role names it.
+	//
+	// Asserted as the capability rather than the spelling, because the
+	// spelling changed when polecat got a shell and the capability did not.
+	// The thing that must never happen is neither -- an agent that cannot
+	// touch the bead it was dispatched for, which is how sa-iyu spent 5m45s
+	// listing beads it could not act on.
+	if doc.Permission.Bash["*"] != "allow" && doc.Permission.Bash["bd *"] != "allow" {
+		t.Errorf("the agent cannot drive its own bead: bash is %v", doc.Permission.Bash)
 	}
 	if doc.Permission.Read != "allow" {
 		t.Error("an agent that cannot read cannot work")
@@ -753,27 +816,56 @@ func TestTheAgentCanReachBothTheCodeAndTheGraph(t *testing.T) {
 // drift would have been the live behaviour: an agent told it had a browser,
 // with no permission to run it.
 func TestBothRuntimesGrantTheSameCommands(t *testing.T) {
-	got := bashPermissions(DefaultTools["polecat"])
+	// The property is that the derived block grants exactly what the tool
+	// list does -- for ANY role, not for one hardcoded pair of commands.
+	//
+	// The first version asserted polecat's block was exactly bd and
+	// wg-browse, which described the roster rather than the rule and had to be
+	// rewritten the day polecat got a shell. As an invariant it covers both
+	// roles now and whatever the roster becomes.
+	for _, role := range []string{"polecat", "crew"} {
+		tools := DefaultTools[role]
+		got := bashPermissions(tools)
 
-	// Deny first. OpenCode matches with the LAST pattern winning, so a
-	// catch-all written after the allows would deny everything while reading
-	// exactly the same.
-	if got["*"] != "deny" {
-		t.Errorf("the catch-all is %q, want deny", got["*"])
-	}
-	for _, want := range []string{"bd *", "wg-browse *"} {
-		if got[want] != "allow" {
-			t.Errorf("%q is %q, want allow", want, got[want])
-		}
-	}
-	// And nothing else is allowed. A permission block that grants more than
-	// the allowlist is the drift this function exists to prevent.
-	for pattern, decision := range got {
-		if decision != "allow" {
+		if slices.Contains(tools, "Bash") {
+			// A shell: the catch-all allows, and the shared deny list is
+			// mirrored in so the two runtimes mean the same thing by "shell".
+			// Before this, which runtime an agent happened to run under
+			// decided whether `rm` worked.
+			if got["*"] != "allow" {
+				t.Errorf("%s has a shell and got %v", role, got)
+			}
+			assertDeniesMirrored(t, role, got)
 			continue
 		}
-		if pattern != "bd *" && pattern != "wg-browse *" {
-			t.Errorf("%q is allowed and is not in the allowlist", pattern)
+
+		// Deny first. OpenCode matches with the LAST pattern winning, so a
+		// catch-all written after the allows would deny everything while
+		// reading exactly the same.
+		if got["*"] != "deny" {
+			t.Errorf("%s catch-all is %q, want deny", role, got["*"])
+		}
+
+		// Every allowed pattern traces back to a Bash(...) entry, and every
+		// entry produces one. Both directions, because drift in either is what
+		// this prevents: a command granted under claude and silently not under
+		// opencode was the original bug.
+		want := map[string]bool{}
+		for _, tool := range tools {
+			if rest, ok := strings.CutPrefix(tool, "Bash("); ok {
+				want[strings.TrimSuffix(strings.TrimSuffix(rest, ")"), ":*")+" *"] = true
+			}
+		}
+		for pattern, decision := range got {
+			if decision == "allow" && !want[pattern] {
+				t.Errorf("%s allows %q, which is not in its tool list", role, pattern)
+			}
+		}
+		for pattern := range want {
+			if got[pattern] != "allow" {
+				t.Errorf("%s grants %q in its tools and %q in its permissions",
+					role, pattern, got[pattern])
+			}
 		}
 	}
 
@@ -785,14 +877,31 @@ func TestBothRuntimesGrantTheSameCommands(t *testing.T) {
 	}
 }
 
-// The browser reaches the agent as `wg-browse`, never as the browser itself.
-// The command is what decides which addresses may be fetched; the binary would
-// fetch anything, including this node's cloud metadata, which answers 200.
-func TestTheAgentGetsTheBrowseCommandAndNotTheBrowser(t *testing.T) {
+// Every role can browse, and no role is handed the browser binary through a
+// narrowed allowlist.
+//
+// The distinction changed on 2026-09-09 and the test with it. polecat now has
+// a full shell, so it can run chrome directly if it wants to -- what stops it
+// reaching this node's cloud metadata is not the tool list but nftables, which
+// drops 169.254.169.254 per cell UID. crew still has a narrow allowlist, and
+// for it the distinction is real: wg-browse resolves and vets an address, the
+// browser binary would fetch anything.
+//
+// So this asserts what is still true of each: browsing is reachable, and a
+// NARROWED role is never widened by naming a browser binary in it. Asserting
+// the old string on polecat would now fail while polecat can browse perfectly
+// well, which is a test describing the spelling rather than the property.
+func TestEveryRoleCanBrowseAndNoNarrowRoleGetsTheBrowser(t *testing.T) {
 	for _, role := range []string{"polecat", "crew"} {
 		tools := DefaultTools[role]
-		if !slices.Contains(tools, "Bash(wg-browse:*)") {
+		shell := slices.Contains(tools, "Bash")
+		if !shell && !slices.Contains(tools, "Bash(wg-browse:*)") {
 			t.Errorf("%s cannot browse at all: %v", role, tools)
+		}
+		if shell {
+			// A shell is a shell; a deny list beside it would be a fiction,
+			// and the address policy for this role lives in the firewall.
+			continue
 		}
 		for _, forbidden := range []string{
 			"Bash(chrome-headless-shell:*)", "Bash(chrome:*)", "Bash(chromium:*)",
@@ -802,6 +911,30 @@ func TestTheAgentGetsTheBrowseCommandAndNotTheBrowser(t *testing.T) {
 				t.Errorf("%s is granted %s, which bypasses the address policy", role, forbidden)
 			}
 		}
+	}
+}
+
+// A role granted a shell gets one, and the permission block says so.
+//
+// The failure this prevents is the one that started the change: a role whose
+// tool list says `Bash` while its opencode permissions say {"*": "deny"} is an
+// agent told it has a shell and refused every command -- which is what sa-iyu
+// reported, verbatim, before exiting zero having done nothing.
+func TestAShellIsGrantedAsAShell(t *testing.T) {
+	perm := bashPermissions(DefaultTools["polecat"])
+	if perm["*"] != "allow" {
+		t.Errorf("polecat has a shell in its tools and %v in its permissions", perm)
+	}
+	assertDeniesMirrored(t, "polecat", perm)
+
+	// And a narrowed role still narrows, because the capability is the
+	// authority (plan section 8.3): one that grants less must mean less.
+	narrow := bashPermissions([]string{"Read", "Bash(bd:*)"})
+	if narrow["*"] != "deny" || narrow["bd *"] != "allow" {
+		t.Errorf("a narrowed role got %v", narrow)
+	}
+	if len(narrow) != 2 {
+		t.Errorf("a narrowed role granted more than it should: %v", narrow)
 	}
 }
 

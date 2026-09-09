@@ -3,7 +3,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"testing"
 )
 
@@ -111,7 +111,12 @@ func TestACatalogueCanAddARole(t *testing.T) {
 // The tool allowlist stays in Go. Whether an agent may run arbitrary shell is a
 // change to code somebody reviews, not to a data file on a node.
 func TestTheCatalogueCannotWidenTheToolAllowlist(t *testing.T) {
-	body := `{"tools":{"polecat":["Bash"]},"models":{"polecat":"anthropic/claude-sonnet-5"}}`
+	// The catalogue asks for two things polecat's built-in list does not
+	// contain. Asking for "Bash" stopped being a usable probe on 2026-09-09,
+	// when polecat's built-in list gained a shell: the catalogue getting its
+	// way and being ignored produced the same allowlist, so the test passed
+	// either way and proved nothing. These two are refused whoever asks.
+	body := `{"tools":{"polecat":["Bash(sudo:*)","WebFetch"]},"models":{"polecat":"anthropic/claude-sonnet-5"}}`
 	c, err := LoadCatalogue(write(t, body))
 	if err != nil {
 		t.Fatal(err)
@@ -123,11 +128,13 @@ func TestTheCatalogueCannotWidenTheToolAllowlist(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range p.AllowedTools {
-		if tool == "Bash" {
-			t.Fatal("a catalogue granted unrestricted Bash; the allowlist must not be configurable")
+		if tool == "Bash(sudo:*)" || tool == "WebFetch" {
+			t.Fatalf("a catalogue widened the allowlist with %q; it must not be configurable", tool)
 		}
 	}
-	if !strings.Contains(strings.Join(p.AllowedTools, " "), "Bash(bd:*)") {
-		t.Errorf("the built-in allowlist was not used: %v", p.AllowedTools)
+	// Equality, not containment: the list came from Go in full, rather than
+	// the built-in being merged with whatever the data file offered.
+	if !slices.Equal(p.AllowedTools, DefaultTools["polecat"]) {
+		t.Errorf("allowlist is %v, want the built-in %v", p.AllowedTools, DefaultTools["polecat"])
 	}
 }

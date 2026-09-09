@@ -172,17 +172,34 @@ func (j Job) Instructions() string {
 		//
 		// The agent was not wrong about anything. It had not been told that
 		// the branch and the pull request happen after the run, without it.
+		//
+		// The half of that text which said "you have no access to them and
+		// asking will not get it" stopped being true on 2026-09-09, when
+		// polecat was given a real shell. Leaving it in would have been worse
+		// than the original bug: an agent that CAN run the build being told it
+		// cannot will not try, and an instruction the environment contradicts
+		// teaches it to distrust the rest of them.
+		//
+		// So the division of labour is stated as a division of labour, which
+		// is what it always was -- landing happens after the run, from a
+		// snapshot taken before it -- rather than as a wall.
 		return fmt.Sprintf(
 			"Work the bead %s. Read it first, do what it asks, and close it when the work "+
 				"is done and not before. If you cannot complete it, leave it open and say why "+
 				"in a comment.%s\n\n"+
-				"Do NOT try to commit, branch, push, or open a pull request, and do not try to "+
-				"run git or gt at all -- you have no access to them and asking will not get it. "+
-				"Editing the files IS the whole of your job: whatever you change is committed to "+
-				"a branch named after this bead and opened as a pull request for you, "+
-				"automatically, after your run finishes. So close the bead once the change is "+
-				"made; you do not need to see it merged, and waiting for that is not something "+
-				"you can do.", j.Bead, where)
+				"You have a shell. Use it: run the build, run the tests, run the linter, "+
+				"install what the project needs, read the code with git log and git diff. "+
+				"Do not report work as done that you could have checked and did not -- if "+
+				"there is a way to verify the change on this machine, run it, and say in the "+
+				"bead what you ran and what it printed.\n\n"+
+				"Landing is not your job and not a restriction on you: after your run "+
+				"finishes, whatever you changed is committed to a branch named after this "+
+				"bead and opened as a pull request, automatically. So leave your work in the "+
+				"working tree and do not commit, branch, push, or open a pull request "+
+				"yourself -- `git push` and `gh` are refused, and a commit of your own would "+
+				"only confuse what gets landed. Close the bead once the change is made and "+
+				"checked; you do not need to see it merged, and waiting for that is not "+
+				"something you can do.", j.Bead, where)
 	}
 	return ""
 }
