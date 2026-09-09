@@ -113,8 +113,24 @@ type Change struct {
 }
 
 // Changes reports what a working tree has that its HEAD does not.
+//
+// -uall, so an untracked DIRECTORY is reported as the files inside it rather
+// than as itself.
+//
+// Without it `git status` summarises a wholly-new directory as one entry,
+// `portal/`, and every comparison downstream is made against that summary. The
+// consequence was total: sa-7dc's first run left portal/ in the tree, so the
+// re-dispatch's Before held `portal/`, and Since then classified everything
+// beneath it as pre-existing -- including the files the second run had just
+// written. An agent working inside a directory that was already untracked
+// could not land anything at all, and the run reported success.
+//
+// The cost is a longer list, and it is bounded by the same exclude that keeps
+// node_modules out of the commit: Exclude writes those patterns into
+// .git/info/exclude, so from the second run onwards status does not walk them.
+// A first run in a fresh checkout has no dependency tree to walk yet.
 func Changes(git Git) ([]Change, error) {
-	out, err := git("status", "--porcelain")
+	out, err := git("status", "--porcelain", "-uall")
 	if err != nil {
 		return nil, err
 	}
@@ -276,24 +292,36 @@ func isEphemeral(c Change) bool {
 	return matchesAny(c.Path, Ephemeral)
 }
 
-// matchesAny reports whether path is, or is inside, one of the named
-// directories. A trailing `*` in the pattern matches a name fragment, for
-// `*.egg-info/`.
+// matchesAny reports whether any SEGMENT of path names one of the listed
+// directories.
+//
+// Segments, not a prefix. The first version anchored at the path root, so
+// `node_modules/` matched `node_modules/next/index.js` and missed
+// `portal/node_modules/next/index.js` -- and a portal scaffold puts its
+// dependencies in exactly the second place. It went unnoticed because the run
+// that prompted the list happened to install at the repository root; the -uall
+// change surfaced it immediately, as `git add -- portal/.next` being refused
+// for a path the filter should have dropped.
+//
+// A leading `*` in a pattern matches a name fragment, for `*.egg-info/`.
 func matchesAny(path string, patterns []string) bool {
-	path = strings.TrimPrefix(path, "./")
+	segments := strings.Split(strings.Trim(strings.TrimPrefix(path, "./"), "/"), "/")
 	for _, p := range patterns {
-		if rest, ok := strings.CutPrefix(p, "*"); ok {
-			if strings.Contains(path, rest) {
-				return true
-			}
+		p = strings.TrimSuffix(p, "/")
+		if p == "" {
 			continue
 		}
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-		// The whole directory, reported by `git status` without its slash.
-		if strings.TrimSuffix(p, "/") == strings.TrimSuffix(path, "/") {
-			return true
+		fragment, isFragment := strings.CutPrefix(p, "*")
+		for _, seg := range segments {
+			if isFragment {
+				if strings.Contains(seg, fragment) {
+					return true
+				}
+				continue
+			}
+			if seg == p {
+				return true
+			}
 		}
 	}
 	return false

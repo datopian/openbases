@@ -97,8 +97,14 @@ func TestGastownsPlumbingIsNeverCommitted(t *testing.T) {
 	if !slices.Equal(got.Files, []string{"README.md"}) {
 		t.Errorf("landed %v, want just README.md", got.Files)
 	}
-	if !slices.Equal(got.Skipped, []string{".beads/"}) {
-		t.Errorf("skipped %v, want .beads/", got.Skipped)
+	// Named per file rather than as `.beads/`, because Changes now asks for
+	// -uall: an untracked directory is reported as its contents. The
+	// granularity changed deliberately -- summarising a new directory as one
+	// entry is what let Before mask the files a re-dispatch had just written
+	// -- and what matters here is unchanged, that the plumbing is skipped and
+	// said to be skipped.
+	if !slices.Equal(got.Skipped, []string{".beads/redirect"}) {
+		t.Errorf("skipped %v, want the plumbing file", got.Skipped)
 	}
 
 	// The commit itself, which is the thing that reaches the repository. Named
@@ -837,5 +843,45 @@ func TestAnotherBeadsLeftoverIsStillNotLanded(t *testing.T) {
 	}
 	if !slices.Contains(res.Files, "mine.txt") {
 		t.Errorf("did not land its own work: %v", res.Files)
+	}
+}
+
+// Dependencies and build output are skipped wherever they sit, not only at the
+// repository root.
+//
+// The first version of the Ephemeral filter was anchored at the path root, so
+// `node_modules/` matched `node_modules/next/index.js` and missed
+// `portal/node_modules/next/index.js`. It went unnoticed because the run that
+// prompted the list happened to install at the root -- and a PortalJS
+// scaffold puts its dependencies in a subdirectory, which is the actual shape
+// of the repository this was written for.
+func TestBuildOutputIsSkippedAtAnyDepth(t *testing.T) {
+	dir, git := repo(t)
+
+	write(t, dir, "portal/package.json", `{"name":"portal"}`)
+	write(t, dir, "portal/node_modules/next/index.js", "module.exports = {}\n")
+	write(t, dir, "portal/.next/BUILD_ID", "abc")
+	write(t, dir, "apps/web/dist/bundle.js", "// built\n")
+	write(t, dir, "services/api/__pycache__/main.cpython-312.pyc", "\x00")
+
+	res, err := Land(git, Spec{Bead: "sa-dep", Title: "Scaffold", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed")
+	}
+
+	out, err := git("show", "--name-only", "--format=", res.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"node_modules", ".next", "dist/", "__pycache__"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("committed %s from a subdirectory:\n%s", unwanted, out)
+		}
+	}
+	if !strings.Contains(out, "portal/package.json") {
+		t.Errorf("the run's work was not committed:\n%s", out)
 	}
 }
