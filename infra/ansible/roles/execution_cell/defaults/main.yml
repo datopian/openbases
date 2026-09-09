@@ -96,7 +96,26 @@ wg_model_limits:
   workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731: {context: 1310720, output: 8192}
   workers-ai/@cf/zai-org/glm-5.3-flash: {context: 1310720, output: 8192}
   workers-ai/@cf/google/gemma-4-26b-a4b-it: {context: 256000, output: 8192}
-dispatcher_deadline: 15m
+# How long one job may take before the dispatcher kills it.
+#
+# Raised from 15m to 30m on 2026-09-09, when polecat got a shell. The evidence
+# is one run: sa-7dc asked for a PortalJS scaffold, and the agent spent roughly
+# two minutes on `npm install` alone, wrote a working portal -- components,
+# pages, a DCAT generator and its round-trip test -- and was killed at the
+# 15-minute mark with the bead still open. The work landed anyway, because
+# landing happens after the run, so the pull request was real and the run was
+# recorded `failed`.
+#
+# 15m was the right number for an agent that could only edit files, which is
+# what one was until today. Installing dependencies and running a build are
+# minutes of wall clock that buy nothing visible, and they now happen inside
+# this budget.
+#
+# Still BELOW agent_max_runtime_minutes (45), deliberately: that is the cell's
+# backstop for a forgotten agent, and a job deadline at or above it would make
+# the backstop the thing that ends every long run, with no record of which
+# limit was hit.
+dispatcher_deadline: 30m
 witness_binary: /usr/local/bin/wg-witness
 # How often to look at the event channel. This is a readdir, not a model call,
 # so the interval is chosen for responsiveness rather than cost.

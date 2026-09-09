@@ -603,6 +603,48 @@ def check_restart_handlers_can_fire_on_a_tagged_deploy() -> None:
                     f"deployed binary changes and the running process does not")
 
 
+def check_a_job_deadline_stays_under_the_cell_ceiling() -> None:
+    """The dispatcher's per-job deadline must be below the cell's backstop.
+
+    Two limits end a long run, and they mean different things.
+    `dispatcher_deadline` is the job's own budget, and hitting it is a normal
+    outcome the dispatcher records against the bead. `agent_max_runtime_minutes`
+    is the cell's backstop for an agent nobody is watching, enforced by the
+    reaper.
+
+    Ordered, the job's budget expires first and the run is recorded as having
+    run out of time. Inverted -- or equal -- the backstop is what ends every
+    long run, and it reports a reaped process rather than a bead that needed
+    longer. The dispatcher's number was raised from 15m to 30m on 2026-09-09
+    when agents got a shell, which is what made this worth asserting: the
+    ordering was previously true by a margin nobody was going to close by
+    accident, and it is now a deliberate 30-against-45.
+    """
+    defaults = ROOT / "infra" / "ansible" / "roles" / "execution_cell" / "defaults" / "main.yml"
+    text = defaults.read_text()
+
+    deadline = re.search(r"^dispatcher_deadline:\s*(\d+)([smh])\s*$", text, re.M)
+    ceiling = re.search(r"^agent_max_runtime_minutes:\s*(\d+)\s*$", text, re.M)
+    if not deadline or not ceiling:
+        problems.append(
+            "execution_cell/defaults: dispatcher_deadline or "
+            "agent_max_runtime_minutes is missing or not a plain value, so the "
+            "ordering between the job budget and the cell backstop cannot be "
+            "checked")
+        return
+
+    unit = {"s": 1 / 60, "m": 1, "h": 60}[deadline.group(2)]
+    minutes = int(deadline.group(1)) * unit
+    cap = int(ceiling.group(1))
+    if minutes >= cap:
+        problems.append(
+            f"execution_cell/defaults: dispatcher_deadline is {deadline.group(0).split(':')[1].strip()} "
+            f"({minutes:g}m) and agent_max_runtime_minutes is {cap}, so the cell's "
+            f"backstop fires first or at the same moment. Every long run would be "
+            f"reported as a reaped process rather than a job that ran out of its "
+            f"own budget. Keep the job deadline below the ceiling.")
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -619,6 +661,7 @@ def main() -> int:
         check_example_env_is_complete_and_not_ours,
         check_every_installed_binary_has_a_source,
         check_restart_handlers_can_fire_on_a_tagged_deploy,
+        check_a_job_deadline_stays_under_the_cell_ceiling,
     ):
         check()
 
