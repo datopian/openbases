@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -168,6 +169,88 @@ func Since(before, now []Change) (changed, preexisting []Change) {
 		changed = append(changed, c)
 	}
 	return changed, preexisting
+}
+
+// restore brings back the paths this bead already landed that are no longer in
+// the working tree, from the commit the branch reset discarded.
+//
+// Returns what it restored, for the report. An absent or unreadable previous
+// tip restores nothing, which is the first-run case.
+func restore(git Git, prevTip, base string) ([]string, error) {
+	if prevTip == "" {
+		return nil, nil
+	}
+	out, err := git("diff", "--name-only", base+"..."+prevTip)
+	if err != nil {
+		// The tip is gone or unreadable. Nothing to restore, and not a reason
+		// to fail a landing that has real work staged.
+		return nil, nil
+	}
+	root, err := git("rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, err
+	}
+	root = strings.TrimSpace(root)
+
+	var done []string
+	for _, path := range strings.Fields(out) {
+		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
+			// The run has its own version. It is already staged and it wins.
+			continue
+		}
+		if _, err := git("checkout", prevTip, "--", path); err != nil {
+			// One unrestorable path is not worth failing the landing over --
+			// the run's own work is already staged. Reported by omission from
+			// `done`.
+			continue
+		}
+		done = append(done, path)
+	}
+	return done, nil
+}
+
+// reclaim splits `kept` into the changes the bead's branch already carries and
+// the ones that are genuinely somebody else's.
+//
+// Prefix-matched in both directions, because the two sides report at different
+// granularities: `git status` names a wholly-new directory as `portal/`, while
+// the branch's diff names `portal/pages/index.tsx`. Either can be the longer
+// string, so a plain equality test finds nothing.
+//
+// A branch that does not exist yet reclaims nothing, which is the ordinary
+// first-run case and not a failure.
+func reclaim(git Git, branch, base string, kept []Change) (reclaimed, rest []Change) {
+	if _, err := git("rev-parse", "--verify", "--quiet", branch); err != nil {
+		return nil, kept
+	}
+	out, err := git("diff", "--name-only", base+"..."+branch)
+	if err != nil {
+		return nil, kept
+	}
+	mine := strings.Fields(out)
+	for _, c := range kept {
+		if landedUnder(c.Path, mine) {
+			reclaimed = append(reclaimed, c)
+			continue
+		}
+		rest = append(rest, c)
+	}
+	return reclaimed, rest
+}
+
+// landedUnder reports whether a path and any of `mine` name overlapping work.
+func landedUnder(path string, mine []string) bool {
+	path = strings.TrimSuffix(strings.TrimPrefix(path, "./"), "/")
+	if path == "" {
+		return false
+	}
+	for _, m := range mine {
+		m = strings.TrimSuffix(m, "/")
+		if m == path || strings.HasPrefix(m, path+"/") || strings.HasPrefix(path, m+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func isPlumbing(path string) bool {
@@ -421,6 +504,39 @@ func Land(git Git, s Spec) (*Result, error) {
 		return nil, err
 	}
 	changes, kept := Since(s.Before, changes)
+
+	// A path this bead already landed is this bead's work, even though it was
+	// in the tree before this run started.
+	//
+	// Without this a re-dispatch DELETES what the bead had delivered, and it
+	// did. sa-7dc's first run wrote a portal, landed it, and was killed at its
+	// deadline with the bead still open; the re-dispatch then found portal/
+	// sitting untracked in the tree -- the first run had left it there -- so
+	// Since correctly called it pre-existing and did not stage it, while the
+	// `checkout -B` below correctly reset the branch to the base and discarded
+	// the commit that held it. Each half is right on its own. Together they
+	// turned a pull request containing a working portal into one containing a
+	// scratch directory, and the run reported success.
+	//
+	// So the bead's own branch is consulted: anything it already carries is
+	// moved back out of `kept` and staged again from the tree. Done here
+	// rather than by starting the branch at its previous tip, which was
+	// considered and is worse -- checking out a branch that tracks portal/
+	// while the tree holds an untracked portal/ is exactly the "untracked
+	// working tree files would be overwritten" refusal that the no-start-point
+	// form of `checkout -B` exists to avoid.
+	reclaimed, kept := reclaim(git, branch, base, kept)
+	changes = append(changes, reclaimed...)
+
+	// The bead's previous tip, read before `checkout -B` discards it.
+	//
+	// Reclaiming from the TREE is not enough on its own, and the test for it
+	// showed why: a file the previous run committed is removed from the
+	// working tree when the landing returns to the base branch, so it is not
+	// on disk to be staged again. Only the commit still has it.
+	prevTip, _ := git("rev-parse", "--verify", "--quiet", branch)
+	prevTip = strings.TrimSpace(prevTip)
+
 	work, skip := Interesting(changes)
 	skip = append(skip, kept...)
 	if len(work) == 0 {
@@ -468,6 +584,35 @@ func Land(git Git, s Spec) (*Result, error) {
 			return nil, err
 		}
 	}
+
+	// Then whatever this bead had already delivered and is no longer on disk.
+	//
+	// AFTER staging, and only for paths the working tree does not have: where
+	// the run rewrote a file the previous attempt had landed, the run's
+	// version is already staged and wins. Where the run never touched it, the
+	// earlier delivery is restored from the commit that `checkout -B` just
+	// discarded.
+	//
+	// This is what stops a re-dispatch from being a deletion. It is also the
+	// narrowest form that cannot conflict: `git checkout <tip> -- <path>` for
+	// a path absent from the tree has nothing to overwrite, which is the
+	// property that ruled out simply starting the branch at its previous tip.
+	//
+	// One consequence, stated because it is a real choice: a run that
+	// deliberately DELETED a file an earlier run of the same bead added will
+	// see it restored. Ambiguous either way, and the resolution favours not
+	// losing work.
+	restored, err := restore(git, prevTip, base)
+	if err != nil {
+		return nil, err
+	}
+	// Reported as landed files, because that is what they are: the pull
+	// request contains them, and a report listing only this run's edits would
+	// describe a smaller change than the branch actually holds.
+	landed := paths(work)
+	landed = append(landed, restored...)
+	slices.Sort(landed)
+	landed = slices.Compact(landed)
 
 	// What is actually staged, checked against what must never be. `git add -A`
 	// with the exclude in place should make this impossible; it is asserted
@@ -539,7 +684,7 @@ func Land(git Git, s Spec) (*Result, error) {
 	if _, err := git("checkout", base); err != nil {
 		return &Result{
 			Branch: branch, Commit: strings.TrimSpace(sha),
-			Files: paths(work), Skipped: paths(skip),
+			Files: landed, Skipped: paths(skip),
 			Warning: fmt.Sprintf("the working tree is still on %s: %v", branch, err),
 		}, nil
 	}
@@ -547,7 +692,7 @@ func Land(git Git, s Spec) (*Result, error) {
 	return &Result{
 		Branch:  branch,
 		Commit:  strings.TrimSpace(sha),
-		Files:   paths(work),
+		Files:   landed,
 		Skipped: paths(skip),
 	}, nil
 }

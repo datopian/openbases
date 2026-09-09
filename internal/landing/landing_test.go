@@ -709,3 +709,133 @@ func TestATrackedBuildDirectoryStillLands(t *testing.T) {
 		t.Fatalf("the repository tracks dist/ and its edit was dropped: %+v", res)
 	}
 }
+
+// A re-dispatch keeps what the bead already delivered.
+//
+// This is sa-7dc, exactly as it happened. The first run wrote a portal, landed
+// it, and was killed at its deadline with the bead still open. The re-dispatch
+// found portal/ sitting untracked in the tree, because the first run had left
+// it there -- so Since called it pre-existing and did not stage it, while
+// `checkout -B` reset the branch to the base and discarded the commit that
+// held it.
+//
+// Both halves were right on their own. Together the second run turned a pull
+// request containing a working portal into one containing a scratch directory,
+// and reported success: datopian/msf#1 went from 454 files to 76, none of them
+// the portal.
+func TestARedispatchKeepsWhatTheBeadAlreadyDelivered(t *testing.T) {
+	dir, git := repo(t)
+
+	// First run: writes the portal, lands it.
+	write(t, dir, "portal/pages/index.tsx", "export default function Home() {}\n")
+	first, err := Land(git, Spec{Bead: "sa-7dc", Title: "Scaffold a portal", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == nil {
+		t.Fatal("the first run landed nothing")
+	}
+
+	// The state the second run starts in, and the premise of the whole bug.
+	//
+	// The tree is back on main, so the files the first run COMMITTED are gone
+	// from it -- but the directory survives, because the run also left things
+	// in it that were never committed. On staging that was a build artefact
+	// and a public/ folder. `git status` then reports the DIRECTORY, `portal/`,
+	// and that single entry is what lands in Before.
+	write(t, dir, "portal/public/logo.svg", "<svg/>\n")
+
+	before, err := Changes(git)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawPortal bool
+	for _, c := range before {
+		if strings.HasPrefix(c.Path, "portal") {
+			sawPortal = true
+		}
+	}
+	if !sawPortal {
+		t.Fatalf("the premise does not hold: nothing under portal/ is in the "+
+			"tree, so Before cannot mask it: %+v", before)
+	}
+
+	// Second run: adds to the portal, and leaves a scratch directory of its
+	// own, as the real agent did.
+	//
+	// The new page is the sharp end. Because Before holds `portal/` as one
+	// entry, a path-level comparison classifies everything beneath it as
+	// pre-existing -- including a file that did not exist when the run
+	// started.
+	write(t, dir, "portal/pages/search.tsx", "export default function Search() {}\n")
+	write(t, dir, ".verify-tmp/out.txt", "checked\n")
+
+	second, err := Land(git, Spec{
+		Bead: "sa-7dc", Title: "Scaffold a portal", Base: "main",
+		Before: before,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == nil {
+		t.Fatal("the second run landed nothing")
+	}
+
+	// The branch must still carry the portal. By branch, not HEAD.
+	out, err := git("show", "--name-only", "--format=", second.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "portal/pages/index.tsx") {
+		t.Errorf("the re-dispatch dropped what the bead had delivered:\n%s", out)
+	}
+
+	// And the whole branch, not just its tip commit -- the tip is what the
+	// second run added, and the question is what a reviewer sees against main.
+	diff, err := git("diff", "--name-only", "main..."+second.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "portal/pages/index.tsx") {
+		t.Errorf("the pull request would not show the portal:\n%s", diff)
+	}
+	// And the second run's own new work inside that masked directory.
+	if !strings.Contains(diff, "portal/pages/search.tsx") {
+		t.Errorf("the second run's work inside portal/ was skipped as "+
+			"pre-existing:\n%s", diff)
+	}
+}
+
+// Somebody else's uncommitted work is still left alone.
+//
+// The counterpart to the test above, and the reason reclaim consults the
+// bead's own branch rather than simply landing everything it finds. portaljs
+// held sa-kfh's uncommitted change for two days; a landing that swept the tree
+// would have put it in another bead's pull request.
+func TestAnotherBeadsLeftoverIsStillNotLanded(t *testing.T) {
+	dir, git := repo(t)
+
+	// A previous, unrelated bead's edit, left in the tree.
+	write(t, dir, "someone-elses.txt", "not mine\n")
+	before, err := Changes(git)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	write(t, dir, "mine.txt", "my work\n")
+	res, err := Land(git, Spec{
+		Bead: "sa-999", Title: "Do my own work", Base: "main", Before: before,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed")
+	}
+	if slices.Contains(res.Files, "someone-elses.txt") {
+		t.Errorf("landed another bead's leftover: %v", res.Files)
+	}
+	if !slices.Contains(res.Files, "mine.txt") {
+		t.Errorf("did not land its own work: %v", res.Files)
+	}
+}
