@@ -467,6 +467,19 @@ jobs:
       - name: a project finds its cell without a deploy
         run: psql -v ON_ERROR_STOP=1 -f test/integration/a_project_finds_its_cell.sql
 
+      # Creating a project must not need an organisation-wide grant.
+      #
+      # It did, for two days, and nothing caught it: INSERT ... RETURNING makes
+      # Postgres apply the SELECT policy to the new row, the creator's
+      # membership is inserted after it, and can_read_project lets an org-wide
+      # admin read anything -- so it worked for the three people holding a
+      # grant and failed for everybody else with "internal server error".
+      #
+      # This runs as a user with no grants and no memberships, which is the
+      # only lens that can see it.
+      - name: a user with no grants can create a project
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/anyone_can_create_a_project.sql
+
       # Project graphs used to be declared in group_vars, one entry per client
       # engagement -- client names in a public repository, and a project's
       # first accepted candidate blocked until somebody deployed. The prefix is
