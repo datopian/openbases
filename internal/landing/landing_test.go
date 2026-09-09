@@ -1119,3 +1119,73 @@ func TestALandingThatFailsPartWayThroughStillPutsTheTreeBack(t *testing.T) {
 		t.Errorf("the cleanup threw away the run's work: %v", err)
 	}
 }
+
+// What the bead delivered is read from the PUSHED branch, not the local one.
+//
+// The msf rig again, and the reason "nothing to land" was reported while a
+// portal sat in the pull request. `checkout -B` resets the LOCAL branch to the
+// base on every landing, so a landing that failed before its commit leaves the
+// local ref carrying nothing -- while the pushed branch still holds the work.
+// reclaim and restore consulted the local one:
+//
+//	bead/sa-7dc        -> 46b1feb (the initial commit), 0 files
+//	origin/bead/sa-7dc -> f783859, 77 files
+func TestWhatTheBeadDeliveredIsReadFromThePushedBranch(t *testing.T) {
+	dir, git := repo(t)
+
+	// A landing that delivered, and pushed.
+	write(t, dir, "portal/pages/index.tsx", "export default function H() {}\n")
+	first, err := Land(git, Spec{Bead: "sa-7dc", Title: "Scaffold", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == nil {
+		t.Fatal("the first landing delivered nothing")
+	}
+
+	// Now the state a failed landing leaves: the local branch reset to the
+	// base, while the pushed branch keeps the work.
+	if _, err := git("branch", "-f", Branch("sa-7dc"), "main"); err != nil {
+		t.Fatal(err)
+	}
+	local, err := git("rev-parse", Branch("sa-7dc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := git("rev-parse", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(local) != strings.TrimSpace(base) {
+		t.Fatalf("the premise does not hold: the local branch was not reset")
+	}
+	remote, err := git("rev-parse", "origin/"+Branch("sa-7dc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(remote) == strings.TrimSpace(base) {
+		t.Fatalf("the premise does not hold: the pushed branch has nothing on it")
+	}
+
+	// A later run does something small.
+	write(t, dir, "NOTES.md", "this run\n")
+
+	res, err := Land(git, Spec{Bead: "sa-7dc", Title: "Scaffold", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed, which is what the rig reported while the pull " +
+			"request held a portal")
+	}
+	diff, err := git("diff", "--name-only", "main..."+res.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "portal/pages/index.tsx") {
+		t.Errorf("the delivered work was not read from the pushed branch:\n%s", diff)
+	}
+	if !strings.Contains(diff, "NOTES.md") {
+		t.Errorf("this run's own work was dropped:\n%s", diff)
+	}
+}
