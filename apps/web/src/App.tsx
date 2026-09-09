@@ -546,6 +546,36 @@ export function ProjectWork({
               <td style={{ ...css.td, ...css.muted }}>{w.kind || "—"}</td>
               <td style={css.td}>
                 {w.status || "—"}
+                {/*
+                  What happened when it was dispatched, when that is not
+                  obvious from the status. A bead that ran for six minutes and
+                  delivered nothing reads as "open", exactly like one nobody
+                  has picked up -- which is what sent somebody to dispatch it
+                  again.
+                */}
+                {(w.outcome === "blocked" || w.outcome === "failed") && (
+                  <span
+                    style={{ ...css.muted, fontSize: "0.75rem", color: "#8a1c1c" }}
+                    title={
+                      w.outcome === "failed"
+                        ? "the run itself failed"
+                        : "the run finished without closing the bead: the agent could not complete it"
+                    }
+                  >
+                    {" "}
+                    — {w.outcome === "failed" ? "run failed" : "ran, did not deliver"}
+                  </span>
+                )}
+                {w.outcome === "landed" && (
+                  <span style={{ ...css.muted, fontSize: "0.75rem", color: "#1b5e20" }}>
+                    {" "}— in a pull request
+                  </span>
+                )}
+                {w.outcome === "running" && (
+                  <span style={{ ...css.muted, fontSize: "0.75rem", color: "#1a6" }}>
+                    {" "}— running now
+                  </span>
+                )}
                 {isStale(w.last_seen) && (
                   <span
                     style={{ ...css.muted, fontSize: "0.75rem", color: "#a33" }}

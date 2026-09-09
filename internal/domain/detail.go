@@ -52,6 +52,13 @@ type WorkItem struct {
 	// question a reader asks about a stuck bead: not "what is it waiting for"
 	// but "what does finishing it release".
 	Blocking []string `json:"blocking,omitempty"`
+	// Outcome is what happened to it: never_dispatched, queued, running,
+	// failed, landed, blocked or done.
+	//
+	// Carried per row because a list that cannot say this shows a bead that
+	// ran for six minutes and delivered nothing as though nobody had picked it
+	// up -- which is what the dependency graph did, in green.
+	Outcome string `json:"outcome,omitempty"`
 }
 
 // RepositoryStatus is one repository and the pull requests projected for it.
@@ -207,7 +214,7 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 			var seen sql.NullTime
 			var blockedBy, blocking string
 			if err := work.Scan(&it.Bead, &it.Title, &it.Kind, &it.Status, &it.Cell, &seen,
-				&blockedBy, &blocking); err != nil {
+				&blockedBy, &blocking, &it.Outcome); err != nil {
 				return err
 			}
 			it.BlockedBy = splitIDs(blockedBy)

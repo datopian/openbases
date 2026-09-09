@@ -16,11 +16,17 @@ function check(what: string, ok: boolean, detail = "") {
   if (!ok) problems.push(`${what}${detail ? `: ${detail}` : ""}`);
 }
 
-const node = (bead: string, blockedBy: string[] = [], status = "open"): DepNode => ({
+const node = (
+  bead: string,
+  blockedBy: string[] = [],
+  status = "open",
+  outcome?: string,
+): DepNode => ({
   bead,
   title: bead + " title",
   status,
   blockedBy,
+  outcome,
 });
 
 // A chain lays out in order, one bead per stage.
@@ -114,6 +120,87 @@ check("closed counts as closed", isClosed("closed") && isClosed("CLOSED"));
 check("done counts as closed", isClosed("done"));
 check("open does not", !isClosed("open") && !isClosed("in_progress"));
 
+
+// A bead that has already been tried and delivered nothing is not "ready".
+//
+// This is the state the field exists for. sa-iyu ran for 5m45s, exited zero,
+// delivered nothing and left its bead open -- and the graph drew it green,
+// identical to work nobody had touched, so the obvious next action was to
+// dispatch it again and get the same nothing.
+//
+// The blockers here are CLOSED on purpose. An earlier version of this fixture
+// gave `fresh` an open blocker and then asserted it was ready, which it is
+// not -- the assertion was wrong rather than the code, and it only surfaced
+// once the checks below the report block started running at all.
+{
+  const l = layout([
+    // Finished, so it blocks nothing.
+    node("shut-1", [], "closed"),
+    // Tried and delivered nothing. Unconnected, and drawn anyway: the bead
+    // that most needs seeing was the one the "hide isolated beads" rule
+    // removed.
+    node("tried", [], "open", "blocked"),
+    node("failed-1", [], "open", "failed"),
+    // Blocked only by finished work, so these are startable and their
+    // outcome decides how they read.
+    node("fresh", ["shut-1"], "open", "never_dispatched"),
+    node("landed-1", ["shut-1"], "open", "landed"),
+    // A ready bead in layer 0, so the ordering check has something to
+    // compare against. Without one its loop body never ran and it passed
+    // with the ranking reversed.
+    node("ready-0", [], "open", "never_dispatched"),
+    node("needs-ready-0", ["ready-0"]),
+    // Unconnected with nothing wrong: still hidden.
+    node("lonely-ok", [], "open", "never_dispatched"),
+  ]);
+  const at = (id: string) => l.nodes.find((n) => n.bead === id)!;
+
+  check("a run that delivered nothing needs attention",
+    at("tried").readiness === "attention", at("tried").readiness);
+  check("a failed run needs attention",
+    at("failed-1").readiness === "attention", at("failed-1").readiness);
+  check("an unconnected bead needing attention is still drawn",
+    !!at("failed-1"), "it was left out of the graph");
+  check("an unconnected bead with nothing wrong is still hidden",
+    !l.nodes.some((n) => n.bead === "lonely-ok") && l.isolated.includes("lonely-ok"),
+    l.isolated.join(","));
+  check("an untouched bead behind finished work is ready",
+    at("fresh").readiness === "ready", at("fresh").readiness);
+  // `landed` is work awaiting review, not work that stalled -- calling it
+  // attention would cry wolf on every open pull request.
+  check("work in a pull request is not flagged",
+    at("landed-1").readiness === "ready", at("landed-1").readiness);
+
+  // Attention sorts before ready WITHIN a layer, because whether starting a
+  // bead has already been tried matters more than whether it can start.
+  //
+  // Asserted as a property over the layer rather than between two named
+  // beads: a comparison of two rows is satisfiable by accident.
+  for (const l0 of l.nodes.filter((n) => n.layer === 0 && n.readiness === "ready")) {
+    const worse = l.nodes.filter(
+      (n) => n.layer === 0 && n.readiness === "attention" && n.row > l0.row,
+    );
+    check("attention sorts above ready in the same layer", worse.length === 0,
+      `${worse.map((n) => n.bead).join(",")} sit below ready ${l0.bead}`);
+  }
+}
+
+// A closed bead stays done even if its last run reported nothing: the work is
+// finished, whatever the run said.
+{
+  const l = layout([node("shut", [], "closed", "blocked"), node("x", ["shut"])]);
+  const at = (id: string) => l.nodes.find((n) => n.bead === id)!;
+  check("a closed bead is done regardless of its last run",
+    at("shut").readiness === "done", at("shut").readiness);
+}
+
+// The report goes LAST, and that is not cosmetic.
+//
+// It used to sit in the middle: checks appended after it pushed their
+// problems into a list nobody read again, and the script printed success and
+// exited zero with failures recorded. Every check added below that line was
+// unfailable, which took a deliberate mutation of the ranking to notice --
+// the same shape of bug this file exists to catch.
 if (problems.length > 0) {
   for (const p of problems) console.error(`  ${p}`);
   // Thrown rather than process.exit, which would need @types/node for one

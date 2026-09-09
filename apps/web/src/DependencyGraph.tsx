@@ -10,6 +10,12 @@ import { layout, type Placed, type Readiness } from "./Dependencies";
  * some readers cannot use.
  */
 const look: Record<Readiness, { fill: string; stroke: string; text: string; label: string }> = {
+  attention: {
+    fill: "#fdecea",
+    stroke: "#c62828",
+    text: "#8a1c1c",
+    label: "ran and did not deliver",
+  },
   ready: { fill: "#e8f5e9", stroke: "#2e7d32", text: "#1b5e20", label: "can start now" },
   blocked: { fill: "#fff8e1", stroke: "#b8860b", text: "#6b4e00", label: "waiting on other work" },
   done: { fill: "#f2f2f2", stroke: "#9e9e9e", text: "#5f5f5f", label: "closed" },
@@ -52,6 +58,7 @@ export function DependencyGraph({ work }: { work: ProjectWorkItem[] }) {
           title: w.title ?? "",
           status: w.status ?? "",
           blockedBy: w.blocked_by ?? [],
+          outcome: w.outcome,
         })),
       ),
     [work],
@@ -79,6 +86,7 @@ export function DependencyGraph({ work }: { work: ProjectWorkItem[] }) {
     hover !== null && (hover === from || hover === to);
 
   const ready = plan.nodes.filter((n) => n.readiness === "ready");
+  const attention = plan.nodes.filter((n) => n.readiness === "attention");
 
   return (
     <div>
@@ -90,6 +98,19 @@ export function DependencyGraph({ work }: { work: ProjectWorkItem[] }) {
             {" "}
             <strong>{ready.length}</strong> bead{ready.length === 1 ? "" : "s"}{" "}
             can start now.
+          </>
+        )}
+        {attention.length > 0 && (
+          // Said in the summary as well as drawn, because the point of the
+          // colour is to be noticed and a reader who scrolled past it should
+          // still be told.
+          <>
+            {" "}
+            <strong style={{ color: "#8a1c1c" }}>
+              {attention.length} ran already and delivered nothing
+            </strong>
+            ; dispatching {attention.length === 1 ? "it" : "them"} again will
+            probably do the same until the reason is fixed.
           </>
         )}
       </p>
