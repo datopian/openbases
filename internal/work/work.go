@@ -191,7 +191,9 @@ func (j Job) Instructions() string {
 				"install what the project needs, read the code with git log and git diff. "+
 				"Do not report work as done that you could have checked and did not -- if "+
 				"there is a way to verify the change on this machine, run it, and say in the "+
-				"bead what you ran and what it printed.\n\n"+
+				"bead what you ran and what it printed. If you make scratch files or a "+
+				"temporary directory while checking, delete them before you finish -- "+
+				"whatever is left in the tree is what gets committed.\n\n"+
 				"Landing is not your job and not a restriction on you: after your run "+
 				"finishes, whatever you changed is committed to a branch named after this "+
 				"bead and opened as a pull request, automatically. So leave your work in the "+
