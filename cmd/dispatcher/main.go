@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -388,7 +389,7 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 		case err := <-done:
 			return strings.TrimSpace(buf.String()), err
 		case <-tick.C:
-			d.heartbeat(ctx, job.ID, buf.progress())
+			d.heartbeat(ctx, job.ID, buf.progress()+touched(job.Checkout))
 		}
 	}
 }
@@ -419,12 +420,18 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// progress is what the node can honestly say about a run in flight.
+// progress is what the node can honestly say about the run's OUTPUT.
 //
-// Bytes written and how long since the last write. Neither proves the agent is
-// making progress -- an agent can write nonsense -- but silence is real
-// evidence: an agent that has produced nothing for ten minutes is not thinking
-// out loud, and that is the judgement a person wants to make for themselves.
+// Bytes written and how long since the last write. Read on its own this is
+// misleading for the default runtime, which is why touched() exists beside it:
+// opencode buffers its stdout and delivers it at exit, so a healthy opencode
+// run sits at "186 B of output, last wrote 7m ago" for its whole length. That
+// is exactly what sa-7dc's first run reported while it was installing
+// dependencies and writing a portal.
+//
+// The original comment here said "silence is real evidence: an agent that has
+// produced nothing for ten minutes is not thinking out loud". True of claude,
+// which streams. Not true of opencode, and opencode is what polecat runs.
 func (b *syncBuffer) progress() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -434,6 +441,78 @@ func (b *syncBuffer) progress() string {
 	}
 	return fmt.Sprintf("%s of output, last wrote %s ago",
 		humanBytes(n), time.Since(b.last).Round(time.Second))
+}
+
+// touched reports how recently the run changed a file in its checkout.
+//
+// The liveness signal that works for BOTH runtimes. An agent's whole job is to
+// change files, so the newest mtime under its checkout is evidence about the
+// work itself rather than about how its harness happens to buffer stdout.
+// Returns "" rather than a guess when it cannot tell, so a caller appends
+// nothing instead of appending something reassuring.
+//
+// Bounded deliberately:
+//
+//	.git is skipped -- git writes to it constantly, so including it would
+//	report every run as busy, which is the failure this replaces in the
+//	opposite direction;
+//
+//	anything on landing.Ephemeral is skipped, because `npm install` touches
+//	tens of thousands of files and walking them each half-minute would cost
+//	more than the run;
+//
+//	the walk stops after 20,000 entries, so a large repository slows the
+//	heartbeat rather than stalling the dispatcher.
+func touched(checkout string) string {
+	if strings.TrimSpace(checkout) == "" {
+		return ""
+	}
+	var newest time.Time
+	var name string
+	seen := 0
+	_ = filepath.WalkDir(checkout, func(path string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, relErr := filepath.Rel(checkout, path)
+		if relErr != nil {
+			return nil
+		}
+		if e.IsDir() {
+			base := filepath.Base(path)
+			if base == ".git" || matchesEphemeral(rel) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if seen++; seen > 20000 {
+			return filepath.SkipAll
+		}
+		info, err := e.Info()
+		if err != nil {
+			return nil
+		}
+		if info.ModTime().After(newest) {
+			newest, name = info.ModTime(), rel
+		}
+		return nil
+	})
+	if newest.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("; wrote %s %s ago", name, time.Since(newest).Round(time.Second))
+}
+
+// matchesEphemeral reports whether a path is inside a directory landing will
+// not commit. Shared with the landing so the two cannot disagree about what
+// counts as build output.
+func matchesEphemeral(rel string) bool {
+	for _, p := range landing.Ephemeral {
+		if strings.HasPrefix(rel+"/", p) || strings.TrimSuffix(p, "/") == filepath.Base(rel) {
+			return true
+		}
+	}
+	return false
 }
 
 func humanBytes(n int) string {

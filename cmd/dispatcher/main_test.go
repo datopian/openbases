@@ -312,3 +312,62 @@ Left the two internal code comments untouched.`
 		t.Errorf("another bead's output was read as this one's: %q", s)
 	}
 }
+
+// A run that is working says so, whichever harness it runs under.
+//
+// The heartbeat's other half reports stdout, and for opencode -- what polecat
+// actually runs -- stdout arrives at exit. sa-7dc's first run therefore read
+// "186 B of output, last wrote 7m0s ago" for its entire length while it was
+// installing dependencies and writing a portal, which is indistinguishable
+// from wedged. An agent's job is to change files, so the newest file it
+// changed is the signal that does not depend on buffering.
+func TestALiveRunIsVisibleWhateverTheHarnessBuffers(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel string) {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// An old file, then the one the "agent" just wrote.
+	write("README.md")
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "README.md"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	write("portal/pages/index.tsx")
+
+	got := touched(dir)
+	if !strings.Contains(got, "portal/pages/index.tsx") {
+		t.Errorf("touched(%q) = %q, want the file the run just wrote", dir, got)
+	}
+
+	// .git is skipped. git writes to it throughout a run, so counting it would
+	// report every run as busy -- the same uselessness as the stdout signal,
+	// in the opposite direction.
+	write(".git/index")
+	if got := touched(dir); strings.Contains(got, ".git") {
+		t.Errorf("touched reported git's own bookkeeping: %q", got)
+	}
+
+	// And so is a dependency tree, which `npm install` fills with tens of
+	// thousands of files that are not the run's work and would cost more to
+	// walk than the run costs to make.
+	write("node_modules/next/index.js")
+	if got := touched(dir); strings.Contains(got, "node_modules") {
+		t.Errorf("touched reported installed dependencies: %q", got)
+	}
+
+	// Nothing to report is reported as nothing, rather than as a reassuring
+	// guess: a caller appends "" instead of "wrote something 0s ago".
+	if got := touched(filepath.Join(dir, "does-not-exist")); got != "" {
+		t.Errorf("touched on a missing checkout = %q, want empty", got)
+	}
+	if got := touched(""); got != "" {
+		t.Errorf("touched on no checkout = %q, want empty", got)
+	}
+}
