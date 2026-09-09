@@ -4,6 +4,52 @@
 # Idempotent by requirement: a second run must report no changes. Run it twice
 # and compare, or use scripts/ansible_check.sh which does that for you.
 
+# Before anything installs a binary: refuse a deploy that would install none.
+#
+# Every `*_local_binary` resolves through first_found against bin/linux-amd64
+# and falls back to "", and every install task skips on empty. That contract is
+# deliberate -- a config-only deploy should not fail on a missing source file --
+# and it has a sharp edge, which has now drawn blood twice:
+#
+#   the worker binary was never wired to a variable at all, so the install task
+#   skipped on every deploy and reported ok. Staging ran a 22 August binary for
+#   two and a half weeks (see group_vars/all/binaries.yml);
+#
+#   on 9 September a full site.yml run finished in 11m02s with failed=0 while
+#   installing no new wg-runner, because bin/linux-amd64 had not been rebuilt
+#   since the merge. The deploy was reported as done, and the node was running
+#   the previous binary.
+#
+# Both are the same shape: a guard whose input is silently absent. An empty
+# build directory is not a partial deploy, it is a deploy that ships nothing
+# and says it worked, so it fails here instead -- naming the fix.
+#
+# Tagged the same as the install tasks, so a run that installs no binaries by
+# choice (`--tags config`) never reaches this.
+- name: Refuse a binary deploy with nothing built
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  tags: [binaries, code]
+  tasks:
+    - name: Count what is in the build directory
+      ansible.builtin.find:
+        paths: "{{ workgraph_build_dir }}"
+        file_type: file
+      register: built
+      failed_when: false
+
+    - name: There must be at least one binary to install
+      ansible.builtin.assert:
+        that: built.matched | default(0) > 0
+        fail_msg: >-
+          {{ workgraph_build_dir }} holds no binaries, so this deploy would
+          install none and still report success. Run `make build-linux` first.
+          If you meant to deploy configuration only, say so:
+          --skip-tags binaries.
+        success_msg: "{{ built.matched }} binaries ready to install"
+
 - name: Harden every node
   hosts: all
   become: false          # cloud-init leaves us as root; no sudo layer to add
