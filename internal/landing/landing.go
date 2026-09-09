@@ -75,6 +75,36 @@ func Exec(dir, home string) Git {
 // clearer than a silent omission when something does go wrong.
 var Plumbing = []string{".beads/"}
 
+// Ephemeral is what a build produces and a dependency installer downloads:
+// never the run's work, whoever asked for it.
+//
+// This list did not need to exist until 2026-09-09, and the reason is exact.
+// Until then a polecat had no shell, so it could not run `npm install` and no
+// dependency tree could appear in a checkout. The hour the shell landed, the
+// first agent to use it scaffolded a portal in datopian/msf -- correctly, it
+// was what the bead asked for -- and the landing committed the node_modules
+// that came with it: 378 of the 454 files in datopian/msf#1, +84,804 lines.
+// The repository was newly created and had no root .gitignore of its own, so
+// nothing else was going to stop it.
+//
+// Only ever applied to paths this run created and git does not track (see
+// isEphemeral). A repository that deliberately commits its dependencies or its
+// dist/ has them TRACKED, and this list must not start second-guessing that --
+// which is why the rule is about untracked-and-new rather than about the name
+// alone.
+var Ephemeral = []string{
+	// JavaScript
+	"node_modules/", ".next/", ".nuxt/", ".svelte-kit/", ".turbo/",
+	".parcel-cache/", "bower_components/",
+	// Python
+	"__pycache__/", ".venv/", "venv/", ".pytest_cache/", ".mypy_cache/",
+	".ruff_cache/", ".tox/", "*.egg-info/",
+	// Rust, Java, general build output
+	"target/", "dist/", "build/", "out/",
+	// Test and tool output
+	"coverage/", ".nyc_output/", ".cache/", ".gradle/",
+}
+
 // Change is one path the run touched.
 type Change struct {
 	Path   string
@@ -104,16 +134,17 @@ func Changes(git Git) ([]Change, error) {
 }
 
 // Interesting reports the changes that belong to the repository, and separately
-// the plumbing that does not.
-func Interesting(changes []Change) (work, plumbing []Change) {
+// the ones that do not: gastown's plumbing, and whatever the run's own build
+// left behind.
+func Interesting(changes []Change) (work, skip []Change) {
 	for _, c := range changes {
-		if isPlumbing(c.Path) {
-			plumbing = append(plumbing, c)
+		if isPlumbing(c.Path) || isEphemeral(c) {
+			skip = append(skip, c)
 			continue
 		}
 		work = append(work, c)
 	}
-	return work, plumbing
+	return work, skip
 }
 
 // Since reports which of `now` was not already there in `before`, and which
@@ -140,8 +171,45 @@ func Since(before, now []Change) (changed, preexisting []Change) {
 }
 
 func isPlumbing(path string) bool {
-	for _, p := range Plumbing {
-		if strings.HasPrefix(path, p) || strings.HasPrefix(path, "./"+p) {
+	return matchesAny(path, Plumbing)
+}
+
+// isEphemeral reports whether a change is build output or installed
+// dependencies that this run created.
+//
+// Two conditions, and the second is the one that keeps this honest:
+//
+//	the path is on the Ephemeral list, and
+//	git does not track it -- porcelain "??".
+//
+// A repository that commits its own vendored dependencies or a built dist/
+// has those files TRACKED, so a modification to one reads as " M" and lands
+// like any other edit. The list never overrides what a repository has decided
+// to keep; it only declines to ADD a dependency tree that a build left behind.
+func isEphemeral(c Change) bool {
+	if strings.TrimSpace(c.Status) != "??" {
+		return false
+	}
+	return matchesAny(c.Path, Ephemeral)
+}
+
+// matchesAny reports whether path is, or is inside, one of the named
+// directories. A trailing `*` in the pattern matches a name fragment, for
+// `*.egg-info/`.
+func matchesAny(path string, patterns []string) bool {
+	path = strings.TrimPrefix(path, "./")
+	for _, p := range patterns {
+		if rest, ok := strings.CutPrefix(p, "*"); ok {
+			if strings.Contains(path, rest) {
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+		// The whole directory, reported by `git status` without its slash.
+		if strings.TrimSuffix(p, "/") == strings.TrimSuffix(path, "/") {
 			return true
 		}
 	}
@@ -156,9 +224,30 @@ func isPlumbing(path string) bool {
 // .gitignore would be a change to somebody else's project to accommodate ours.
 func Exclude(git Git) error {
 	var wanted []string
-	for _, p := range Plumbing {
+	// Ephemeral as well as Plumbing: excluding it here keeps `git status`
+	// meaningful for the NEXT run in this checkout, which would otherwise
+	// start with a node_modules in its Before set and carry it forever.
+	for _, p := range append(append([]string{}, Plumbing...), Ephemeral...) {
 		// Already ignored, by this file or by the repository's own .gitignore.
 		if _, err := git("check-ignore", "-q", p); err == nil {
+			continue
+		}
+		// Never exclude something this repository TRACKS.
+		//
+		// Found by the test for it: a repository that commits a vendored
+		// dist/ had `dist/` written into info/exclude here, and the very next
+		// step -- `git add -- dist/bundle.js`, staging the run's real edit to
+		// a tracked file -- was refused by git with
+		//
+		//	The following paths are ignored by one of your .gitignore files:
+		//	dist
+		//	hint: Use -f if you really want to add them.
+		//
+		// So a list meant to keep a dependency tree out of a commit would
+		// have stopped that repository landing anything under dist/ at all.
+		// The rule everywhere in this file is the same: the repository's own
+		// choices win, and this list only declines to ADD what a build left.
+		if out, err := git("ls-files", "--", p); err == nil && strings.TrimSpace(out) != "" {
 			continue
 		}
 		wanted = append(wanted, p)
@@ -194,9 +283,11 @@ func Exclude(git Git) error {
 	if body != "" && !strings.HasSuffix(body, "\n") {
 		body += "\n"
 	}
-	body += "# Gas Town's own plumbing, written into this checkout by `gt rig add`.\n" +
-		"# Local to this node and nothing to do with this repository, so it is\n" +
-		"# excluded here rather than in the repository's .gitignore.\n"
+	body += "# Gas Town's own plumbing, plus build output and installed\n" +
+		"# dependencies that a run produces. Local to this node and nothing to\n" +
+		"# do with this repository, so it is excluded here rather than in the\n" +
+		"# repository's .gitignore -- editing somebody else's .gitignore to suit\n" +
+		"# our runner would be a change to their project.\n"
 	for _, p := range wanted {
 		body += p + "\n"
 	}
@@ -267,10 +358,12 @@ func Refresh(git Git, base string) (moved bool, why string) {
 
 // Result is what a landing produced.
 type Result struct {
-	Branch  string
-	Commit  string
-	Files   []string
-	Skipped []string // plumbing that was deliberately not committed
+	Branch string
+	Commit string
+	Files  []string
+	// Plumbing and build output that were deliberately not committed, so a
+	// caller can say what was left out rather than silently dropping it.
+	Skipped []string
 	// Warning is set when the work landed but something afterwards did not,
 	// so the caller reports a success that is not quite clean rather than
 	// either hiding it or calling the landing a failure.
@@ -328,8 +421,8 @@ func Land(git Git, s Spec) (*Result, error) {
 		return nil, err
 	}
 	changes, kept := Since(s.Before, changes)
-	work, plumbing := Interesting(changes)
-	plumbing = append(plumbing, kept...)
+	work, skip := Interesting(changes)
+	skip = append(skip, kept...)
 	if len(work) == 0 {
 		return nil, nil
 	}
@@ -390,6 +483,22 @@ func Land(git Git, s Spec) (*Result, error) {
 			return nil, fmt.Errorf("refusing to commit %s: it is gastown's plumbing, "+
 				"not the repository's", path)
 		}
+		// The backstop for a directory sweep: `git add -- portal/` stages
+		// everything beneath it, so an ephemeral child can arrive through a
+		// parent that is not itself ephemeral.
+		//
+		// Asked of HEAD rather than of the porcelain status, because by here
+		// the path IS in the index and its status no longer says where it came
+		// from. A path already in HEAD is one the repository tracks, and its
+		// edit lands like any other -- the first version of this check omitted
+		// that and refused a vendored dist/bundle.js the run had legitimately
+		// edited, which the test for it caught.
+		if matchesAny(path, Ephemeral) {
+			if _, err := git("cat-file", "-e", "HEAD:"+path); err != nil {
+				return nil, fmt.Errorf("refusing to commit %s: it is build output or "+
+					"installed dependencies the run produced, not its work", path)
+			}
+		}
 	}
 	if strings.TrimSpace(staged) == "" {
 		// Everything the run touched was plumbing.
@@ -430,7 +539,7 @@ func Land(git Git, s Spec) (*Result, error) {
 	if _, err := git("checkout", base); err != nil {
 		return &Result{
 			Branch: branch, Commit: strings.TrimSpace(sha),
-			Files: paths(work), Skipped: paths(plumbing),
+			Files: paths(work), Skipped: paths(skip),
 			Warning: fmt.Sprintf("the working tree is still on %s: %v", branch, err),
 		}, nil
 	}
@@ -439,7 +548,7 @@ func Land(git Git, s Spec) (*Result, error) {
 		Branch:  branch,
 		Commit:  strings.TrimSpace(sha),
 		Files:   paths(work),
-		Skipped: paths(plumbing),
+		Skipped: paths(skip),
 	}, nil
 }
 
