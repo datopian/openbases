@@ -64,8 +64,11 @@ func main() {
 		catalogue = flag.String("catalogue", getenv("WG_MODEL_CATALOGUE", "/etc/workgraph/models.json"),
 			"role and model tables, read to report what a run uses")
 		interval = flag.Duration("interval", 10*time.Second, "how often to look for work")
-		deadline = flag.Duration("deadline", 15*time.Minute, "how long one job may take")
-		once     = flag.Bool("once", false, "do a single pass and exit")
+		deadline = flag.Duration("deadline", 3*time.Hour,
+			"absolute ceiling on one job; a backstop against a loop, not a budget")
+		stall = flag.Duration("stall", 10*time.Minute,
+			"stop a run that has written nothing -- no output, no file changed -- for this long")
+		once = flag.Bool("once", false, "do a single pass and exit")
 	)
 	flag.Parse()
 
@@ -85,7 +88,7 @@ func main() {
 		cell: *cell, cellRoot: *cellRoot, rig: *rig, runner: *runner,
 		gtBinary:  *gtBinary,
 		catalogue: *catalogue,
-		deadline:  *deadline, log: log,
+		deadline:  *deadline, stall: *stall, log: log,
 		http: &http.Client{Timeout: 60 * time.Second},
 	}
 
@@ -120,8 +123,14 @@ type dispatcher struct {
 	// report what a run will use without reimplementing the lookup.
 	catalogue string
 	deadline  time.Duration
-	http      *http.Client
-	log       *slog.Logger
+	// How long a run may produce NOTHING before it is stopped. See the run
+	// loop for why this, and not elapsed time, is the limit that matters.
+	stall time.Duration
+	// How often the run loop looks. A field so a test can look often enough
+	// to observe a run WHILE it is producing; 30s in production.
+	tick time.Duration
+	http *http.Client
+	log  *slog.Logger
 }
 
 // pass projects the cell's beads upward, then claims and runs at most one job.
@@ -351,7 +360,27 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 		return "", err
 	}
 
-	cmd := exec.CommandContext(ctx, d.runner, args...)
+	// Cancellable independently of ctx, so a stalled run can be stopped
+	// without tearing down the dispatcher's own pass.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	cmd := exec.CommandContext(runCtx, d.runner, args...)
+	// SIGTERM, not the SIGKILL that CommandContext sends by default.
+	//
+	// wg-runner registers its teardown before it creates anything and runs it
+	// on every path including a signal -- but only a signal it can catch.
+	// Under SIGKILL the teardown does not run and the agent it started is
+	// orphaned: the process that was stopped for being stalled keeps running,
+	// with nothing watching it, which is worse than the stall.
+	//
+	// WaitDelay is the fallback. A runner that ignores SIGTERM is killed after
+	// it, and -- the reason it matters here -- Wait stops blocking on output
+	// pipes an orphaned grandchild still holds open. Without it a stalled run
+	// hung this dispatcher until the agent's own sleep finished, which the
+	// test for this caught by hanging for two minutes.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 30 * time.Second
 	// Appended rather than replacing the environment, because the runner also
 	// needs PATH and HOME from the unit. The token is passed to one child and
 	// is never logged; wg-runner writes it into a settings file outside the run
@@ -381,14 +410,76 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 	// minute, rare enough that a two-hour run costs 240 requests rather than
 	// one per second. The dispatcher already talks to the control plane on
 	// every pass, so this is the same connection doing more.
-	tick := time.NewTicker(30 * time.Second)
+	every := d.tick
+	if every <= 0 {
+		every = 30 * time.Second
+	}
+	tick := time.NewTicker(every)
 	defer tick.Stop()
+
+	// A run ends when it STOPS PRODUCING, not when a clock runs out.
+	//
+	// The deadline used to be elapsed time, and it was the wrong measurement.
+	// Three of sa-7dc's four runs were killed by it in the middle of real
+	// work: one had installed dependencies and written a portal and was
+	// stopped at 15 minutes, and the pull request it left was reported as a
+	// failure. Meanwhile the run that deserved stopping -- thirty minutes
+	// during which it wrote no file at all, only `find` over other rigs --
+	// was allowed to use its whole allowance, because elapsed time cannot
+	// tell those two apart.
+	//
+	// Progress is two facts, and either one counts: the agent wrote something
+	// to its output, or it changed a file in its checkout. A run that is doing
+	// neither for as long as `stall` is not thinking, and every extra minute
+	// is spend against a bead that is not moving.
+	//
+	// The absolute ceiling stays, far above any real task, because "produces
+	// something every few minutes" is also the shape of a loop. It is a
+	// backstop rather than a budget now: reaching it is a bug report, not a
+	// normal outcome.
+	progress := func() (string, int) {
+		_, at := newestChange(job.Checkout)
+		return at.String(), buf.len()
+	}
+	lastMark, lastBytes := progress()
+	lastMoved := time.Now()
 
 	for {
 		select {
 		case err := <-done:
 			return strings.TrimSpace(buf.String()), err
 		case <-tick.C:
+			mark, bytes := progress()
+			if mark != lastMark || bytes != lastBytes {
+				lastMark, lastBytes, lastMoved = mark, bytes, time.Now()
+			}
+
+			idle := time.Since(lastMoved)
+			if d.stall > 0 && idle >= d.stall {
+				// Said in the log AND carried into the heartbeat, so the
+				// reason survives wherever somebody looks first. A run that
+				// simply stops with no explanation is what the old deadline
+				// did, and it took reading a transcript to find out why.
+				d.log.Warn("stopping a stalled run",
+					"job", job.ID, "bead", job.Bead,
+					"idle", idle.Round(time.Second), "stall", d.stall)
+				d.heartbeat(ctx, job.ID, fmt.Sprintf(
+					"stopped: nothing written for %s (no output, no file changed)",
+					idle.Round(time.Second)))
+				cancelRun()
+
+				// The stall is the reason, always -- wrapped around whatever
+				// Wait reports rather than deferred to it. Wait describes the
+				// mechanism ("signal: terminated"), which is what we just did
+				// to it and says nothing about why. The first version only
+				// substituted this when Wait returned nil, so every real stop
+				// reached the bead as "signal: terminated" and the operator
+				// had to guess. The test caught it.
+				return strings.TrimSpace(buf.String()), fmt.Errorf(
+					"stalled: nothing written for %s -- no output and no file "+
+						"changed in the checkout (%v)",
+					idle.Round(time.Second), <-done)
+			}
 			d.heartbeat(ctx, job.ID, buf.progress()+touched(job.Checkout))
 		}
 	}
@@ -412,6 +503,13 @@ func (b *syncBuffer) Write(p []byte) (int, error) {
 	defer b.mu.Unlock()
 	b.last = time.Now()
 	return b.buf.Write(p)
+}
+
+// len is the bytes written so far, for comparing one tick against the next.
+func (b *syncBuffer) len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
 }
 
 func (b *syncBuffer) String() string {
@@ -464,8 +562,22 @@ func (b *syncBuffer) progress() string {
 //	the walk stops after 20,000 entries, so a large repository slows the
 //	heartbeat rather than stalling the dispatcher.
 func touched(checkout string) string {
-	if strings.TrimSpace(checkout) == "" {
+	name, at := newestChange(checkout)
+	if at.IsZero() {
 		return ""
+	}
+	return fmt.Sprintf("; wrote %s %s ago", name, time.Since(at).Round(time.Second))
+}
+
+// newestChange is the most recently modified file under the checkout, and
+// when. Zero time when there is nothing to report.
+//
+// Split out from touched so the dispatcher can COMPARE it between ticks rather
+// than only print it. That comparison is what decides whether a run is working
+// or wedged, which is the thing a deadline should be measuring.
+func newestChange(checkout string) (string, time.Time) {
+	if strings.TrimSpace(checkout) == "" {
+		return "", time.Time{}
 	}
 	var newest time.Time
 	var name string
@@ -497,10 +609,7 @@ func touched(checkout string) string {
 		}
 		return nil
 	})
-	if newest.IsZero() {
-		return ""
-	}
-	return fmt.Sprintf("; wrote %s %s ago", name, time.Since(newest).Round(time.Second))
+	return name, newest
 }
 
 // matchesEphemeral reports whether a path is inside a directory landing will
