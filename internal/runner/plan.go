@@ -492,6 +492,39 @@ func New(s Spec) (Plan, error) {
 		p.Env["BEADS_DIR"] = filepath.Join(p.BeadsDir, ".beads")
 	}
 
+	// What the agent is asked to do, plus -- when the two differ -- where its
+	// bead actually lives.
+	//
+	// Two of sa-7dc's three runs spent themselves on this. The agent works in
+	// the msf rig, whose .beads/config.yaml advertises the prefix `msf8`,
+	// while its bead is `sa-7dc` and lives in another rig's graph, reached
+	// through BEADS_DIR. `bd show sa-7dc` works. But an agent that reads the
+	// local config and sees a prefix its bead does not match concludes it is
+	// in the wrong place and goes looking, and the transcripts are exactly
+	// that: one ended on a `bd list` dump of the whole graph, and the next
+	// spent thirty minutes running `find` for .beads directories across every
+	// rig in the town and wrote no files at all.
+	//
+	// Nothing was broken. The agent was reasoning correctly from what it could
+	// see, and what it could see did not include the one fact that resolves
+	// it. So the fact is stated. This is the same lesson as sa-kfh, which
+	// spent forty calls discovering it could not push: an environment the
+	// instructions do not describe gets investigated, and investigation is
+	// the whole budget.
+	// Folded into the Spec the two planners receive, which is passed by value,
+	// so each runtime's argv carries it without either having to remember to.
+	if p.BeadsDir != "" && p.RigDir != "" && p.BeadsDir != p.RigDir {
+		s.Instructions += fmt.Sprintf(
+			"\n\nOne thing about this checkout, so you do not have to work it out: "+
+				"the bead %s lives in the graph at %s, which is already set as "+
+				"BEADS_DIR, so plain `bd show %s` and `bd close %s` work from "+
+				"anywhere. The .beads directory beside the code here belongs to a "+
+				"different graph and advertises a different id prefix -- that is "+
+				"expected, not a misconfiguration, and there is nothing to fix. Do "+
+				"not go looking for your bead in other rigs.",
+			s.Bead, filepath.Join(p.BeadsDir, ".beads"), s.Bead, s.Bead)
+	}
+
 	p.Model, p.Effort, p.Runtime = model, effort, runtime
 
 	// From here the two runtimes diverge completely: different config file,
