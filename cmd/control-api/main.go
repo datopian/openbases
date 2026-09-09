@@ -516,6 +516,45 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		})
 	})
 
+	// A running job says it is still alive.
+	//
+	// The gap this fills: between claim and result the control plane heard
+	// nothing, so a long run and a wedged one were the same picture and the
+	// only way to tell was to ssh to the node. The node reports bytes produced
+	// and time since the last write -- neither proves progress, but silence is
+	// real evidence and lets a person judge for themselves.
+	//
+	// The reply says whether the job is still considered live, so a node stops
+	// reporting into a job that has already finished or been cancelled.
+	authed.HandleFunc("POST /v1/node/work/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		var body struct {
+			Note string `json:"note"`
+		}
+		// A malformed body is not fatal: a heartbeat with no note is still a
+		// heartbeat, and refusing it would lose the liveness signal to protect
+		// a decoration.
+		_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+
+		var live bool
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT system_record_heartbeat($1::uuid, $2)`,
+			r.PathValue("id"), body.Note).Scan(&live); err != nil {
+			log.Warn("recording a heartbeat", "job", r.PathValue("id"), "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"live": live})
+	})
+
 	// Report a finished job.
 	authed.HandleFunc("POST /v1/node/work/{id}/result", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := authn.FromContext(r.Context())
@@ -1083,6 +1122,17 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			CreatedAt  string `json:"created_at"`
 			FinishedAt string `json:"finished_at,omitempty"`
 			Result     string `json:"result,omitempty"`
+			// When the node claimed it, which is when the agent actually
+			// started. Time since CREATED includes queue wait, and reporting
+			// that as run time made a job that queued for two hours look like
+			// a two-hour run.
+			ClaimedAt string `json:"claimed_at,omitempty"`
+			Runtime   string `json:"runtime,omitempty"`
+			Model     string `json:"model,omitempty"`
+			// The last time the node said this run was alive, and what it
+			// saw. Absent while queued, and absent from an older node.
+			HeartbeatAt   string `json:"heartbeat_at,omitempty"`
+			HeartbeatNote string `json:"heartbeat_note,omitempty"`
 		}
 		// Same reason as GET /v1/work: system_queue_overview filters on
 		// current_app_user(), so the query has to carry an identity.
@@ -1090,7 +1140,9 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		err := authz.WithUser(r.Context(), db, id.UserID, func(tx *sql.Tx) error {
 			rows, err := tx.QueryContext(r.Context(),
 				`SELECT id, kind, cell, rig, coalesce(bead,''), coalesce(brief,''),
-				        status, created_at, finished_at, coalesce(result,'')
+				        status, created_at, finished_at, coalesce(result,''),
+				        claimed_at, coalesce(runtime,''), coalesce(model,''),
+				        heartbeat_at, coalesce(heartbeat_note,'')
 				   FROM system_queue_overview($1)`, nullableParam(r.URL.Query().Get("cell")))
 			if err != nil {
 				return err
@@ -1100,14 +1152,21 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			for rows.Next() {
 				var j job
 				var created time.Time
-				var finished sql.NullTime
+				var finished, claimed, beat sql.NullTime
 				if err := rows.Scan(&j.ID, &j.Kind, &j.Cell, &j.Rig, &j.Bead, &j.Brief,
-					&j.Status, &created, &finished, &j.Result); err != nil {
+					&j.Status, &created, &finished, &j.Result,
+					&claimed, &j.Runtime, &j.Model, &beat, &j.HeartbeatNote); err != nil {
 					return err
 				}
 				j.CreatedAt = created.UTC().Format(time.RFC3339)
 				if finished.Valid {
 					j.FinishedAt = finished.Time.UTC().Format(time.RFC3339)
+				}
+				if claimed.Valid {
+					j.ClaimedAt = claimed.Time.UTC().Format(time.RFC3339)
+				}
+				if beat.Valid {
+					j.HeartbeatAt = beat.Time.UTC().Format(time.RFC3339)
 				}
 				out = append(out, j)
 			}

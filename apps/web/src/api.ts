@@ -367,6 +367,19 @@ export interface QueueJob {
   finished_at?: string;
   result?: string;
   project?: string;
+  /**
+   * When the node claimed it, which is when the agent started.
+   *
+   * Distinct from created_at on purpose: time since CREATED includes queue
+   * wait, and showing that as run time made a job that queued for two hours
+   * look like a two-hour run.
+   */
+  claimed_at?: string;
+  runtime?: string;
+  model?: string;
+  /** When the node last said this run was alive, and what it saw. */
+  heartbeat_at?: string;
+  heartbeat_note?: string;
 }
 
 /** POST that turns a refusal body into a readable error. */

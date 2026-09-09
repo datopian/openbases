@@ -156,6 +156,8 @@ var routeActions = map[string]routeAction{
 	// them. Their authorisation is the Access application, not this table.
 	"POST /v1/node/work/claim":       {Public: true, Why: "cells service token, path-bound Access application"},
 	"POST /v1/node/work/{id}/result": {Public: true, Why: "cells service token, path-bound Access application"},
+	// A running job reporting that it is still alive.
+	"POST /v1/node/work/{id}/heartbeat": {Public: true, Why: "cells service token, path-bound Access application"},
 	// What a run is using, reported by the node when it starts.
 	"POST /v1/node/work/{id}/plan":                    {Public: true, Why: "cells service token, path-bound Access application"},
 	"POST /v1/node/work/project":                      {Public: true, Why: "cells service token, path-bound Access application"},

@@ -326,9 +326,29 @@ export function Work() {
                   </td>
                   <td style={{ ...css.td, color: queueLabel(j.status).colour }}>
                     {queueLabel(j.status).text}
+                    {/*
+                      Which model, because a run that has been going an hour is
+                      a different decision depending on what is doing it. The
+                      fields have been recorded since 0090 and never shown.
+                    */}
+                    {j.status === "running" && j.model && (
+                      <span style={{ ...css.small, ...css.muted }}>
+                        {" "}
+                        · {shortModel(j.model)}
+                      </span>
+                    )}
                   </td>
                   <td style={{ ...css.td, ...css.small, ...css.muted }}>
-                    {age(j.created_at)}
+                    {/*
+                      Time since the agent STARTED for a running job, not since
+                      it was queued. Those differ by however long it waited,
+                      and reporting the wrong one made a job that queued for
+                      two hours look like a two-hour run.
+                    */}
+                    {j.status === "running" && j.claimed_at
+                      ? `running ${age(j.claimed_at)}`
+                      : `queued ${age(j.created_at)}`}
+                    {j.status === "running" && <Liveness job={j} />}
                   </td>
                 </tr>
               ))}
@@ -485,4 +505,59 @@ export function Work() {
       )}
     </section>
   );
+}
+
+/**
+ * Whether a running job has shown any sign of life recently.
+ *
+ * This is the whole point of the heartbeat. Before it, a two-hour run and a
+ * wedged one were the same picture from here -- the control plane hears nothing
+ * between claim and result -- and the only way to tell was to ssh to the node.
+ *
+ * Silence is the signal. The node reports bytes produced and how long since the
+ * agent last wrote; neither proves progress, but nothing written for ten
+ * minutes is real evidence, and it is a judgement a person should make rather
+ * than have made for them. So this states what was observed and marks it when
+ * it goes quiet, instead of declaring the run healthy or dead.
+ */
+function Liveness({ job }: { job: QueueJob }) {
+  if (!job.heartbeat_at) {
+    // Distinguished from "quiet": a job claimed a moment ago has not reported
+    // yet, and an older node never will. Saying "no heartbeat" for both would
+    // read as a fault in a run that is perfectly fine.
+    const claimed = job.claimed_at ? Date.now() - new Date(job.claimed_at).getTime() : 0;
+    if (claimed < 60_000) return null;
+    return (
+      <span style={{ ...css.small, ...css.muted }} title="the node has not reported on this run">
+        {" "}· no sign of life reported
+      </span>
+    );
+  }
+  const quiet = Date.now() - new Date(job.heartbeat_at).getTime();
+  // Three heartbeat periods. One missed report is a slow pass or a restart;
+  // three in a row is the run not reporting, which is worth saying. Same
+  // reasoning as the monitor's own thresholds.
+  const stale = quiet > 90_000;
+  return (
+    <span
+      style={{ ...css.small, color: stale ? "#a33" : "#666" }}
+      title={job.heartbeat_note || "reported alive"}
+    >
+      {" "}
+      · {stale ? "no report for " : "alive "}
+      {age(job.heartbeat_at)}
+      {job.heartbeat_note ? ` (${job.heartbeat_note})` : ""}
+    </span>
+  );
+}
+
+/**
+ * The recognisable part of a model name.
+ *
+ * workers-ai/@cf/zai-org/glm-5.3-flash is accurate and unreadable in a table
+ * cell, and the leading path is the same for every model on a gateway.
+ */
+function shortModel(model: string): string {
+  const parts = model.split("/");
+  return parts[parts.length - 1] || model;
 }
