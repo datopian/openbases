@@ -199,7 +199,12 @@ func (s *Store) ProjectDetailBySlug(ctx context.Context, userID, slug string) (P
 			       (SELECT COALESCE(string_agg(t.bead_id, ',' ORDER BY t.bead_id), '')
 			          FROM work_links l
 			          JOIN work_refs t ON t.id = l.to_work_ref
-			         WHERE l.from_work_ref = w.id AND l.relation = 'blocks') AS blocking
+			         WHERE l.from_work_ref = w.id AND l.relation = 'blocks') AS blocking,
+			       -- What happened when it was dispatched, so a list can say
+			       -- it. Without this a bead that ran for six minutes and
+			       -- delivered nothing rendered exactly like one nobody had
+			       -- picked up -- green in the graph, "open" in the table.
+			       system_bead_outcome(w.bead_id) AS outcome
 			  FROM work_refs w
 			  LEFT JOIN execution_cells c ON c.id = w.execution_cell_id
 			 WHERE w.project_id = $1::uuid
