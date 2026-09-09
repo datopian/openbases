@@ -26,6 +26,14 @@ import (
 // them looking for a bug instead.
 var ErrConflict = errors.New("already exists")
 
+// ErrDenied is row-level security refusing a write.
+//
+// A distinct sentinel because it needs a distinct answer: 403 with a sentence
+// a person can act on, not 500 "internal error". The alternative is what
+// happened -- a refusal indistinguishable from a crash, for two days, for
+// everybody without an organisation-wide grant.
+var ErrDenied = errors.New("refused")
+
 // ErrInvalid is returned for input the schema would refuse.
 //
 // Checked here rather than left to the constraint so the message names the
@@ -156,20 +164,45 @@ func (s *Store) CreateProject(ctx context.Context, userID string, n NewProject) 
 			return err
 		}
 
+		// The id is chosen BEFORE the insert, and the insert does not use
+		// RETURNING. That is not a style preference; it is the fix for a bug
+		// that stopped most people creating projects at all.
+		//
+		// RETURNING makes Postgres apply the SELECT policy to the new row as
+		// well as the INSERT policy. projects_read is can_read_project(id),
+		// which grants access through membership or an organisation-wide
+		// admin or executive grant -- and the creator's membership is inserted
+		// a few lines BELOW this, so at RETURNING time the row they have just
+		// created is not yet visible to them. The insert then fails with "new
+		// row violates row-level security policy for table projects", which
+		// names the wrong policy and reads like a permissions problem with the
+		// data rather than an ordering problem in this function.
+		//
+		// It worked for anyone holding an org-wide grant, because
+		// can_read_project lets those read anything -- so it worked for three
+		// administrators and failed for everybody else, which is the worst
+		// shape a bug can have: invisible to the people who would fix it.
+		// Reproduced on staging as the reporter: the same insert without
+		// RETURNING succeeds, and with RETURNING succeeds as an admin.
 		var id string
-		err = tx.QueryRowContext(ctx, `
-			INSERT INTO projects
-			    (organisation_id, portfolio_id, slug, name, objective, visibility,
-			     primary_owner_id, backup_owner_id, execution_cell_id)
-			VALUES ($1::uuid, $2::uuid, $3, $4, nullif($5,''), $6,
-			        $7::uuid, $8::uuid, $9::uuid)
-			RETURNING id::text`,
-			orgID, portfolio, n.Slug, n.Name, n.Objective, n.Visibility,
-			primary, backup, cell).Scan(&id)
-		if isUniqueViolation(err) {
-			return fmt.Errorf("%w: a project with the slug %q", ErrConflict, n.Slug)
+		if err := tx.QueryRowContext(ctx, `SELECT gen_random_uuid()::text`).Scan(&id); err != nil {
+			return err
 		}
-		if err != nil {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO projects
+			    (id, organisation_id, portfolio_id, slug, name, objective, visibility,
+			     primary_owner_id, backup_owner_id, execution_cell_id)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, nullif($6,''), $7,
+			        $8::uuid, $9::uuid, $10::uuid)`,
+			id, orgID, portfolio, n.Slug, n.Name, n.Objective, n.Visibility,
+			primary, backup, cell); err != nil {
+			if isUniqueViolation(err) {
+				return fmt.Errorf("%w: a project with the slug %q", ErrConflict, n.Slug)
+			}
+			if isRLSRefusal(err) {
+				return fmt.Errorf("%w: the database refused to create this project for "+
+					"your account", ErrDenied)
+			}
 			return err
 		}
 
@@ -280,6 +313,24 @@ func cellIDBySlug(ctx context.Context, tx *sql.Tx, slug string) (any, error) {
 		return nil, fmt.Errorf("%w: no execution cell has the slug %q", ErrInvalid, slug)
 	}
 	return id, err
+}
+
+// isRLSRefusal reports whether err is row-level security refusing a write.
+//
+// SQLSTATE 42501, insufficient_privilege. Worth naming because the alternative
+// is what happened here: the refusal reached the handler as an untyped error,
+// became a 500 "internal error", and three people spent two days unable to
+// create a project with no way to tell that permission was the problem. A
+// refusal is an answer, and an answer belongs in the response.
+//
+// Matched on the code rather than the message, for the reason recorded below
+// about substring matching.
+func isRLSRefusal(err error) bool {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code == "42501"
+	}
+	return false
 }
 
 // isUniqueViolation reports whether err is a duplicate-key error.

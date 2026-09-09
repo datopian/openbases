@@ -37,6 +37,11 @@ func projectErrStatus(err error) (int, map[string]any) {
 		return http.StatusConflict, map[string]any{"error": err.Error(), "code": "slug_taken"}
 	case errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound, map[string]any{"error": "no such project", "code": "not_found"}
+	case errors.Is(err, domain.ErrDenied):
+		// 403 with the reason, not 500. A refusal is an answer, and answering
+		// "internal error" to it is how three people spent two days unable to
+		// create a project without knowing permission was involved.
+		return http.StatusForbidden, map[string]any{"error": err.Error(), "code": "refused"}
 	default:
 		return 0, nil
 	}

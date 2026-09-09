@@ -43,7 +43,13 @@ ERR = {"type":"object","required":["error"],"properties":{
 
 CODES = ["token_scope_insufficient","role_grant_missing","route_not_declared","rate_limited",
          "spend_cap_reached","idempotency_key_conflict","invalid_idempotency_key",
-         "token_self_service_forbidden","not_implemented","invalid_expiry","scope_or_lifetime_refused","invalid_until","invalid_cursor"]
+         "token_self_service_forbidden","not_implemented","invalid_expiry","scope_or_lifetime_refused","invalid_until","invalid_cursor",
+         # Codes added with the endpoints that emit them. The committed
+         # openapi.json is the source of truth and CI does not regenerate it,
+         # so these are here to stop a regeneration dropping them.
+         "scope_refused","scope_unknown","invalid_project","slug_taken","not_found",
+         "origin_refused","no_rig_for_project","rig_holds_no_repository",
+         "bead_not_projected","refused"]
 
 paths = collections.OrderedDict()
 for r in routes:
