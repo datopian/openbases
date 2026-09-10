@@ -51,6 +51,7 @@ var routeActions = map[string]routeAction{
 	// whether this credential may read the work graph at all.
 	"GET /v1/work":                   {Action: authz.OrganisationRead},
 	"GET /v1/work/queue":             {Action: authz.OrganisationRead},
+	"GET /v1/work/jobs/{id}":         {Action: authz.OrganisationRead},
 	"GET /v1/projects":               {Action: authz.ProjectRead},
 	"GET /v1/projects/{slug}":        {Action: authz.ProjectRead},
 	"GET /v1/projects/{slug}/detail": {Action: authz.ProjectRead},
