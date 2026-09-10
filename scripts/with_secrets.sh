@@ -25,8 +25,38 @@ ENVIRONMENT="${1:?usage: with_secrets.sh <staging|production> <command> [args...
 shift
 [ "$#" -gt 0 ] || { echo "usage: with_secrets.sh <environment> <command> [args...]" >&2; exit 2; }
 
-FILE="$ROOT/infra/secrets/${ENVIRONMENT}.enc.yaml"
-[ -f "$FILE" ] || { echo "no secrets file for '$ENVIRONMENT' at $FILE" >&2; exit 1; }
+# Where the encrypted file lives, which is deliberately NOT this repository.
+#
+# The repository is public. SOPS ciphertext is safe to publish -- that is the
+# whole design -- but a public copy is permanent and says more than its values:
+# which secrets exist, their names, when each last changed, who can decrypt,
+# and whatever identifiers sit in clear beside them. A reader gets a map of the
+# Cloudflare account, the zone, the GitHub App and the Hetzner project without
+# decrypting anything. And if the age key ever leaked, every archived version
+# would decrypt retroactively, including values rotated long before.
+#
+# So the public repository carries infra/secrets/<env>.example.yaml -- names,
+# no values -- and the real file lives outside it. WG_SECRETS_DIR overrides the
+# location; the default is beside the age key, which is already the one
+# directory on a deploying machine that holds nothing but secret material.
+#
+# The in-repo path is still accepted, last, so a private fork that keeps its
+# own encrypted file in place keeps working.
+: "${WG_SECRETS_DIR:=$HOME/.config/datopian-workgraph/secrets}"
+FILE="$WG_SECRETS_DIR/${ENVIRONMENT}.enc.yaml"
+if [ ! -f "$FILE" ] && [ -f "$ROOT/infra/secrets/${ENVIRONMENT}.enc.yaml" ]; then
+  FILE="$ROOT/infra/secrets/${ENVIRONMENT}.enc.yaml"
+fi
+if [ ! -f "$FILE" ]; then
+  echo "no secrets file for '$ENVIRONMENT'." >&2
+  echo "Looked in: $WG_SECRETS_DIR/${ENVIRONMENT}.enc.yaml" >&2
+  echo "       and $ROOT/infra/secrets/${ENVIRONMENT}.enc.yaml" >&2
+  echo "" >&2
+  echo "The real file is not in this repository -- it is public. Start from the" >&2
+  echo "template and see infra/secrets/README.md:" >&2
+  echo "  cp infra/secrets/${ENVIRONMENT}.example.yaml /tmp/${ENVIRONMENT}.yaml" >&2
+  exit 1
+fi
 
 : "${SOPS_AGE_KEY_FILE:=$HOME/.config/datopian-workgraph/age-workgraph.key}"
 export SOPS_AGE_KEY_FILE

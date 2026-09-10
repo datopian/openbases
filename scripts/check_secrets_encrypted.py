@@ -105,20 +105,58 @@ def check(path: pathlib.Path) -> None:
             )
 
 
+def check_template(path: pathlib.Path) -> None:
+    """A template names what a deployment needs and holds none of it.
+
+    The whole point of moving the real files out of a public repository is
+    undone by one filled-in template, and a filled-in template looks exactly
+    like a helpful example until you read the values.
+    """
+    rel = path.relative_to(ROOT)
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        key, sep, rest = line.partition(":")
+        if not sep:
+            continue
+        # Strip a trailing comment, then whatever quoting the value carries.
+        value = rest.split("#", 1)[0].strip().strip("\"'")
+        if value:
+            problems.append(
+                f"{rel}:{i}: '{key.strip()}' has a value. A template in a public "
+                f"repository must name the setting and hold nothing: put the real "
+                f"value in the encrypted file outside this repository.")
+
+
 def main() -> int:
     if not SECRETS.is_dir():
         print("no infra/secrets directory; nothing to check")
         return 0
 
-    files = sorted(SECRETS.glob("*.enc.yaml"))
-    if not files:
-        print("no encrypted secret files found")
-        return 0
+    # The templates are the thing this repository is REQUIRED to carry.
+    #
+    # The real .enc.yaml files moved out when the repository went public, so
+    # the old "no encrypted secret files found -> return 0" made this check a
+    # silent pass on an empty directory: delete everything and CI still says
+    # OK. What must exist here is a template per environment, and what must be
+    # true of a template is that it holds no values.
+    templates = sorted(SECRETS.glob("*.example.yaml"))
+    if not templates:
+        print("FAILED:")
+        print(f"  - {SECRETS.relative_to(ROOT)}: no *.example.yaml template. The public "
+              f"repository must document what a deployment needs, even though it "
+              f"no longer carries the values.")
+        return 1
+    for path in templates:
+        check_template(path)
 
+    # Any encrypted file that IS here is still checked, so a private fork that
+    # keeps one in place is held to the same rule.
+    files = sorted(SECRETS.glob("*.enc.yaml"))
     for path in files:
         check(path)
 
-    print(f"encrypted secrets check ({len(files)} file(s))")
+    print(f"encrypted secrets check ({len(templates)} template(s), {len(files)} encrypted file(s))")
     if problems:
         print("FAILED:")
         for p in problems:
