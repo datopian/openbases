@@ -1189,3 +1189,76 @@ func TestWhatTheBeadDeliveredIsReadFromThePushedBranch(t *testing.T) {
 		t.Errorf("this run's own work was dropped:\n%s", diff)
 	}
 }
+
+// A hook that complains is not a failed checkout.
+//
+// git runs post-checkout hooks after switching branches and reports THEIR exit
+// status as its own. The msf repository is a PortalJS portal, so it ships Git
+// LFS hooks, and on a node without the git-lfs binary every checkout ends:
+//
+//	Switched to and reset branch 'bead/sa-fj3'
+//	...
+//	This repository is configured for Git LFS but 'git-lfs' was not found
+//	on your path.
+//
+// exit status 1. The branch had moved. The landing threw the run's work away
+// anyway, left the rig sitting on the bead's branch, and would have done the
+// same on every future run of that repository.
+func TestAComplainingHookDoesNotThrowAwayTheWork(t *testing.T) {
+	dir, real := repo(t)
+	write(t, dir, "portal/package.json", `{"name":"portal"}`)
+
+	// git, but every checkout also reports a hook failure -- after doing the
+	// checkout, which is the part that matters.
+	git := func(args ...string) (string, error) {
+		out, err := real(args...)
+		if len(args) > 0 && args[0] == "checkout" && err == nil {
+			return out, errors.New("exit status 1: This repository is configured " +
+				"for Git LFS but 'git-lfs' was not found on your path")
+		}
+		return out, err
+	}
+
+	res, err := Land(git, Spec{Bead: "sa-fj3", Title: "Deploy it", Base: "main"})
+	if err != nil {
+		t.Fatalf("a hook's complaint threw away the run's work: %v", err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed")
+	}
+	out, err := real("show", "--name-only", "--format=", res.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "portal/package.json") {
+		t.Errorf("the work is not on the branch:\n%s", out)
+	}
+
+	// And a checkout that genuinely does not switch is still fatal. Asserted
+	// because the fix is "ask git where HEAD is" and the failure it must keep
+	// catching is HEAD not being there.
+	stuck := func(args ...string) (string, error) {
+		if len(args) > 1 && args[0] == "checkout" && args[1] == "-B" {
+			return "", errors.New("exit status 1: fatal: cannot lock ref")
+		}
+		return real(args...)
+	}
+	write(t, dir, "another.txt", "x\n")
+	_, err = Land(stuck, Spec{Bead: "sa-zzz", Title: "Nope", Base: "main"})
+	if err == nil {
+		t.Fatal("a checkout that did not switch must still be an error: landing " +
+			"onto whatever branch the tree happens to be on is how work reaches " +
+			"the wrong pull request")
+	}
+	// Named for what it is, and asserted rather than assumed.
+	//
+	// Without the guard this still fails -- but later and elsewhere, when the
+	// push cannot find a local branch nobody created. The first version of
+	// this check accepted that, so it passed with the guard removed and was
+	// testing an accident rather than the rule. The property is that a
+	// checkout which did not switch is reported AS a checkout that did not
+	// switch.
+	if !strings.Contains(err.Error(), "cannot reach branch") {
+		t.Errorf("the failure is not attributed to the checkout: %v", err)
+	}
+}
