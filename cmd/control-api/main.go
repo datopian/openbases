@@ -1198,6 +1198,101 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, map[string]any{"queue": out})
 	})
 
+	// One job, and what its state MEANS.
+	//
+	// Reported after a filing job returned {status: queued} and then produced
+	// nothing for 25 minutes: there was no way to ask about that job. The only
+	// signal available was the absence of new beads, so "still working",
+	// "died silently" and "finished having produced nothing" were
+	// indistinguishable, and the only recovery was to re-file a differently
+	// worded brief and hope -- which costs money and teaches nothing.
+	//
+	// Every field here already existed in system_queue_overview and was
+	// already served by GET /v1/work/queue. What was missing was a way to ask
+	// about ONE job, and an interpretation: the raw row says
+	// status=running, heartbeat_note="256 B of output, last wrote 3m0s ago",
+	// and a person still has to know that a plan job writes beads rather than
+	// files before that means anything.
+	authed.HandleFunc("GET /v1/work/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "a user is required"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		job := strings.TrimSpace(r.PathValue("id"))
+		if job == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "a job id is required"})
+			return
+		}
+
+		var (
+			kind, cell, rig, bead, brief, status, result string
+			runtime, model, note                         string
+			created                                      time.Time
+			finished, claimed, beat                      sql.NullTime
+			found                                        bool
+		)
+		err := authz.WithUser(r.Context(), db, id.UserID, func(tx *sql.Tx) error {
+			row := tx.QueryRowContext(r.Context(),
+				`SELECT kind, cell, rig, coalesce(bead,''), coalesce(brief,''),
+				        status, created_at, finished_at, coalesce(result,''),
+				        claimed_at, coalesce(runtime,''), coalesce(model,''),
+				        heartbeat_at, coalesce(heartbeat_note,'')
+				   FROM system_queue_overview(NULL) WHERE id = $1`, job)
+			switch err := row.Scan(&kind, &cell, &rig, &bead, &brief, &status,
+				&created, &finished, &result, &claimed, &runtime, &model,
+				&beat, &note); {
+			case errors.Is(err, sql.ErrNoRows):
+				return nil
+			case err != nil:
+				return err
+			}
+			found = true
+			return nil
+		})
+		if err != nil {
+			log.Error("reading a job", "job", job, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		if !found {
+			// 404 rather than an empty 200. A job id that does not exist and a
+			// job that has produced nothing are different answers, and this is
+			// the endpoint that exists to tell them apart.
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"error": "no job with that id is visible to you",
+				"code":  "job_not_found",
+			})
+			return
+		}
+
+		out := map[string]any{
+			"job": job, "kind": kind, "cell": cell, "rig": rig,
+			"status": status, "created_at": created.UTC().Format(time.RFC3339),
+			"assessment": jobAssessment(kind, status, note, result, claimed, beat, finished),
+		}
+		for k, v := range map[string]string{
+			"bead": bead, "brief": brief, "result": result,
+			"runtime": runtime, "model": model, "heartbeat_note": note,
+		} {
+			if v != "" {
+				out[k] = v
+			}
+		}
+		for k, v := range map[string]sql.NullTime{
+			"claimed_at": claimed, "finished_at": finished, "heartbeat_at": beat,
+		} {
+			if v.Valid {
+				out[k] = v.Time.UTC().Format(time.RFC3339)
+			}
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+
 	// Turn a brief into beads.
 	//
 	// Enqueued rather than run: the node claims it. That is not only an

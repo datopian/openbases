@@ -48,29 +48,30 @@
       "ErrorCode": {
         "type": "string",
         "enum": [
-          "token_scope_insufficient",
+          "bead_not_projected",
+          "idempotency_key_conflict",
+          "invalid_cursor",
+          "invalid_expiry",
+          "invalid_idempotency_key",
+          "invalid_project",
+          "invalid_until",
+          "job_not_found",
+          "no_rig_for_project",
+          "not_found",
+          "not_implemented",
+          "origin_refused",
+          "rate_limited",
+          "refused",
+          "rig_holds_no_repository",
           "role_grant_missing",
           "route_not_declared",
-          "rate_limited",
-          "spend_cap_reached",
-          "idempotency_key_conflict",
-          "invalid_idempotency_key",
-          "token_self_service_forbidden",
-          "not_implemented",
-          "invalid_expiry",
           "scope_or_lifetime_refused",
-          "invalid_until",
-          "invalid_cursor",
           "scope_refused",
           "scope_unknown",
-          "invalid_project",
           "slug_taken",
-          "not_found",
-          "origin_refused",
-          "no_rig_for_project",
-          "rig_holds_no_repository",
-          "bead_not_projected",
-          "refused"
+          "spend_cap_reached",
+          "token_scope_insufficient",
+          "token_self_service_forbidden"
         ],
         "description": "Stable codes. token_scope_insufficient and role_grant_missing are deliberately distinct: one means this credential may not, the other means you may not, and they have different fixes."
       }
@@ -1157,6 +1158,284 @@
         "description": "Identity of the already-authenticated caller. Discloses nothing they do not already hold, and is the cheapest way for a client to check a credential works."
       }
     },
+    "/v1/node/pull-requests": {
+      "post": {
+        "summary": "Open the pull request for work an agent landed",
+        "operationId": "post_v1_node_pull_requests",
+        "description": "Execution-node path (ADR-0019), service credential only. The node has pushed a branch and asks for the pull request; it is opened here because opening one needs the GitHub App key, and a node that could open pull requests itself would need that key on the node. The repository is NOT taken from the request -- it is looked up from the rig, so a node cannot ask for a pull request against a repository its rig does not hold. Idempotent: a branch that already has an open pull request returns that one with `reused: true`, because a re-dispatched bead pushes another commit to the same branch and must not open a second.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "cell",
+                  "rig",
+                  "bead",
+                  "head",
+                  "base",
+                  "title"
+                ],
+                "properties": {
+                  "cell": {
+                    "type": "string"
+                  },
+                  "rig": {
+                    "type": "string"
+                  },
+                  "bead": {
+                    "type": "string"
+                  },
+                  "head": {
+                    "type": "string",
+                    "description": "The branch the node pushed."
+                  },
+                  "base": {
+                    "type": "string",
+                    "description": "The branch to merge into. Must differ from head."
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "job": {
+                    "type": "string",
+                    "description": "The work_queue job that produced the change."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The pull request, opened or already open",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A required field is missing, or head and base are the same branch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The rig holds no repository (`rig_holds_no_repository`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "GitHub could not be reached, or refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A repeat under the same key replays the recorded success rather than acting twice. This endpoint is also idempotent without one: the branch is the natural key, so a retry finds the pull request already open and returns it with `reused: true`."
+          }
+        ]
+      }
+    },
+    "/v1/node/rigs": {
+      "post": {
+        "summary": "A rig reports which repository its working tree holds",
+        "operationId": "post_v1_node_rigs",
+        "description": "Execution-node path (ADR-0019), service credential only. Reported by the node rather than configured centrally because the node is where the truth is: a rig is a working tree and its git remote says what it is a checkout of. This is the join that lets a dispatch be routed to a rig that can do the work, or refused - dispatching a project's bead into a disposable sandbox produces a run that reports success without doing anything (wg-ugb). A rig with no repository reports none, which is a fact rather than an omission: the witness and the mayor are rigs with no working tree.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A repeat under the same key replays the recorded success rather than acting twice."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/node/rigs/wanted": {
+      "get": {
+        "summary": "The rigs a cell should have, one per repository its projects hold",
+        "operationId": "get_v1_node_rigs_wanted",
+        "description": "Execution-node path (ADR-0019), service credential only. The playbook reads this and provisions what is missing with `gt rig add`, so a repository attached to a project gets a rig and work can be dispatched against it. Provisioning rather than polling: creating a rig clones a repository and seeds agent infrastructure, which is minutes and gigabytes, and belongs in a deploy rather than a fifteen-second dispatcher pass. The rig NAME is decided here rather than by the caller, because the node reports rigs by directory name and a rig named differently in two places is a rig dispatch cannot route to. `prefix` is stable per repository, not per set: a bead id is permanent, so a prefix that renumbers when another repository is attached would corrupt ids already issued.",
+        "parameters": [
+          {
+            "name": "cell",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The wanted rigs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No cell was given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/node/work/claim": {
       "post": {
         "summary": "Claim a queued job",
@@ -1299,6 +1578,195 @@
         ]
       }
     },
+    "/v1/node/work/{id}/heartbeat": {
+      "post": {
+        "summary": "Report that a running job is still alive",
+        "operationId": "post_v1_node_work_id_result",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Execution-node path. Bytes produced and time since the last write, so a long run can be told from a stuck one. The reply says whether the job is still considered live.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/node/work/{id}/plan": {
+      "post": {
+        "summary": "Report the harness and model a run is using",
+        "operationId": "post_v1_node_work_id_plan",
+        "description": "Execution-node path (ADR-0019), service credential only. The node reports this when it STARTS a run, because it is the only party that knows: wg-runner resolves the harness and model from a catalogue on the execution node. Without it the control plane learns which model did the work only from usage_records, which the cost importer fills hourly \u2014 so a bead in progress shows no model and no harness at all. Surfaced on the bead's detail as `run.harness` and `run.model`. A job the control plane no longer holds answers `recorded: false` rather than failing, because a node should not abandon a run over it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A repeat under the same key replays the recorded success rather than acting twice. This endpoint is naturally idempotent as well: it records the same two values."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "runtime": {
+                    "type": "string",
+                    "description": "The harness, for example opencode or claude."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "provider/model, for example workers-ai/@cf/zai-org/glm-5.3-flash."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded, or reported as not recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/node/work/{id}/result": {
       "post": {
         "summary": "Report a job result",
@@ -1390,6 +1858,45 @@
               "application/json": {
                 "schema": {
                   "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform": {
+      "get": {
+        "summary": "What the platform is doing: cells, agents, queue, graphs and open alerts",
+        "operationId": "get_v1_platform",
+        "description": "One document rather than six endpoints: the caller is a page that draws all of it at once, and six round trips would show a half-consistent picture assembled from six moments. Company management only - organisation_admin or executive, granted organisation-wide - because the answer is about the platform rather than about any one project, so there is no per-row rule that would express it. Includes the count of beads attributed to no project, which is the failure that stayed invisible longest.",
+        "responses": {
+          "200": {
+            "description": "Platform state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but not company management",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -1658,441 +2165,6 @@
             }
           }
         ]
-      }
-    },
-    "/v1/tokens": {
-      "get": {
-        "summary": "List the caller's tokens",
-        "operationId": "get_v1_tokens",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Includes revoked and expired ones, so 'why did this stop working' stays answerable. Never returns a secret."
-      },
-      "post": {
-        "summary": "Mint a personal API token",
-        "operationId": "post_v1_tokens",
-        "responses": {
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Created. The secret appears here and nowhere else, ever.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        },
-        "description": "Requires an interactive Access session. A token cannot mint a token: a leaked credential able to produce its own successor makes revocation meaningless. The secret is returned exactly once and never stored.",
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/tokens/{id}": {
-      "delete": {
-        "summary": "Revoke a token",
-        "operationId": "delete_v1_tokens_id",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Effective on the next request; there is no cache in front of the lookup.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/work": {
-      "get": {
-        "summary": "Work items, with what each has cost",
-        "operationId": "get_v1_work",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Scoped by row-level security to what the caller may see."
-      }
-    },
-    "/v1/work/plan": {
-      "post": {
-        "summary": "Queue a planning job",
-        "operationId": "post_v1_work_plan",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Turns a brief into beads. Costs money: an agent runs.",
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ]
-      }
-    },
-    "/v1/work/queue": {
-      "get": {
-        "summary": "The queue, including plan jobs",
-        "operationId": "get_v1_work_queue",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Plan jobs have no bead until they produce some, so they appear here and not in /v1/work."
-      }
-    },
-    "/v1/work/{bead}/dispatch": {
-      "post": {
-        "summary": "Dispatch one bead",
-        "operationId": "post_v1_work_bead_dispatch",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request, or the bead cannot be dispatched. `bead_not_projected` means no cell has this bead \u2014 the id is wrong, or it was created seconds ago and the next projection pass has not run; retrying later can succeed. `no_rig_for_project` means the bead is real and no rig can run it, or several can and none was named \u2014 retrying without a change will not help. The two need different actions, which is why they are different codes.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "description": "Runs one bead. The rig is chosen from the repositories the bead's project holds: exactly one candidate is used, none refuses with `no_rig_for_project`, and a bead no cell has projected refuses with `bead_not_projected`, and several refuses asking for one to be named. A named `rig` must be one of the candidates -- it chooses between them rather than opting out of the check, because dispatching a project's bead into a rig that does not hold its code produces a run that reports success having found nothing.",
-        "parameters": [
-          {
-            "name": "bead",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "cell": {
-                    "type": "string",
-                    "description": "The execution cell. Defaults to the project's."
-                  },
-                  "rig": {
-                    "type": "string",
-                    "description": "Optional. Which rig to run in, when several hold this project's repositories. Must be one of the rigs named in the 409 refusal."
-                  }
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/v1/projects/{slug}/repositories": {
@@ -2364,392 +2436,6 @@
         }
       }
     },
-    "/v1/platform": {
-      "get": {
-        "summary": "What the platform is doing: cells, agents, queue, graphs and open alerts",
-        "operationId": "get_v1_platform",
-        "description": "One document rather than six endpoints: the caller is a page that draws all of it at once, and six round trips would show a half-consistent picture assembled from six moments. Company management only - organisation_admin or executive, granted organisation-wide - because the answer is about the platform rather than about any one project, so there is no per-row rule that would express it. Includes the count of beads attributed to no project, which is the failure that stayed invisible longest.",
-        "responses": {
-          "200": {
-            "description": "Platform state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but not company management",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/work/{bead}": {
-      "get": {
-        "summary": "What happened to one bead: its outcome, the agent's own words, and what it cost",
-        "operationId": "get_v1_work_bead",
-        "description": "The answer to \"I dispatched that - did anything happen?\". `outcome` is derived rather than stored: `done` when the bead is closed AND a pull request exists, `closed_unlanded` when it is closed and nothing reached the repository -- ordinary for a bead that needed no code change, and the whole story for one whose finished work is sitting uncommitted on a node, `blocked` when the run exited zero and left the bead open, `failed` when the run failed, plus `queued`, `running` and `never_dispatched`. The distinction matters - a run can exit zero having reported that it could not do the work, and `done` alone would read as success. `comment` carries the newest comment on the bead, which is where an agent explains itself. `spend` is broken down by model, because \"which model was used\" is a question a total cannot answer, and carries `newest_record` because usage arrives on an hourly import - a run that finished minutes ago shows no spend yet, and a zero would read as free.",
-        "parameters": [
-          {
-            "name": "bead",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The bead",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "No bead id was given",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authenticated, but this credential or role may not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No such bead, or none the caller may see - the two are deliberately indistinguishable",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/node/rigs": {
-      "post": {
-        "summary": "A rig reports which repository its working tree holds",
-        "operationId": "post_v1_node_rigs",
-        "description": "Execution-node path (ADR-0019), service credential only. Reported by the node rather than configured centrally because the node is where the truth is: a rig is a working tree and its git remote says what it is a checkout of. This is the join that lets a dispatch be routed to a rig that can do the work, or refused - dispatching a project's bead into a disposable sandbox produces a run that reports success without doing anything (wg-ugb). A rig with no repository reports none, which is a fact rather than an omission: the witness and the mayor are rigs with no working tree.",
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "A repeat under the same key replays the recorded success rather than acting twice."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Registered",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The body could not be read",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Not a service credential",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "This idempotency key was used for a different request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited for this token; see Retry-After",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/node/rigs/wanted": {
-      "get": {
-        "summary": "The rigs a cell should have, one per repository its projects hold",
-        "operationId": "get_v1_node_rigs_wanted",
-        "description": "Execution-node path (ADR-0019), service credential only. The playbook reads this and provisions what is missing with `gt rig add`, so a repository attached to a project gets a rig and work can be dispatched against it. Provisioning rather than polling: creating a rig clones a repository and seeds agent infrastructure, which is minutes and gigabytes, and belongs in a deploy rather than a fifteen-second dispatcher pass. The rig NAME is decided here rather than by the caller, because the node reports rigs by directory name and a rig named differently in two places is a rig dispatch cannot route to. `prefix` is stable per repository, not per set: a bead id is permanent, so a prefix that renumbers when another repository is attached would corrupt ids already issued.",
-        "parameters": [
-          {
-            "name": "cell",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The wanted rigs",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "No cell was given",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Not a service credential",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/node/pull-requests": {
-      "post": {
-        "summary": "Open the pull request for work an agent landed",
-        "operationId": "post_v1_node_pull_requests",
-        "description": "Execution-node path (ADR-0019), service credential only. The node has pushed a branch and asks for the pull request; it is opened here because opening one needs the GitHub App key, and a node that could open pull requests itself would need that key on the node. The repository is NOT taken from the request -- it is looked up from the rig, so a node cannot ask for a pull request against a repository its rig does not hold. Idempotent: a branch that already has an open pull request returns that one with `reused: true`, because a re-dispatched bead pushes another commit to the same branch and must not open a second.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "cell",
-                  "rig",
-                  "bead",
-                  "head",
-                  "base",
-                  "title"
-                ],
-                "properties": {
-                  "cell": {
-                    "type": "string"
-                  },
-                  "rig": {
-                    "type": "string"
-                  },
-                  "bead": {
-                    "type": "string"
-                  },
-                  "head": {
-                    "type": "string",
-                    "description": "The branch the node pushed."
-                  },
-                  "base": {
-                    "type": "string",
-                    "description": "The branch to merge into. Must differ from head."
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "body": {
-                    "type": "string"
-                  },
-                  "job": {
-                    "type": "string",
-                    "description": "The work_queue job that produced the change."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The pull request, opened or already open",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "A required field is missing, or head and base are the same branch",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Not a service credential",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The rig holds no repository (`rig_holds_no_repository`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limited",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "GitHub could not be reached, or refused",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "A repeat under the same key replays the recorded success rather than acting twice. This endpoint is also idempotent without one: the branch is the natural key, so a retry finds the pull request already open and returns it with `reused: true`."
-          }
-        ]
-      }
-    },
     "/v1/projects/{slug}/repositories/{owner}/{name}/check": {
       "put": {
         "summary": "Set or clear the command that says whether a change to this repository works",
@@ -2881,69 +2567,17 @@
         }
       }
     },
-    "/v1/node/work/{id}/plan": {
-      "post": {
-        "summary": "Report the harness and model a run is using",
-        "operationId": "post_v1_node_work_id_plan",
-        "description": "Execution-node path (ADR-0019), service credential only. The node reports this when it STARTS a run, because it is the only party that knows: wg-runner resolves the harness and model from a catalogue on the execution node. Without it the control plane learns which model did the work only from usage_records, which the cost importer fills hourly \u2014 so a bead in progress shows no model and no harness at all. Surfaced on the bead's detail as `run.harness` and `run.model`. A job the control plane no longer holds answers `recorded: false` rather than failing, because a node should not abandon a run over it.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 255
-            },
-            "description": "A repeat under the same key replays the recorded success rather than acting twice. This endpoint is naturally idempotent as well: it records the same two values."
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "runtime": {
-                    "type": "string",
-                    "description": "The harness, for example opencode or claude."
-                  },
-                  "model": {
-                    "type": "string",
-                    "description": "provider/model, for example workers-ai/@cf/zai-org/glm-5.3-flash."
-                  }
-                }
-              }
-            }
-          }
-        },
+    "/v1/tokens": {
+      "get": {
+        "summary": "List the caller's tokens",
+        "operationId": "get_v1_tokens",
         "responses": {
           "200": {
-            "description": "Recorded, or reported as not recorded",
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -2959,7 +2593,34 @@
             }
           },
           "403": {
-            "description": "Not a service credential",
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Includes revoked and expired ones, so 'why did this stop working' stays answerable. Never returns a secret."
+      },
+      "post": {
+        "summary": "Mint a personal API token",
+        "operationId": "post_v1_tokens",
+        "responses": {
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
             "content": {
               "application/json": {
                 "schema": {
@@ -2979,7 +2640,7 @@
             }
           },
           "429": {
-            "description": "Rate limited",
+            "description": "Rate limited for this token; see Retry-After",
             "content": {
               "application/json": {
                 "schema": {
@@ -2987,14 +2648,37 @@
                 }
               }
             }
+          },
+          "201": {
+            "description": "Created. The secret appears here and nowhere else, ever.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "Requires an interactive Access session. A token cannot mint a token: a leaked credential able to produce its own successor makes revocation meaningless. The secret is returned exactly once and never stored.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
       }
     },
-    "/v1/node/work/{id}/heartbeat": {
-      "post": {
-        "summary": "Report that a running job is still alive",
-        "operationId": "post_v1_node_work_id_result",
+    "/v1/tokens/{id}": {
+      "delete": {
+        "summary": "Revoke a token",
+        "operationId": "delete_v1_tokens_id",
         "responses": {
           "200": {
             "description": "Success",
@@ -3047,7 +2731,7 @@
             }
           }
         },
-        "description": "Execution-node path. Bytes produced and time since the last write, so a long run can be told from a stuck one. The reply says whether the job is still considered live.",
+        "description": "Effective on the next request; there is no cache in front of the lookup.",
         "parameters": [
           {
             "name": "id",
@@ -3068,6 +2752,382 @@
             "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
           }
         ]
+      }
+    },
+    "/v1/work": {
+      "get": {
+        "summary": "Work items, with what each has cost",
+        "operationId": "get_v1_work",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Scoped by row-level security to what the caller may see."
+      }
+    },
+    "/v1/work/jobs/{id}": {
+      "get": {
+        "summary": "One job, and what its state means",
+        "operationId": "get_v1_work_jobs_id",
+        "description": "The answer to \"I filed that - is it working?\". Every field here was already served by GET /v1/work/queue; what this adds is ONE job by id and an `assessment`: a sentence saying what the state means. A filing job returning {status: queued} and then producing nothing was indistinguishable from one that had died, because the only available signal was the absence of new beads. The assessment names the cases that look identical in the raw row: a plan job writes beads rather than files, so a quiet checkout is normal for it; a `running` row whose heartbeat is minutes old is a dispatcher that was restarted rather than a long run; and a `failed` row whose result says the dispatcher was stopped was interrupted by a deploy rather than broken. 404 with `job_not_found` rather than an empty 200, because an id that does not exist and a job that produced nothing are different answers.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job, or not visible to this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/work/plan": {
+      "post": {
+        "summary": "Queue a planning job",
+        "operationId": "post_v1_work_plan",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Turns a brief into beads. Costs money: an agent runs.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ]
+      }
+    },
+    "/v1/work/queue": {
+      "get": {
+        "summary": "The queue, including plan jobs",
+        "operationId": "get_v1_work_queue",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Plan jobs have no bead until they produce some, so they appear here and not in /v1/work."
+      }
+    },
+    "/v1/work/{bead}": {
+      "get": {
+        "summary": "What happened to one bead: its outcome, the agent's own words, and what it cost",
+        "operationId": "get_v1_work_bead",
+        "description": "The answer to \"I dispatched that - did anything happen?\". `outcome` is derived rather than stored: `done` when the bead is closed AND a pull request exists, `closed_unlanded` when it is closed and nothing reached the repository -- ordinary for a bead that needed no code change, and the whole story for one whose finished work is sitting uncommitted on a node, `blocked` when the run exited zero and left the bead open, `failed` when the run failed, plus `queued`, `running` and `never_dispatched`. The distinction matters - a run can exit zero having reported that it could not do the work, and `done` alone would read as success. `comment` carries the newest comment on the bead, which is where an agent explains itself. `spend` is broken down by model, because \"which model was used\" is a question a total cannot answer, and carries `newest_record` because usage arrives on an hourly import - a run that finished minutes ago shows no spend yet, and a zero would read as free.",
+        "parameters": [
+          {
+            "name": "bead",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bead",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No bead id was given",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such bead, or none the caller may see - the two are deliberately indistinguishable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/work/{bead}/dispatch": {
+      "post": {
+        "summary": "Dispatch one bead",
+        "operationId": "post_v1_work_bead_dispatch",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This idempotency key was used for a different request, or the bead cannot be dispatched. `bead_not_projected` means no cell has this bead \u2014 the id is wrong, or it was created seconds ago and the next projection pass has not run; retrying later can succeed. `no_rig_for_project` means the bead is real and no rig can run it, or several can and none was named \u2014 retrying without a change will not help. The two need different actions, which is why they are different codes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Runs one bead. The rig is chosen from the repositories the bead's project holds: exactly one candidate is used, none refuses with `no_rig_for_project`, and a bead no cell has projected refuses with `bead_not_projected`, and several refuses asking for one to be named. A named `rig` must be one of the candidates -- it chooses between them rather than opting out of the check, because dispatching a project's bead into a rig that does not hold its code produces a run that reports success having found nothing.",
+        "parameters": [
+          {
+            "name": "bead",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional. A repeat with the same key and the same body replays the recorded response; with a different body it is a 409."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "cell": {
+                    "type": "string",
+                    "description": "The execution cell. Defaults to the project's."
+                  },
+                  "rig": {
+                    "type": "string",
+                    "description": "Optional. Which rig to run in, when several hold this project's repositories. Must be one of the rigs named in the 409 refusal."
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

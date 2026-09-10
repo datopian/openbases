@@ -34,8 +34,33 @@ import (
 // to add something they asked for.
 //
 // A tenth needs the same argument made again, in writing, here.
+//
+// Raised from 9 to 10 on 2026-09-10, for workgraph_job, and the argument is a
+// reported dead end rather than a wish. workgraph_file_work returns a job id
+// and nothing could look that id up, so the only available signal was whether
+// new beads had appeared -- which makes "still planning", "died silently" and
+// "finished having produced nothing" the same observation. Someone spent 25
+// minutes on that and then re-filed a reworded brief to find out, which costs
+// money and answers nothing. A tool that returns an id no tool can resolve is
+// an incomplete surface, not a small one.
+//
+// The alternatives were considered and are worse:
+//
+//	"Add to the CLI instead", which is what this test suggests, does not help
+//	the person who hit it -- they work through MCP, and a CLI they cannot
+//	reach closes nothing;
+//
+//	folding it into workgraph_bead breaks the Routes table, which this file
+//	asserts is one route per tool, and conflates two subjects: a plan job has
+//	no bead at all, so "tell me about this id" would answer about different
+//	entities depending on the id's shape;
+//
+//	dropping a tool to make room would remove something people use.
+//
+// It earns its slot by being read-only, cheap, and answering in one sentence
+// the question that otherwise costs a re-filed brief.
 func TestToolSetStaysSmall(t *testing.T) {
-	if len(Tools()) > 9 {
+	if len(Tools()) > 10 {
 		t.Fatalf("%d tools. The list is the prompt: past a handful, a model chooses worse "+
 			"rather than doing more. Add to the CLI instead.", len(Tools()))
 	}

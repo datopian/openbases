@@ -54,6 +54,10 @@ type fileWorkArgs struct {
 	Project string `json:"project,omitempty" jsonschema:"Project slug to file the beads into, from workgraph_project_list. Omit ONLY for company-wide work: a brief filed with no project produces beads every colleague who can log in may read. Anything client-shaped needs one, and the server refuses a project you are not a member of."`
 }
 
+type jobArgs struct {
+	Job string `json:"job" jsonschema:"the job id that filing or dispatching returned"`
+}
+
 type beadArgs struct {
 	Bead string `json:"bead" jsonschema:"The bead id, for example wg-abc or sa-kfh."`
 }
@@ -124,6 +128,9 @@ var Routes = []Route{
 	{Tool: "workgraph_ask", Method: http.MethodGet, Path: "/v1/ask", ReadOnly: true},
 	{Tool: "workgraph_work_list", Method: http.MethodGet, Path: "/v1/work", ReadOnly: true},
 	{Tool: "workgraph_bead", Method: http.MethodGet, Path: "/v1/work/{bead}", ReadOnly: true},
+	// Position matters: this list and Tools() are read in order, and the test
+	// asserts they agree index by index.
+	{Tool: "workgraph_job", Method: http.MethodGet, Path: "/v1/work/jobs/{id}", ReadOnly: true},
 	{Tool: "workgraph_project_list", Method: http.MethodGet, Path: "/v1/projects", ReadOnly: true},
 	// The writes that set a project up. None of them spends money: they change
 	// the registry, and the registry is what later decides where work runs and
@@ -201,6 +208,31 @@ var (
 		},
 	}
 
+	// The answer to "I filed that -- is it working?".
+	//
+	// Its absence is a reported bug. workgraph_file_work returns a job id and
+	// there was nothing to look it up with, so the only signal was whether new
+	// beads had appeared: "still planning", "died silently" and "finished
+	// having produced nothing" were indistinguishable. The recovery was to
+	// re-file a reworded brief and hope, which spends money and answers
+	// nothing.
+	toolJob = &sdk.Tool{
+		Name: "workgraph_job",
+		Description: "What one queued or running JOB is doing, by the id that " +
+			"workgraph_file_work or workgraph_dispatch returned. Carries an " +
+			"`assessment`: a sentence saying what the state means, which " +
+			"distinguishes the cases that look identical in the raw row -- a plan " +
+			"job writes beads rather than files, so a quiet run is normal for it; a " +
+			"`running` job whose heartbeat is minutes old is a restarted dispatcher " +
+			"rather than a long run; a `failed` job interrupted by a deploy is not " +
+			"broken work. Use after filing or dispatching, and for 'is that still " +
+			"running', 'why has nothing appeared', 'did that job die'. This is about " +
+			"a JOB; workgraph_bead is about a bead.",
+		Annotations: &sdk.ToolAnnotations{
+			Title: "Job status", ReadOnlyHint: true, DestructiveHint: ptr(false),
+		},
+	}
+
 	toolProjectList = &sdk.Tool{
 		Name:        "workgraph_project_list",
 		Description: "Projects this person can see.",
@@ -242,7 +274,9 @@ var (
 		Name: "workgraph_file_work",
 		Description: "File a planning job from a brief, which produces beads. " +
 			"SPENDS MONEY: an agent runs. Confirm with the person first. " +
-			"The brief needs a checkable outcome, not 'make it better'.",
+			"The brief needs a checkable outcome, not 'make it better'. " +
+			"Returns a job id: pass it to workgraph_job to see whether it is working, " +
+			"rather than waiting for beads to appear and guessing.",
 		Annotations: &sdk.ToolAnnotations{
 			Title: "File work (spends money)", ReadOnlyHint: false, DestructiveHint: ptr(true),
 		},
@@ -266,7 +300,7 @@ var (
 // cheapest useful thing is the first thing it sees.
 func Tools() []*sdk.Tool {
 	return []*sdk.Tool{
-		toolInbox, toolAsk, toolWorkList, toolBead, toolProjectList,
+		toolInbox, toolAsk, toolWorkList, toolBead, toolJob, toolProjectList,
 		toolProjectCreate, toolRepositoriesAttach,
 		toolFileWork, toolDispatch,
 	}
@@ -308,6 +342,17 @@ func NewServer(o Options) *sdk.Server {
 		// Escaped: a bead id reaches a path segment.
 		return plain(ctx, c, shell, obs, "workgraph_bead", http.MethodGet,
 			"/v1/work/"+url.PathEscape(bead), nil)
+	})
+
+	sdk.AddTool(s, toolJob, func(ctx context.Context, _ *sdk.CallToolRequest, a jobArgs) (*sdk.CallToolResult, any, error) {
+		job := strings.TrimSpace(a.Job)
+		if job == "" {
+			return errorResult("a job id is required: the one workgraph_file_work or " +
+				"workgraph_dispatch returned"), nil, nil
+		}
+		// Escaped: a job id reaches a path segment.
+		return plain(ctx, c, shell, obs, "workgraph_job", http.MethodGet,
+			"/v1/work/jobs/"+url.PathEscape(job), nil)
 	})
 
 	sdk.AddTool(s, toolProjectList, func(ctx context.Context, _ *sdk.CallToolRequest, _ noArgs) (*sdk.CallToolResult, any, error) {
