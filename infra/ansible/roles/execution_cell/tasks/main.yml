@@ -718,16 +718,65 @@
     path: "{{ witness_binary }}"
   register: execution_cell_witness_stat
 
-- name: Enable the witness for each cell
+# A cell with no town has nothing to watch.
+#
+# client-nged and client-cdt hold a bin/ directory and nothing else: the Linux
+# accounts and the cgroup limits exist, but no Gas Town was ever created in
+# them. The witness exits 1 on a missing town -- correctly, it cannot do its
+# job -- and systemd restarts it every 30 seconds forever.
+#
+# That was hidden behind the 217/USER failure until the unit rename fixed
+# that, and it is the same failure either way: a service in
+# `activating (auto-restart)` alerts nobody. So the town is a precondition
+# here rather than something the service discovers at run time.
+- name: Check which cells have a town
+  ansible.builtin.stat:
+    path: "{{ cells_root }}/{{ item.name }}/town"
+  register: execution_cell_town_stat
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  tags: [binaries, code]
+
+- name: Enable the witness for each cell that has a town
   ansible.builtin.systemd_service:
-    name: "wg-witness-{{ item.name }}.service"
+    name: "wg-witness-{{ item.item.name }}.service"
     enabled: true
     state: started
     daemon_reload: true
   # Starting a unit whose ExecStart does not exist puts it into a restart loop
   # that looks exactly like a crashing witness. Better to install the unit and
   # leave it stopped until a binary is deployed.
-  when: execution_cell_witness_stat.stat.exists
-  loop: "{{ execution_cells }}"
+  when:
+    - execution_cell_witness_stat.stat.exists
+    - item.stat.exists
+  loop: "{{ execution_cell_town_stat.results }}"
   loop_control:
-    label: "{{ item.name }}"
+    label: "{{ item.item.name }}"
+
+# Stopped rather than left looping, and SAID rather than skipped.
+#
+# The previous version would have left a dead unit enabled and reported ok for
+# both client cells, which is how this went unnoticed in the first place.
+- name: Stop the witness on cells with no town
+  ansible.builtin.systemd_service:
+    name: "wg-witness-{{ item.item.name }}.service"
+    enabled: false
+    state: stopped
+  when: not item.stat.exists
+  loop: "{{ execution_cell_town_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  failed_when: false
+
+- name: Say which cells are not being watched
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.name }} has no town at {{ cells_root }}/{{ item.item.name }}/town,
+      so its witness is stopped and nothing is reaping stalled agents there.
+      That is correct for an unprovisioned cell and wrong for a working one --
+      if this cell is meant to be running work, its town was never created.
+  when: not item.stat.exists
+  loop: "{{ execution_cell_town_stat.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
