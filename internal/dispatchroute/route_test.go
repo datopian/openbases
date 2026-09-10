@@ -139,3 +139,29 @@ func TestARefusalSaysWhichKindItIs(t *testing.T) {
 		t.Errorf("a refusal does not read as an error: %v", err)
 	}
 }
+
+// A plan for a project no rig in the cell holds is refused, not filed.
+//
+// Filing it somewhere arbitrary is worse than refusing: the beads exist, look
+// filed, and no dispatch will ever find them. This is the same failure that
+// put two msf beads in the sandbox graph.
+func TestAProjectWithNoRigIsRefusedRatherThanFiledAnywhere(t *testing.T) {
+	rig, refusal, decided := Choose(nil, "")
+	if decided {
+		t.Fatalf("nothing held the project and Choose decided anyway: %q %v", rig, refusal)
+	}
+}
+
+// Naming a rig that does not hold the project is refused, for filing as for
+// dispatch: naming one is a choice among the rigs that can do the work, not a
+// way past the check.
+func TestNamingARigThatDoesNotHoldTheProjectIsRefused(t *testing.T) {
+	found := []candidate{{rig: "msf", repo: "datopian/msf"}}
+	rig, refusal, decided := Choose(found, "sandbox")
+	if !decided || refusal == nil {
+		t.Fatalf("naming an unrelated rig was allowed: %q", rig)
+	}
+	if refusal.Code != CodeNoRig {
+		t.Errorf("wrong refusal code: %s", refusal.Code)
+	}
+}

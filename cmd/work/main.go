@@ -105,15 +105,27 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
+		// The project's rig, chosen the same way dispatch chooses one, because
+		// a bead filed into the wrong graph is invisible to the dispatch that
+		// would run it.
+		rig, refused, rerr := dispatchroute.ForProject(ctx, db, plan.Project, cell, rigOr(args, 2))
+		if rerr != nil {
+			fail(rerr)
+		}
+		if refused != nil {
+			fmt.Fprintf(os.Stderr, "not filed (%s): %s\n", refused.Code, refused.Why)
+			os.Exit(5)
+		}
+
 		var id string
 		if err := db.QueryRowContext(ctx,
 			`SELECT system_enqueue_work('file', $1, $2, NULL, $3, $4, $5)`,
-			cell, rigOr(args, 2), string(raw), who,
+			cell, rig, string(raw), who,
 			nullable(strings.TrimSpace(plan.Project))).Scan(&id); err != nil {
 			fail(err)
 		}
-		fmt.Printf("queued filing %s: %d beads for %s on %s\n",
-			id, len(plan.Beads), plan.Project, cell)
+		fmt.Printf("queued filing %s: %d beads for %s on %s in rig %s\n",
+			id, len(plan.Beads), plan.Project, cell, orDefault(rig))
 
 	case "dispatch":
 		if len(args) < 1 {
