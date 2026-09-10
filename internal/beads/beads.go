@@ -417,6 +417,45 @@ func (c *CLIClient) Link(ctx context.Context, from, to domain.WorkRef, relation 
 	return err
 }
 
+// DependOn records that one bead cannot start until another finishes, by id.
+//
+// Link does the same thing and takes two WorkRefs, which carry an
+// organisation and a cell. The node filing a plan has neither: it holds a
+// directory and a pair of bead ids, and inventing an organisation id to
+// satisfy a validation it does not need would put a lie in the audit trail.
+//
+// Same argument order as Link and as bd, and the order is the whole risk
+// here: reversed, readiness inverts silently and the graph looks fine. The
+// direction is pinned by a contract test.
+func (c *CLIClient) DependOn(ctx context.Context, db DatabaseRef, blocked, blocker string) error {
+	if strings.TrimSpace(blocked) == "" || strings.TrimSpace(blocker) == "" {
+		return errors.New("a dependency needs both a blocked and a blocking bead")
+	}
+	if blocked == blocker {
+		return fmt.Errorf("%s cannot depend on itself", blocked)
+	}
+	// --no-cycle-check, and Cycles is run once after a whole plan is wired.
+	// bd offers it for exactly this: checking after every edge is quadratic
+	// on a plan that is a graph, and a cycle introduced by edge three is
+	// still a cycle when edge twelve is added.
+	_, err := c.run(ctx, db, "dep", "add", blocked, blocker, "--no-cycle-check")
+	return err
+}
+
+// Cycles reports whether the graph has any, which a bulk wiring must ask.
+//
+// `bd dep add --no-cycle-check` is what makes filing a twelve-bead plan
+// affordable, and this is the other half of that bargain. A cycle is not a
+// cosmetic problem: every bead in it is blocked for ever, by each other, and
+// nothing in the interface says why.
+func (c *CLIClient) Cycles(ctx context.Context, db DatabaseRef) (string, error) {
+	out, err := c.run(ctx, db, "dep", "cycles")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Backup runs the Beads native backup.
 //
 // The JSONL export is an additional recovery aid, never the primary backup:

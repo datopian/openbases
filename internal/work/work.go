@@ -20,6 +20,10 @@ const (
 	KindPlan Kind = "plan"
 	// KindWork runs one bead.
 	KindWork Kind = "work"
+	// KindFile writes a plan made elsewhere into the graph. It runs no agent
+	// and spends nothing: the decision has already been made, and this only
+	// records it.
+	KindFile Kind = "file"
 )
 
 // Job is one claimed unit of work.
@@ -78,6 +82,10 @@ func (j Job) Validate() error {
 	case KindWork:
 		if strings.TrimSpace(j.Bead) == "" {
 			return fmt.Errorf("a work job needs a bead")
+		}
+	case KindFile:
+		if strings.TrimSpace(j.Brief) == "" {
+			return fmt.Errorf("a file job needs a plan to file")
 		}
 	default:
 		return fmt.Errorf("unknown job kind %q", j.Kind)
