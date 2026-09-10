@@ -233,7 +233,18 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// was created or last landed.
 	d.refresh(jobRig)
 
-	tree := d.treeBefore(jobRig)
+	// One checkout per bead, prepared before anything reads the tree.
+	//
+	// Ordered deliberately: the snapshot below must be taken from the tree the
+	// run will actually use. Taken from the shared refinery and then running
+	// somewhere else would compare two different directories, which is a
+	// subtler version of the bug this fixes.
+	runDir := d.prepareWorkdir(*job, jobRig)
+	if runDir != "" {
+		job.Checkout = runDir
+	}
+
+	tree := d.treeBefore(jobRig, runDir)
 
 	// Tell the control plane what this run is using, before it starts.
 	//
@@ -290,6 +301,11 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// misled about how finished it is.
 	if job.Kind == work.KindWork {
 		d.landWork(ctx, *job, jobRig, out, tree, checked, runErr)
+		// Reclaimed only if it holds nothing. A worktree still carrying
+		// uncommitted work is kept and logged, because that work never
+		// reached the repository and deleting it would destroy the thing
+		// per-bead checkouts exist to protect.
+		d.releaseWorkdir(jobRig, runDir, job.Bead)
 	}
 
 	// Reported on a context that SHUTDOWN CANNOT CANCEL.
@@ -316,6 +332,115 @@ func (d *dispatcher) pass(ctx context.Context) {
 	} else {
 		d.log.Info("job done", "job", job.ID)
 	}
+}
+
+// prepareWorkdir gives a work job its own checkout, and returns where.
+//
+// One git worktree per bead, made fresh from origin/<base> and already on the
+// bead's branch. Returns "" when the rig has no working tree to clone from, in
+// which case the caller falls back to the shared refinery.
+//
+// This removes a whole class of failure rather than patching it. Every run
+// used to share `refinery/rig`, and a landing snapshots that tree BEFORE the
+// run and treats whatever it finds as pre-existing -- so anything an earlier
+// run left behind became permanently unlandable. sa-iyu produced 29 finished
+// files, never committed them, and three re-dispatches re-verified them and
+// landed nothing, because on each run the files were already there. In a
+// fresh worktree the snapshot is EMPTY by construction, so "already there"
+// cannot happen.
+//
+// It also makes two beads in one rig independent: they no longer share a
+// branch, an index, or each other's leftovers.
+//
+// The cost is honest and worth naming: a fresh checkout has no node_modules,
+// so a run that needs dependencies installs them again. That is minutes of an
+// agent's budget, and the alternative -- reusing a tree -- is the bug above.
+func (d *dispatcher) prepareWorkdir(job work.Job, rig string) string {
+	if job.Kind != work.KindWork || strings.TrimSpace(job.Bead) == "" {
+		return ""
+	}
+	shared := d.cellRoot + "/town/" + rig + "/refinery/rig"
+	if _, err := os.Stat(shared); err != nil {
+		// A rig with no refinery holds no code. The witness and the mayor are
+		// rigs like that.
+		return ""
+	}
+	git := landing.Exec(shared, d.cellRoot)
+
+	base := d.defaultBranch(git, rig)
+	if base == "" {
+		base = "main"
+	}
+	// Fetched before branching, so the worktree starts from what origin has
+	// rather than from whatever this node last saw. A run that begins on a
+	// stale base produces a pull request that looks clean and conflicts on
+	// merge.
+	if _, err := git("fetch", "--quiet", "origin", base); err != nil {
+		d.log.Warn("could not fetch before making a worktree; using the local base",
+			"rig", rig, "bead", job.Bead, "error", err)
+	}
+
+	dir := d.cellRoot + "/town/" + rig + "/wg-runs/" + job.Bead
+
+	// A worktree left by an earlier run of this bead is removed, not reused.
+	// Reusing it would reintroduce exactly the leftovers this exists to
+	// prevent. Anything worth keeping is on the bead's branch already, because
+	// that is what landing pushes.
+	if _, err := os.Stat(dir); err == nil {
+		if _, err := git("worktree", "remove", "--force", dir); err != nil {
+			d.log.Warn("removing a previous worktree", "dir", dir, "error", err)
+			_ = os.RemoveAll(dir)
+		}
+	}
+	_, _ = git("worktree", "prune")
+
+	// --force because the branch may already exist from an earlier run, and
+	// -B so the run starts on the bead's own branch: the landing then commits
+	// where it already is instead of switching, which is what used to trip
+	// post-checkout hooks.
+	if _, err := git("worktree", "add", "--force", "-B", landing.Branch(job.Bead),
+		dir, "origin/"+base); err != nil {
+		// Reported and fallen back, not fatal. A run in the shared tree is
+		// the old behaviour, which worked; refusing to run at all because an
+		// isolation improvement failed would be worse than the problem.
+		d.log.Error("could not make a per-bead worktree; falling back to the shared tree",
+			"rig", rig, "bead", job.Bead, "dir", dir, "error", err)
+		return ""
+	}
+	d.log.Info("worktree", "bead", job.Bead, "dir", dir, "base", base)
+	return dir
+}
+
+// releaseWorkdir removes a run's worktree, but only when it holds nothing.
+//
+// The condition is the safety: if anything is still uncommitted after the
+// landing, that is work which never reached the repository, and deleting it
+// would destroy exactly what this whole change exists to protect. So a dirty
+// tree is KEPT and said out loud, and a clean one is reclaimed.
+func (d *dispatcher) releaseWorkdir(rig, dir, bead string) {
+	if strings.TrimSpace(dir) == "" || !strings.Contains(dir, "/wg-runs/") {
+		// Never the shared refinery, whatever else happens.
+		return
+	}
+	git := landing.Exec(dir, d.cellRoot)
+	out, err := git("status", "--porcelain", "-uall")
+	if err != nil {
+		d.log.Warn("keeping a worktree whose state could not be read",
+			"dir", dir, "bead", bead, "error", err)
+		return
+	}
+	if strings.TrimSpace(out) != "" {
+		d.log.Warn("keeping this run's worktree: it still holds uncommitted work, "+
+			"which means the landing did not take it",
+			"dir", dir, "bead", bead, "paths", strings.Fields(out))
+		return
+	}
+	shared := landing.Exec(d.cellRoot+"/town/"+rig+"/refinery/rig", d.cellRoot)
+	if _, err := shared("worktree", "remove", "--force", dir); err != nil {
+		d.log.Warn("removing a worktree", "dir", dir, "error", err)
+		return
+	}
+	d.log.Info("worktree released", "bead", bead, "dir", dir)
 }
 
 // rigFor is the rig a job runs in: the one dispatch chose, or the default when
@@ -345,7 +470,12 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 	// guarantees this rig holds the repository the bead's project owns, so the
 	// path is known here and an agent that has to search finds whatever else
 	// is in reach instead.
-	job.Checkout = d.cellRoot + "/town/" + rig + "/refinery/rig"
+	// The rig's shared refinery, unless the caller already chose a per-bead
+	// worktree. `pass` prepares one for every work job; a plan job has no code
+	// to change and runs in the shared tree.
+	if strings.TrimSpace(job.Checkout) == "" {
+		job.Checkout = d.cellRoot + "/town/" + rig + "/refinery/rig"
+	}
 	instructions := job.Instructions()
 	if e := strings.TrimSpace(extra); e != "" {
 		// Appended, not substituted: the second pass is the same job with what
@@ -1243,7 +1373,12 @@ func parseGitHubRemote(url string) (owner, name string, ok bool) {
 // tree either way, which is where they were before any of this existed.
 func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string,
 	before []landing.Change, checked *check.Result, runErr error) {
-	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
+	// The tree this run actually used, which for a work job is its own
+	// worktree rather than the rig's shared one.
+	dir := strings.TrimSpace(job.Checkout)
+	if dir == "" {
+		dir = d.cellRoot + "/town/" + rig + "/refinery/rig"
+	}
 	if _, err := os.Stat(dir); err != nil {
 		// A rig with no refinery working tree holds no code to change. The
 		// witness and mayor are like this.
@@ -1616,8 +1751,10 @@ func subject(title, bead string) string {
 // existed. The alternative -- refusing to land when the tree cannot be read --
 // loses the agent's work entirely. A stray file in a pull request is visible
 // and removable; work that never left the node is neither.
-func (d *dispatcher) treeBefore(rig string) []landing.Change {
-	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
+func (d *dispatcher) treeBefore(rig, dir string) []landing.Change {
+	if strings.TrimSpace(dir) == "" {
+		dir = d.cellRoot + "/town/" + rig + "/refinery/rig"
+	}
 	if _, err := os.Stat(dir); err != nil {
 		return nil
 	}
@@ -1678,7 +1815,10 @@ func (d *dispatcher) check(ctx context.Context, job work.Job, rig string) *check
 	if job.Kind != work.KindWork || strings.TrimSpace(job.Check) == "" {
 		return nil
 	}
-	dir := d.cellRoot + "/town/" + rig + "/refinery/rig"
+	dir := strings.TrimSpace(job.Checkout)
+	if dir == "" {
+		dir = d.cellRoot + "/town/" + rig + "/refinery/rig"
+	}
 	res, err := check.Run(ctx, dir, job.Check, d.checkDeadline())
 	if err != nil {
 		d.log.Error("running the repository's check", "bead", job.Bead,

@@ -711,3 +711,147 @@ func TestAShutdownRecordsTheOutcomeRatherThanStrandingTheJob(t *testing.T) {
 		t.Errorf("a normal run was annotated as interrupted: %q", got)
 	}
 }
+
+// Each bead gets its own checkout, so one run's leftovers cannot hide
+// another's work.
+//
+// This is sa-iyu. Every run shared `refinery/rig`, and a landing snapshots
+// that tree BEFORE the run and treats what it finds as pre-existing — so the
+// 29 files sa-iyu produced and never committed became permanently unlandable:
+// three re-dispatches re-verified them and landed nothing, because on each run
+// they were already there.
+//
+// A fresh worktree makes the snapshot EMPTY by construction, which removes the
+// class rather than patching it.
+func TestEachBeadRunsInItsOwnCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root := t.TempDir()
+	rig := filepath.Join(root, "town", "r")
+	shared := filepath.Join(rig, "refinery", "rig")
+
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	origin := filepath.Join(root, "origin.git")
+	if err := os.MkdirAll(origin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(root, "init", "--bare", "--initial-branch=main", origin)
+	if err := os.MkdirAll(filepath.Dir(shared), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(filepath.Dir(shared), "clone", origin, "rig")
+	if err := os.WriteFile(filepath.Join(shared, "README.md"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(shared, "add", "README.md")
+	run(shared, "commit", "-m", "initial")
+	run(shared, "push", "-u", "origin", "main")
+
+	d := &dispatcher{
+		cellRoot: root,
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	// The state that stranded sa-iyu: a previous run left finished work in the
+	// SHARED tree and never committed it.
+	stranded := filepath.Join(shared, "sample-data")
+	if err := os.MkdirAll(stranded, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stranded, "MANIFEST.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	job := work.Job{ID: "j1", Kind: work.KindWork, Bead: "sa-iyu", Cell: "oss", Rig: "r"}
+	dir := d.prepareWorkdir(job, "r")
+	if dir == "" {
+		t.Fatal("no per-bead worktree was made, so every bead still shares one tree")
+	}
+	if dir == shared {
+		t.Fatal("the run was given the shared refinery")
+	}
+
+	// The new checkout is CLEAN: the previous run's leftovers are not in it,
+	// which is what makes them stop masking this run's work.
+	if before := d.treeBefore("r", dir); len(before) != 0 {
+		t.Errorf("a fresh worktree is not clean, so a landing would still treat this "+
+			"run's own work as pre-existing: %+v", before)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sample-data")); err == nil {
+		t.Error("the previous run's leftovers followed the bead into its own checkout")
+	}
+
+	// And it starts on the bead's own branch, so the landing commits where it
+	// already is rather than switching — which is what tripped the Git LFS
+	// post-checkout hook.
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "bead/sa-iyu" {
+		t.Errorf("the worktree is on %q, want bead/sa-iyu", got)
+	}
+
+	// Two beads at once are independent, which the shared tree could not be.
+	other := d.prepareWorkdir(work.Job{ID: "j2", Kind: work.KindWork, Bead: "sa-7dc", Rig: "r"}, "r")
+	if other == "" || other == dir {
+		t.Fatalf("two beads share a checkout: %q and %q", dir, other)
+	}
+
+	// A clean worktree is reclaimed.
+	d.releaseWorkdir("r", dir, "sa-iyu")
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("a clean worktree was not released")
+	}
+
+	// One holding uncommitted work is KEPT: deleting it would destroy work
+	// that never reached the repository, which is the failure this change is
+	// about.
+	if err := os.WriteFile(filepath.Join(other, "NOTES.md"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.releaseWorkdir("r", other, "sa-7dc")
+	if _, err := os.Stat(other); err != nil {
+		t.Error("a worktree holding uncommitted work was deleted")
+	}
+
+	// And nothing outside wg-runs/ is ever removed, whatever it is asked.
+	//
+	// Tested with a LINKED worktree rather than the shared refinery, because
+	// git refuses to remove a main worktree on its own -- so asserting on the
+	// refinery would pass with the guard deleted and prove nothing. A linked
+	// worktree elsewhere is removable, so only the guard saves it.
+	manual := filepath.Join(rig, "somebody-elses-tree")
+	if out, err := exec.Command("git", "-C", shared, "worktree", "add", "--force",
+		"-B", "manual", manual, "main").CombinedOutput(); err != nil {
+		t.Fatalf("making a linked worktree: %v: %s", err, out)
+	}
+	d.releaseWorkdir("r", manual, "sa-iyu")
+	if _, err := os.Stat(manual); err != nil {
+		t.Error("a worktree outside wg-runs/ was removed: only paths this dispatcher " +
+			"created for a run are its to reclaim")
+	}
+
+	// The shared refinery survives too, which git enforces and the guard
+	// restates.
+	d.releaseWorkdir("r", shared, "sa-iyu")
+	if _, err := os.Stat(shared); err != nil {
+		t.Fatal("the rig's shared refinery was deleted")
+	}
+
+	// A plan job has no code to change and gets no worktree.
+	if got := d.prepareWorkdir(work.Job{ID: "j3", Kind: "plan", Rig: "r"}, "r"); got != "" {
+		t.Errorf("a plan job was given a worktree at %q", got)
+	}
+}
