@@ -93,10 +93,22 @@ func main() {
 			fail(err)
 		}
 		cell := cellOr(args, 1)
+		// Filing needs a person, not just a plan.
+		//
+		// system_enqueue_work checks that the requester is a member of the
+		// project, and passing NULL means the check has nobody to pass:
+		// "the requester is not a member of project msf" is what filing from
+		// this terminal said until it carried an identity. The API takes the
+		// authenticated user; here it is WG_OPERATOR_EMAIL, the same way
+		// every other listing in this tool says who is asking.
+		who, err := operator(ctx, db)
+		if err != nil {
+			fail(err)
+		}
 		var id string
 		if err := db.QueryRowContext(ctx,
-			`SELECT system_enqueue_work('file', $1, $2, NULL, $3, NULL, $4)`,
-			cell, rigOr(args, 2), string(raw),
+			`SELECT system_enqueue_work('file', $1, $2, NULL, $3, $4, $5)`,
+			cell, rigOr(args, 2), string(raw), who,
 			nullable(strings.TrimSpace(plan.Project))).Scan(&id); err != nil {
 			fail(err)
 		}
