@@ -125,6 +125,8 @@ export interface ProjectWorkItem {
     | "failed"
     | "landed"
     | "blocked"
+    // Closed, and nothing reached the repository.
+    | "closed_unlanded"
     | "done";
 }
 
@@ -208,6 +210,8 @@ export interface BeadDetail {
    */
   outcome:
     | "done"
+    // Closed, and nothing reached the repository.
+    | "closed_unlanded"
     // Ran, produced a change that is in a pull request, and left the bead
     // open. Distinct from `blocked`: the work exists and awaits review.
     | "landed"

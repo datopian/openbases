@@ -81,8 +81,21 @@ function outcomeLabel(o: BeadDetail["outcome"]): {
     case "done":
       return {
         text: "Done",
-        note: "the run finished and the bead is closed",
+        note: "the bead is closed and its change reached the repository",
         colour: "#1a7f37",
+      };
+    case "closed_unlanded":
+      // Closed, and nothing reached the repository.
+      //
+      // Not an error: a bead whose work needed no code change closes exactly
+      // like this. But sa-iyu also closed like this while 29 finished files
+      // sat uncommitted on a node, and every surface said "Done".
+      return {
+        text: "Closed, nothing landed",
+        note:
+          "the bead is closed and no pull request exists. Correct if it needed no " +
+          "code change \u2014 worth a look if it was supposed to produce one.",
+        colour: "#6f42c1",
       };
     case "landed":
       return {
