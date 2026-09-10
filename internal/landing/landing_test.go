@@ -1262,3 +1262,68 @@ func TestAComplainingHookDoesNotThrowAwayTheWork(t *testing.T) {
 		t.Errorf("the failure is not attributed to the checkout: %v", err)
 	}
 }
+
+// Scratch is recognised by shape, because names cannot be enumerated.
+//
+// `.verify-tmp/` was added to the list after one run committed an entire
+// portal under it. The very next agent chose `.scratch-sj2/` and put three
+// files into datopian/msf#6 — which was the whole pull request. The one after
+// that will choose something else.
+func TestScratchIsRecognisedByShapeNotByName(t *testing.T) {
+	// Names no list would have had.
+	for _, p := range []string{
+		".scratch-sj2/build-geo.log",
+		".verify-tmp/repo/portal/package.json",
+		".tmp-run-4/out.txt",
+		".agent-temp/notes.md",
+		"portal/.scratchpad/x",
+	} {
+		if !isScratch(p) {
+			t.Errorf("%q is not recognised as scratch", p)
+		}
+	}
+
+	// Hidden directories a repository deliberately tracks, and ordinary paths
+	// that merely contain the letters. Both halves of the rule matter: hidden
+	// alone would eat .github, and "tmp" alone would eat a real tmp/.
+	for _, p := range []string{
+		".github/workflows/ci.yml",
+		".claude/commands/portaljs-deploy.md",
+		"portal/lib/templates/index.ts",
+		"tmp/keepme.txt",
+		"src/tmpl/page.tsx",
+		".gitignore",
+	} {
+		if isScratch(p) {
+			t.Errorf("%q was mistaken for scratch", p)
+		}
+	}
+}
+
+// And the shape rule reaches a landing, not just the helper.
+func TestAnInventedScratchDirectoryDoesNotReachThePullRequest(t *testing.T) {
+	dir, git := repo(t)
+
+	write(t, dir, "portal/pages/search.tsx", "export default function S() {}\n")
+	// Exactly what sa-sj2 did.
+	write(t, dir, ".scratch-sj2/build-geo.log", "...\n")
+	write(t, dir, ".scratch-sj2/notes.md", "...\n")
+
+	res, err := Land(git, Spec{Bead: "sa-sj2", Title: "Preview", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == nil {
+		t.Fatal("nothing landed")
+	}
+	out, err := git("show", "--name-only", "--format=", res.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, ".scratch-sj2") {
+		t.Errorf("the agent's scratch directory reached the commit:\n%s", out)
+	}
+	if !strings.Contains(out, "portal/pages/search.tsx") {
+		t.Errorf("the real work was not committed:\n%s", out)
+	}
+}
