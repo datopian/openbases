@@ -34,9 +34,19 @@ CREDENTIAL_NAME = re.compile(
 
 # Values that are credential-SHAPED regardless of what the key is called, so a
 # misnamed field is caught by its content as well as its name.
+#
+# arc_ was added when the first PortalJS Arc token was stored. That one was
+# encrypted only because its key happened to be named portaljs_token, which
+# ends in _token -- name it portaljs_arc or arc_credentials and SOPS writes it
+# in clear, with nothing here recognising the value either. Checked by planting
+# one: without this the script prints "every credential-named value is
+# ciphertext" while a live token sits beside it in plain text.
+#
+# The name rule and the shape rule are meant to be two independent nets. For
+# this credential there was only one.
 CREDENTIAL_SHAPE = re.compile(
     r"(cfat_|gh[pousr]_|github_pat_|sk-[A-Za-z0-9]|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}"
-    r"|GOCSPX-|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-)"
+    r"|GOCSPX-|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-|arc_[A-Za-z0-9]{16})"
 )
 
 CIPHERTEXT = "ENC[AES256_GCM"
