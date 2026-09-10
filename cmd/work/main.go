@@ -24,6 +24,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/datopian/openbases/internal/work"
 	"text/tabwriter"
 	"time"
 
@@ -64,6 +66,42 @@ func main() {
 			fail(err)
 		}
 		fmt.Printf("queued plan %s on %s\n", id, cell)
+
+	// File a plan made somewhere else.
+	//
+	// The same job the API's POST /v1/work/beads enqueues, from the node
+	// where there is no browser to do Cloudflare Access with. Planning is
+	// moving out of the platform, so this is what replaces `plan` here: the
+	// decision arrives already made, in a file, and costs nothing to record.
+	case "file":
+		if len(args) < 1 {
+			fmt.Fprintln(os.Stderr, `usage: wg-work file <plan.json> [cell] [rig]`)
+			os.Exit(2)
+		}
+		raw, err := os.ReadFile(args[0])
+		if err != nil {
+			fail(err)
+		}
+		plan, err := work.DecodePlan(string(raw))
+		if err != nil {
+			fail(err)
+		}
+		// Checked here as well as on the node, because the person who can fix
+		// the plan is standing in front of this terminal and the node's
+		// complaint lands in a journal.
+		if err := plan.Validate(); err != nil {
+			fail(err)
+		}
+		cell := cellOr(args, 1)
+		var id string
+		if err := db.QueryRowContext(ctx,
+			`SELECT system_enqueue_work('file', $1, $2, NULL, $3, NULL, $4)`,
+			cell, rigOr(args, 2), string(raw),
+			nullable(strings.TrimSpace(plan.Project))).Scan(&id); err != nil {
+			fail(err)
+		}
+		fmt.Printf("queued filing %s: %d beads for %s on %s\n",
+			id, len(plan.Beads), plan.Project, cell)
 
 	case "dispatch":
 		if len(args) < 1 {
@@ -385,7 +423,7 @@ func usage() {
 wg-work — drive the work queue from the control node
 
   wg-work sync-hq                 project the company graph into the interface
-  wg-work plan "a brief" [cell]   queue a planning job: brief in, beads out
+  wg-work plan "a brief" [cell]   queue a planning job: brief in, beads out\n  wg-work file <plan.json> [cell] [rig]  file a plan made elsewhere: no agent, no cost
   wg-work dispatch <bead> [cell]  queue one bead for an agent
   wg-work list                    what work exists, and what it cost
   wg-work queue                   what is queued, running or finished
@@ -418,4 +456,13 @@ func textArray(vs []string) any {
 	}
 	b.WriteByte('}')
 	return b.String()
+}
+
+// nullable turns an empty string into a NULL, so a plan filed without a
+// project does not create one called "".
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
