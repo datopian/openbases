@@ -70,6 +70,10 @@ export WG_AI_GATEWAY_TOKEN="$(read_key ai_gateway_token)"
 export WG_COST_CF_TOKEN="$(read_key cost_import_cf_token)"
 export WG_ACCESS_AUD_STAGING="$(read_key access_aud_staging)"
 export TF_VAR_google_workspace_client_secret="$(read_key google_workspace_client_secret)"
+# PortalJS Arc, so a cell can deploy what its agent built. Scoped to a project,
+# and deliberately not a Cloudflare token: cloudflare_api_token above can edit
+# DNS, Access and every bucket, and agents are not given it.
+export PORTALJS_TOKEN="$(read_key portaljs_token)"
 export R2_ACCESS_KEY_ID="$(read_key r2_access_key_id)"
 export R2_SECRET_ACCESS_KEY="$(read_key r2_secret_access_key)"
 export R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"

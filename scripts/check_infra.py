@@ -645,6 +645,51 @@ def check_a_job_deadline_stays_under_the_cell_ceiling() -> None:
             f"own budget. Keep the job deadline below the ceiling.")
 
 
+def check_every_ansible_secret_is_exported_by_the_deploy() -> None:
+    """A variable Ansible reads from the environment must be exported by the
+    wrapper that runs the deploy.
+
+    with_secrets.sh decrypts the SOPS file and maps its keys onto environment
+    variables BY HAND -- written out rather than derived, so that a rename is a
+    visible edit. The cost of that choice is this failure: add a key to the
+    encrypted file and a `lookup('env', ...)` in group_vars, forget the export,
+    and the lookup resolves to "" forever. Every task guarded on it skips,
+    reports ok, and the credential is silently never installed.
+
+    That is precisely what happened to PORTALJS_TOKEN, and it would have been
+    found by an operator wondering why their token did nothing rather than by
+    the deploy. The same shape is recorded twice more in this repository: the
+    worker binary that was never wired to a variable and left staging three
+    weeks stale, and WG_GOOGLE_SUBJECT, which resolved to "" until the
+    reconciler failed hourly on "no delegation subject".
+
+    Comments are stripped before matching. The note explaining that last
+    incident still names WG_GOOGLE_SUBJECT, and a check that reads prose cries
+    wolf about a variable deliberately replaced by a literal.
+    """
+    group_vars = ROOT / "infra" / "ansible" / "group_vars"
+    wrapper = ROOT / "scripts" / "with_secrets.sh"
+    if not wrapper.is_file():
+        problems.append("scripts/with_secrets.sh is missing, so no deploy can carry a secret")
+        return
+
+    exported = set(re.findall(r"^\s*export\s+([A-Z0-9_]+)=", wrapper.read_text(), re.M))
+
+    for path in sorted(group_vars.rglob("*.yml")):
+        code = "\n".join(
+            line for line in path.read_text().splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        for name in sorted(set(re.findall(r"lookup\(\s*'env'\s*,\s*'([A-Z0-9_]+)'\s*\)", code))):
+            if name in exported:
+                continue
+            problems.append(
+                f"{path.relative_to(ROOT)}: reads {name} from the environment, but "
+                f"scripts/with_secrets.sh never exports it. The lookup resolves to "
+                f'"" on every deploy, so whatever it configures is silently skipped. '
+                f"Add: export {name}=\"$(read_key <key_in_the_sops_file>)\"")
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -662,6 +707,7 @@ def main() -> int:
         check_every_installed_binary_has_a_source,
         check_restart_handlers_can_fire_on_a_tagged_deploy,
         check_a_job_deadline_stays_under_the_cell_ceiling,
+        check_every_ansible_secret_is_exported_by_the_deploy,
     ):
         check()
 
