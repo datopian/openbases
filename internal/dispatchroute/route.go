@@ -236,3 +236,55 @@ func wantedFor(ctx context.Context, db *sql.DB, bead, cell string) ([]candidate,
 	}
 	return out, rows.Err()
 }
+
+// ForProject is the rig that should hold a project's beads, or the reason
+// none can.
+//
+// The bead-based route cannot answer this: filing a plan creates the beads,
+// so there is no bead to route on yet. Without it the first live filing put
+// two msf beads in the `sandbox` graph while msf has a rig of its own --
+// beads in the wrong graph are invisible to the dispatch that would run them,
+// and nothing says so.
+//
+// Same Choose as the dispatch path, so a project whose repositories two rigs
+// hold asks which one rather than picking, and a named rig must be one that
+// actually holds the project's code.
+func ForProject(ctx context.Context, db *sql.DB, project, cell, requested string) (rig string, refusal *Refusal, err error) {
+	if strings.TrimSpace(project) == "" {
+		// Nothing to route on, and not an error: a plan filed without a
+		// project keeps whatever rig the caller named, or the cell's default.
+		return strings.TrimSpace(requested), nil, nil
+	}
+
+	rows, qerr := db.QueryContext(ctx,
+		`SELECT rig, owner || '/' || name FROM system_rigs_wanted($1) WHERE project = $2 ORDER BY rig`,
+		cell, project)
+	if qerr != nil {
+		return "", nil, qerr
+	}
+	defer rows.Close()
+
+	var found []candidate
+	for rows.Next() {
+		var c candidate
+		if scanErr := rows.Scan(&c.rig, &c.repo); scanErr != nil {
+			return "", nil, scanErr
+		}
+		found = append(found, c)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return "", nil, rerr
+	}
+
+	if rig, refused, decided := Choose(found, requested); decided {
+		return rig, refused, nil
+	}
+
+	// No rig in this cell holds any repository for the project. Refused rather
+	// than filed somewhere arbitrary: beads in a graph nobody dispatches from
+	// are worse than a refusal, because they look like progress.
+	return "", &Refusal{Code: CodeNoRig,
+		Why: "no rig in cell " + cell + " holds a repository for project " + project +
+			", so its beads would be filed in a graph nothing runs from. Attach the " +
+			"project's repository to a rig in this cell first."}, nil
+}

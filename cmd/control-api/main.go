@@ -1342,6 +1342,26 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		if strings.TrimSpace(payload.Cell) == "" {
 			payload.Cell = "oss"
 		}
+		// The project's own rig, not the cell's default.
+		//
+		// The first live filing put two msf beads in the `sandbox` graph while
+		// msf has a rig of its own. Beads in the wrong graph are invisible to
+		// the dispatch that would run them, and nothing says so -- they look
+		// filed, and the work never starts.
+		rig, refused, rerr := dispatchroute.ForProject(r.Context(), db,
+			strings.TrimSpace(payload.Project), payload.Cell, payload.Rig)
+		if rerr != nil {
+			log.Error("routing a filing", "error", rerr)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		if refused != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": refused.Why, "code": refused.Code})
+			return
+		}
+		payload.Rig = rig
+
 		brief, err := json.Marshal(payload.Plan)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid plan"})
