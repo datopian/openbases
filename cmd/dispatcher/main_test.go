@@ -549,7 +549,7 @@ func TestARunIsStoppedWhenItStopsProducingNotWhenTheClockRunsOut(t *testing.T) {
 	// version of this test used `exec sleep` to make the hang go away, which
 	// weakened the test to match the code instead of the other way round.
 	script := "#!/bin/sh\n" +
-		"for i in 1 2 3 4 5 6 7 8 9 10; do echo \"working $i\" > " + checkout + "/file-$i.txt; sleep 0.3; done\n" +
+		"for i in 1 2 3 4 5 6 7 8 9 10; do echo \"working $i\" > " + checkout + "/file-$i.txt; sleep 0.6; done\n" +
 		"sleep 600\n"
 	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -559,7 +559,7 @@ func TestARunIsStoppedWhenItStopsProducingNotWhenTheClockRunsOut(t *testing.T) {
 		api: srv.URL, cell: "oss", rig: "sandbox", cellRoot: cellRoot,
 		runner: runner, http: srv.Client(),
 		deadline: time.Hour, // the ceiling must not be what ends this
-		stall:    2 * time.Second,
+		stall:    5 * time.Second,
 		// Often enough to observe the run while it is still writing files,
 		// which is the half of this that must NOT trigger a stop.
 		tick: 200 * time.Millisecond,
@@ -590,7 +590,14 @@ func TestARunIsStoppedWhenItStopsProducingNotWhenTheClockRunsOut(t *testing.T) {
 	// this whole change is about. Only file changes signal progress here --
 	// the script writes to files, never to stdout -- so this is also what
 	// proves file changes count.
-	if took < 3*time.Second {
+	// Five seconds of stall against six of writing, rather than two against
+	// three: the tighter margins failed in the full package run and passed
+	// alone, because forking `sh` on a machine running fifteen test binaries
+	// can take longer than the whole stall window. That flake said nothing
+	// about the dispatcher -- in production the window is ten minutes -- and
+	// a test that fails only when the machine is busy trains people to rerun
+	// rather than read.
+	if took < 6*time.Second {
 		t.Errorf("the run was stopped after %s, while it was still writing files", took)
 	}
 	// And it was stopped promptly afterwards, rather than hanging. Without

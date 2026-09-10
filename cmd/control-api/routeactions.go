@@ -122,6 +122,7 @@ var routeActions = map[string]routeAction{
 
 	// Writes that spend money or change the graph.
 	"POST /v1/work/plan":            {Action: authz.WorkCreate},
+	"POST /v1/work/beads":           {Action: authz.WorkCreate},
 	"POST /v1/work/{bead}/dispatch": {Action: authz.AgentDispatch},
 
 	// Deciding an approval. A token can never reach this: approval.decide is in
