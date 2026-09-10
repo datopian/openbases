@@ -16,8 +16,6 @@ import (
 type Kind string
 
 const (
-	// KindPlan turns a brief into beads. It writes work and does none.
-	KindPlan Kind = "plan"
 	// KindWork runs one bead.
 	KindWork Kind = "work"
 	// KindFile writes a plan made elsewhere into the graph. It runs no agent
@@ -75,10 +73,6 @@ type Result struct {
 // Validate refuses a job that cannot be run, before an agent is started.
 func (j Job) Validate() error {
 	switch j.Kind {
-	case KindPlan:
-		if strings.TrimSpace(j.Brief) == "" {
-			return fmt.Errorf("a plan job needs a brief")
-		}
 	case KindWork:
 		if strings.TrimSpace(j.Bead) == "" {
 			return fmt.Errorf("a work job needs a bead")
@@ -104,46 +98,6 @@ func (j Job) Validate() error {
 // travels over the wire is a prompt somebody can change in flight.
 func (j Job) Instructions() string {
 	switch j.Kind {
-	case KindPlan:
-		// The planning prompt carries three constraints that are all failures
-		// somebody would otherwise have to discover.
-		//
-		// Beads and nothing else, because an agent given a brief will happily
-		// start implementing it, and the point of planning is to produce a plan
-		// somebody can look at before any of it runs.
-		//
-		// A ceiling on how many, because "break this down" against a broad brief
-		// produces forty beads, and forty queued agents is a bill rather than a
-		// plan.
-		//
-		// Acceptance criteria on each, because a bead without them cannot be
-		// judged done, and the agent that later picks it up has nothing to aim
-		// at.
-		// The project instruction is separate from the brief and comes
-		// AFTER it, so a brief that says "file these under x" cannot read as
-		// the label to use: the project was decided by whoever enqueued the
-		// job, against their own membership, and the brief is untrusted text
-		// pasted in from a document.
-		project := ""
-		if p := strings.TrimSpace(j.Project); p != "" {
-			project = fmt.Sprintf(
-				"Label every bead you create with `wg-project-%s`, and no other project "+
-					"label. This work belongs to that project and its label is what "+
-					"decides who can read it.\n\n", p)
-		}
-		return fmt.Sprintf(
-			"Read this brief and turn it into beads. Do NOT do any of the work itself, "+
-				"do not modify files, and do not open pull requests.\n\n"+
-				"BRIEF:\n%s\n\n"+
-				"%s"+
-				"Create between 2 and 8 beads with `bd create`. Each one must be a single "+
-				"piece of work somebody could pick up on its own, with a title that says what "+
-				"it delivers, a description explaining why it is needed, and acceptance "+
-				"criteria that make it possible to tell when it is done. Where one bead must "+
-				"happen before another, record that with `bd dep add`.\n\n"+
-				"When you are finished, list the bead ids you created.",
-			strings.TrimSpace(j.Brief), project)
-
 	case KindWork:
 		// The checkout is NAMED, not left to be found.
 		//

@@ -72,7 +72,7 @@ client and missing in the other.
 | `workgraph_project_list` | projects this person can see |
 | `workgraph_project_create` | a new project, with owners |
 | `workgraph_repositories_attach` | make repositories dispatchable |
-| `workgraph_file_work` | a brief becomes beads (spends money) |
+| `workgraph_beads_file` | a plan you made becomes beads (costs nothing) |
 | `workgraph_dispatch` | run one bead (spends money) |
 
 Creating a project needs a **backup owner who is a different person** from the

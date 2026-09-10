@@ -382,10 +382,10 @@ jobs:
 
       # Filing work into a project. Without the membership check anybody could
       # file into a client's project and then read it back, because the queue
-      # is readable through the project (0071). A plan job has no bead, so the
-      # overview needs the job's own project and not just its bead's.
-      - name: a plan is filed into a project the requester belongs to, or not at all
-        run: psql -v ON_ERROR_STOP=1 -f test/integration/plan_into_project.sql
+      # is readable through the project (0071). A filing job has no bead, so
+      # the overview needs the job's own project and not just its bead's.
+      - name: a filing goes into a project the requester belongs to, or not at all
+        run: psql -v ON_ERROR_STOP=1 -f test/integration/filing_into_project.sql
 
       # The durable half. The pull request is a GitHub call, so what is
       # asserted here is the interface: the provenance that travels with a

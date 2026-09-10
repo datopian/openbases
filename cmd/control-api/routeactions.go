@@ -121,7 +121,6 @@ var routeActions = map[string]routeAction{
 	"GET /v1/events/stream": {Action: authz.OrganisationRead},
 
 	// Writes that spend money or change the graph.
-	"POST /v1/work/plan":            {Action: authz.WorkCreate},
 	"POST /v1/work/beads":           {Action: authz.WorkCreate},
 	"POST /v1/work/{bead}/dispatch": {Action: authz.AgentDispatch},
 
@@ -240,7 +239,7 @@ func patternOf(r *http.Request) string {
 // its owner most needs next — finding out what it spent the money on.
 func spendsMoney(pattern string) bool {
 	switch pattern {
-	case "POST /v1/work/plan", "POST /v1/work/{bead}/dispatch":
+	case "POST /v1/work/{bead}/dispatch":
 		return true
 	}
 	return false

@@ -1,8 +1,8 @@
--- A plan is filed into a project the requester belongs to, or not at all (B2).
+-- A filing goes into a project the requester belongs to, or not at all (B2).
 --
--- system_enqueue_work took a cell and no project, so every plan job and every
+-- system_enqueue_work took a cell and no project, so every job and every
 -- bead it produced landed with no project. That is company-wide work under
--- 0071 -- readable by everybody who can log in -- so planning a client
+-- 0071 -- readable by everybody who can log in -- so filing a client
 -- engagement through this path published the brief and its beads to the whole
 -- company.
 --
@@ -61,7 +61,7 @@ BEGIN
   PERFORM set_config('workgraph.user_id', current_setting('test.member'), true);
 
   -- A member files into their own project.
-  job := system_enqueue_work('plan', 'test-pl-cell', 'sandbox', NULL,
+  job := system_enqueue_work('file', 'test-pl-cell', 'sandbox', NULL,
                              'A brief for alpha', current_setting('test.member')::uuid,
                              'test-pl-alpha');
   SELECT count(*) INTO n FROM work_queue q
@@ -74,7 +74,7 @@ BEGIN
   -- then read it back, because 0071 makes the queue readable through the
   -- project.
   BEGIN
-    PERFORM system_enqueue_work('plan', 'test-pl-cell', 'sandbox', NULL,
+    PERFORM system_enqueue_work('file', 'test-pl-cell', 'sandbox', NULL,
                                 'A brief for beta', current_setting('test.member')::uuid,
                                 'test-pl-beta');
     caught := '(nothing raised)';
@@ -89,7 +89,7 @@ BEGIN
   -- Ignoring it would file the work company-wide, which is the widening this
   -- exists to prevent.
   BEGIN
-    PERFORM system_enqueue_work('plan', 'test-pl-cell', 'sandbox', NULL,
+    PERFORM system_enqueue_work('file', 'test-pl-cell', 'sandbox', NULL,
                                 'A brief', current_setting('test.member')::uuid,
                                 'no-such-project');
     caught := '(nothing raised)';
@@ -103,7 +103,7 @@ BEGIN
   -- Company management files anywhere, consistent with reading everywhere.
   -- The identity switches too, so the verification join can see beta.
   PERFORM set_config('workgraph.user_id', current_setting('test.boss'), true);
-  job := system_enqueue_work('plan', 'test-pl-cell', 'sandbox', NULL,
+  job := system_enqueue_work('file', 'test-pl-cell', 'sandbox', NULL,
                              'A brief for beta', current_setting('test.boss')::uuid,
                              'test-pl-beta');
   SELECT count(*) INTO n FROM work_queue q
@@ -115,15 +115,15 @@ BEGIN
 
   -- No project at all still works: company-wide work is a real case, not an
   -- accident, and the six-argument call has to keep resolving.
-  job := system_enqueue_work('plan', 'test-pl-cell', 'sandbox', NULL,
+  job := system_enqueue_work('file', 'test-pl-cell', 'sandbox', NULL,
                              'Company work', current_setting('test.member')::uuid);
   SELECT count(*) INTO n FROM work_queue WHERE id = job AND project_id IS NULL;
   IF n <> 1 THEN RAISE EXCEPTION 'the six-argument call did not file company work'; END IF;
 
-  RAISE NOTICE 'a plan is filed into a project the requester belongs to, or not at all';
+  RAISE NOTICE 'a filing goes into a project the requester belongs to, or not at all';
 END $$;
 
--- The claim carries the project to the runner, so the planning agent can label
+-- The claim carries the project to the node, so the filing can label
 -- the beads it creates and the dispatcher can stamp work_refs.
 DO $$
 DECLARE claimed record; n integer;
@@ -132,7 +132,7 @@ BEGIN
   IF claimed.id IS NULL THEN
     RAISE EXCEPTION 'nothing was claimable';
   END IF;
-  -- The oldest queued job is the member's alpha plan.
+  -- The oldest queued job is the member's alpha filing.
   IF claimed.project IS DISTINCT FROM 'test-pl-alpha' THEN
     RAISE EXCEPTION 'the claim reported project %', coalesce(claimed.project, '(none)');
   END IF;
@@ -140,21 +140,21 @@ BEGIN
   RAISE NOTICE 'the claim carries the project to the runner';
 END $$;
 
--- And the queue overview shows it, filtered as 0071 requires: a client's plan
+-- And the queue overview shows it, filtered as 0071 requires: a client's filing
 -- job is visible to the client's team, which needs the job's OWN project and
--- not just its bead's -- a plan job has no bead.
+-- not just its bead's -- a filing job has no bead.
 DO $$
 DECLARE n integer;
 BEGIN
   PERFORM set_config('workgraph.user_id', current_setting('test.member'), true);
   SELECT count(*) INTO n FROM system_queue_overview(NULL)
    WHERE project = 'test-pl-alpha';
-  IF n <> 1 THEN RAISE EXCEPTION 'a member sees % of their project''s plan jobs', n; END IF;
+  IF n <> 1 THEN RAISE EXCEPTION 'a member sees % of their project''s filing jobs', n; END IF;
 
   PERFORM set_config('workgraph.user_id', current_setting('test.outsider'), true);
   SELECT count(*) INTO n FROM system_queue_overview(NULL)
    WHERE project = 'test-pl-alpha';
-  IF n <> 0 THEN RAISE EXCEPTION 'an outsider reads alpha''s plan job'; END IF;
+  IF n <> 0 THEN RAISE EXCEPTION 'an outsider reads alpha''s filing job'; END IF;
 
   RAISE NOTICE 'the queue overview shows the project, filtered by membership';
 END $$;

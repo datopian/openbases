@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-func TestAPlanJobNeedsABrief(t *testing.T) {
-	if err := (Job{Kind: KindPlan, Cell: "oss"}).Validate(); err == nil {
-		t.Fatal("a plan job with no brief was accepted")
-	}
-}
-
 func TestAWorkJobNeedsABead(t *testing.T) {
 	if err := (Job{Kind: KindWork, Cell: "oss"}).Validate(); err == nil {
 		t.Fatal("a work job with no bead was accepted")
@@ -23,30 +17,21 @@ func TestAnUnknownKindIsRefused(t *testing.T) {
 	}
 }
 
-// The planning prompt has to forbid doing the work. An agent handed a brief will
-// otherwise start implementing it, and the whole point of a planning step is a
-// plan somebody can look at before any of it runs.
-func TestThePlanningPromptForbidsDoingTheWork(t *testing.T) {
-	got := Job{Kind: KindPlan, Cell: "oss", Brief: "Add a changelog"}.Instructions()
-	if !strings.Contains(got, "Add a changelog") {
-		t.Error("the brief is not in the instructions")
-	}
-	for _, must := range []string{"Do NOT do any of the work", "do not modify files", "acceptance"} {
-		if !strings.Contains(got, must) {
-			t.Errorf("the planning prompt is missing %q", must)
-		}
+// 'plan' is one of the unknown kinds now.
+//
+// Planning left the platform: a plan job started an agent to decide what the
+// work was, and deciding happens outside now. A node that still received one
+// -- an old row, a hand-written insert -- must refuse it rather than start an
+// agent against a prompt that no longer exists.
+func TestAPlanJobIsNoLongerAKindOfJob(t *testing.T) {
+	if err := (Job{Kind: "plan", Cell: "oss", Brief: "a brief"}).Validate(); err == nil {
+		t.Fatal("a planning job was accepted after planning was removed")
 	}
 }
 
-// A ceiling on how many. "Break this down" against a broad brief produces forty
-// beads, and forty queued agents is a bill rather than a plan.
-func TestThePlanningPromptBoundsHowManyBeads(t *testing.T) {
-	got := Job{Kind: KindPlan, Cell: "oss", Brief: "b"}.Instructions()
-	if !strings.Contains(got, "between 2 and 8") {
-		t.Errorf("no ceiling on the number of beads: %s", got)
-	}
-}
-
+// Closing a bead is an assertion about the world, so the prompt has to say
+// when NOT to close one. An agent that closes on "I did some of it" produces a
+// graph that says the work is finished when it is not.
 func TestTheWorkPromptDoesNotInviteAFalseClose(t *testing.T) {
 	got := Job{Kind: KindWork, Cell: "oss", Bead: "wg-1"}.Instructions()
 	if !strings.Contains(got, "wg-1") {
@@ -54,31 +39,6 @@ func TestTheWorkPromptDoesNotInviteAFalseClose(t *testing.T) {
 	}
 	if !strings.Contains(got, "not before") {
 		t.Error("the instructions should say when NOT to close")
-	}
-}
-
-// The project label reaches the planning agent, and the brief cannot supply it.
-//
-// The project was decided by whoever enqueued the job, checked against their
-// own membership. The brief is untrusted text pasted in from a document, so an
-// instruction inside it must not read as the label to use -- which is why the
-// project instruction comes after the brief rather than being interpolated
-// into it.
-func TestPlanPromptCarriesTheProject(t *testing.T) {
-	j := Job{Kind: KindPlan, Brief: "Stand up a portal", Project: "roseville-poc"}
-	p := j.Instructions()
-
-	if !strings.Contains(p, "wg-project-roseville-poc") {
-		t.Fatalf("the project label is missing:\n%s", p)
-	}
-	if strings.Index(p, "Stand up a portal") > strings.Index(p, "wg-project-roseville-poc") {
-		t.Fatal("the project instruction precedes the brief, so the brief could redefine it")
-	}
-
-	// No project: no instruction at all, rather than an empty label.
-	j.Project = ""
-	if got := j.Instructions(); strings.Contains(got, "wg-project-") {
-		t.Fatalf("a projectless plan mentions a project label:\n%s", got)
 	}
 }
 

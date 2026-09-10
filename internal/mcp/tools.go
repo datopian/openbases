@@ -49,11 +49,6 @@ type askArgs struct {
 	Question string `json:"question,omitempty" jsonschema:"One of the supported questions. Omit to list them."`
 }
 
-type fileWorkArgs struct {
-	Brief   string `json:"brief" jsonschema:"One paragraph describing the outcome, with acceptance criteria."`
-	Project string `json:"project,omitempty" jsonschema:"Project slug to file the beads into, from workgraph_project_list. Omit ONLY for company-wide work: a brief filed with no project produces beads every colleague who can log in may read. Anything client-shaped needs one, and the server refuses a project you are not a member of."`
-}
-
 type fileBeadsArgs struct {
 	Project string         `json:"project" jsonschema:"the project slug these beads belong to"`
 	Beads   []planBeadArgs `json:"beads" jsonschema:"the plan: every bead, with the dependencies between them"`
@@ -168,7 +163,6 @@ var Routes = []Route{
 	// read what they are doing.
 	{Tool: "workgraph_project_create", Method: http.MethodPost, Path: "/v1/projects"},
 	{Tool: "workgraph_repositories_attach", Method: http.MethodPost, Path: "/v1/projects/{slug}/repositories"},
-	{Tool: "workgraph_file_work", Method: http.MethodPost, Path: "/v1/work/plan", SpendsMoney: true},
 	{Tool: "workgraph_dispatch", Method: http.MethodPost, Path: "/v1/work/{bead}/dispatch", SpendsMoney: true},
 }
 
@@ -234,7 +228,7 @@ var (
 
 	// The answer to "I filed that -- is it working?".
 	//
-	// Its absence is a reported bug. workgraph_file_work returns a job id and
+	// Its absence is a reported bug. workgraph_beads_file returns a job id and
 	// there was nothing to look it up with, so the only signal was whether new
 	// beads had appeared: "still planning", "died silently" and "finished
 	// having produced nothing" were indistinguishable. The recovery was to
@@ -243,7 +237,7 @@ var (
 	toolJob = &sdk.Tool{
 		Name: "workgraph_job",
 		Description: "What one queued or running JOB is doing, by the id that " +
-			"workgraph_file_work or workgraph_dispatch returned. Carries an " +
+			"workgraph_beads_file or workgraph_dispatch returned. Carries an " +
 			"`assessment`: a sentence saying what the state means, which " +
 			"distinguishes the cases that look identical in the raw row -- a plan " +
 			"job writes beads rather than files, so a quiet run is normal for it; a " +
@@ -290,26 +284,16 @@ var (
 		},
 	}
 
-	// The two that spend money. ReadOnlyHint false and DestructiveHint true so
-	// a client PROMPTS before running them, and SPENDS MONEY in the description
-	// as well — an annotation is a hint a client may ignore, and the
-	// description is what the model itself reads.
-	toolFileWork = &sdk.Tool{
-		Name: "workgraph_file_work",
-		Description: "File a planning job from a brief, which produces beads. " +
-			"SPENDS MONEY: an agent runs. Confirm with the person first. " +
-			"The brief needs a checkable outcome, not 'make it better'. " +
-			"Returns a job id: pass it to workgraph_job to see whether it is working, " +
-			"rather than waiting for beads to appear and guessing.",
-		Annotations: &sdk.ToolAnnotations{
-			Title: "File work (spends money)", ReadOnlyHint: false, DestructiveHint: ptr(true),
-		},
-	}
-
+	// The one that spends money.
+	//
+	// ReadOnlyHint false and DestructiveHint true so a client PROMPTS before
+	// running it, and SPENDS MONEY in the description as well -- an
+	// annotation is a hint a client may ignore, and the description is what
+	// the model itself reads.
 	// File a plan made somewhere else.
 	//
-	// The replacement for workgraph_file_work, which starts an agent to
-	// decide what the work is. This decides nothing and spends nothing: the
+	// What replaced workgraph_file_work, which started an agent to decide
+	// what the work is. This decides nothing and spends nothing: the
 	// plan arrives already made, from whatever the person planned in.
 	//
 	// The whole plan goes in one call because a plan is a graph. Filing it a
@@ -357,8 +341,7 @@ func Tools() []*sdk.Tool {
 	return []*sdk.Tool{
 		toolInbox, toolAsk, toolWorkList, toolBead, toolJob, toolProjectList,
 		toolFileBeads,
-		toolProjectCreate, toolRepositoriesAttach,
-		toolFileWork, toolDispatch,
+		toolProjectCreate, toolRepositoriesAttach, toolDispatch,
 	}
 }
 
@@ -403,7 +386,7 @@ func NewServer(o Options) *sdk.Server {
 	sdk.AddTool(s, toolJob, func(ctx context.Context, _ *sdk.CallToolRequest, a jobArgs) (*sdk.CallToolResult, any, error) {
 		job := strings.TrimSpace(a.Job)
 		if job == "" {
-			return errorResult("a job id is required: the one workgraph_file_work or " +
+			return errorResult("a job id is required: the one workgraph_beads_file or " +
 				"workgraph_dispatch returned"), nil, nil
 		}
 		// Escaped: a job id reaches a path segment.
@@ -439,18 +422,6 @@ func NewServer(o Options) *sdk.Server {
 		}
 		return plain(ctx, c, shell, obs, "workgraph_beads_file", http.MethodPost,
 			"/v1/work/beads", body)
-	})
-
-	sdk.AddTool(s, toolFileWork, func(ctx context.Context, _ *sdk.CallToolRequest, a fileWorkArgs) (*sdk.CallToolResult, any, error) {
-		brief := strings.TrimSpace(a.Brief)
-		if brief == "" {
-			return errorResult("a brief is required, and it needs a checkable outcome"), nil, nil
-		}
-		body := map[string]any{"brief": brief}
-		if p := strings.TrimSpace(a.Project); p != "" {
-			body["project"] = p
-		}
-		return plain(ctx, c, shell, obs, "workgraph_file_work", http.MethodPost, "/v1/work/plan", body)
 	})
 
 	sdk.AddTool(s, toolProjectCreate, func(ctx context.Context, _ *sdk.CallToolRequest, a newProjectArgs) (*sdk.CallToolResult, any, error) {

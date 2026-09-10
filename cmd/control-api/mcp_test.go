@@ -249,7 +249,7 @@ func TestWritesCarryAFreshIdempotencyKey(t *testing.T) {
 	})
 	p := &inProcess{dispatch: dispatch, id: authn.Identity{UserID: "user-1"}}
 	for range 3 {
-		if _, _, err := p.Call(t.Context(), http.MethodPost, "/v1/work/plan",
+		if _, _, err := p.Call(t.Context(), http.MethodPost, "/v1/work/beads",
 			map[string]any{"brief": "x"}); err != nil {
 			t.Fatalf("call: %v", err)
 		}

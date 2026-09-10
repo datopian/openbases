@@ -1,7 +1,6 @@
 // Command wg-work drives the work queue from the control node.
 //
 //	wg-work sync-hq                 project the company graph into the UI
-//	wg-work plan "a brief"          queue a planning job
 //	wg-work dispatch wg-abc [cell] [rig]
 //	                                queue one bead, in a rig that holds its
 //	                                project's code
@@ -53,20 +52,6 @@ func main() {
 
 	args := os.Args[2:]
 	switch os.Args[1] {
-	case "plan":
-		if len(args) < 1 {
-			fmt.Fprintln(os.Stderr, `usage: wg-work plan "a brief" [cell]`)
-			os.Exit(2)
-		}
-		cell := cellOr(args, 1)
-		var id string
-		if err := db.QueryRowContext(ctx,
-			`SELECT system_enqueue_work('plan', $1, 'sandbox', NULL, $2, NULL)`,
-			cell, args[0]).Scan(&id); err != nil {
-			fail(err)
-		}
-		fmt.Printf("queued plan %s on %s\n", id, cell)
-
 	// File a plan made somewhere else.
 	//
 	// The same job the API's POST /v1/work/beads enqueues, from the node
@@ -447,7 +432,7 @@ func usage() {
 wg-work — drive the work queue from the control node
 
   wg-work sync-hq                 project the company graph into the interface
-  wg-work plan "a brief" [cell]   queue a planning job: brief in, beads out\n  wg-work file <plan.json> [cell] [rig]  file a plan made elsewhere: no agent, no cost
+  wg-work file <plan.json> [cell] [rig]  file a plan made elsewhere: no agent, no cost
   wg-work dispatch <bead> [cell]  queue one bead for an agent
   wg-work list                    what work exists, and what it cost
   wg-work queue                   what is queued, running or finished

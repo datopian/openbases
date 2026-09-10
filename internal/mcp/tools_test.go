@@ -36,7 +36,7 @@ import (
 // A tenth needs the same argument made again, in writing, here.
 //
 // Raised from 9 to 10 on 2026-09-10, for workgraph_job, and the argument is a
-// reported dead end rather than a wish. workgraph_file_work returns a job id
+// reported dead end rather than a wish. workgraph_beads_file returns a job id
 // and nothing could look that id up, so the only available signal was whether
 // new beads had appeared -- which makes "still planning", "died silently" and
 // "finished having produced nothing" the same observation. Someone spent 25
@@ -59,19 +59,12 @@ import (
 //
 // It earns its slot by being read-only, cheap, and answering in one sentence
 // the question that otherwise costs a re-filed brief.
-// Eleven on 2026-09-10, and this one is TRANSITIONAL rather than earned.
-//
-// workgraph_beads_file replaces workgraph_file_work: filing a plan made
-// outside the platform replaces starting an agent to invent one. For the
-// length of that transition both exist, because removing the old one first
-// would leave no way to create beads at all until the new one is proven on
-// staging.
-//
-// The removal is the next change and takes the count back to ten. If this
-// comment is still here without workgraph_file_work beside it, the
-// transition was abandoned half way and the eleventh slot is unpaid for.
+// Back to ten on 2026-09-10: workgraph_beads_file took the slot
+// workgraph_file_work vacated. Planning moved out of the platform, so the
+// tool that started an agent to invent a plan was replaced by the one that
+// records a plan already made, and the transition is over.
 func TestToolSetStaysSmall(t *testing.T) {
-	if len(Tools()) > 11 {
+	if len(Tools()) > 10 {
 		t.Fatalf("%d tools. The list is the prompt: past a handful, a model chooses worse "+
 			"rather than doing more. Add to the CLI instead.", len(Tools()))
 	}
@@ -96,7 +89,7 @@ func TestNoToolExistsForSomethingNoCredentialCanEverDo(t *testing.T) {
 // Spending money must be visible in the description, because that is the only
 // place the model sees it before calling.
 func TestSpendingToolsSayTheySpend(t *testing.T) {
-	for _, name := range []string{"workgraph_file_work", "workgraph_dispatch"} {
+	for _, name := range []string{"workgraph_dispatch"} {
 		tl := byName(t, name)
 		if !strings.Contains(strings.ToUpper(tl.Description), "SPENDS MONEY") {
 			t.Errorf("%s does not say it spends money; the model has no other way to know", name)
@@ -270,7 +263,10 @@ func TestToolsCallTheRoutesTheTableNames(t *testing.T) {
 		{"workgraph_work_list", "GET", "/v1/work", nil},
 		{"workgraph_bead", "GET", "/v1/work/sa-kfh", map[string]any{"bead": "sa-kfh"}},
 		{"workgraph_project_list", "GET", "/v1/projects", nil},
-		{"workgraph_file_work", "POST", "/v1/work/plan", map[string]any{"brief": "do a thing"}},
+		{"workgraph_beads_file", "POST", "/v1/work/beads", map[string]any{
+			"project": "msf",
+			"beads":   []any{map[string]any{"ref": "a", "title": "A"}},
+		}},
 		{"workgraph_dispatch", "POST", "/v1/work/wg-abc/dispatch", map[string]any{"bead": "wg-abc"}},
 	} {
 		t.Run(tc.tool+" "+tc.path, func(t *testing.T) {
@@ -312,12 +308,12 @@ func TestARefusalIsAReadableResultNotAnError(t *testing.T) {
 }
 
 // Missing required arguments are refused before anything is called, so a model
-// that forgets the brief does not file an empty planning job.
-func TestAnEmptyBriefIsRefusedBeforeCalling(t *testing.T) {
+// that forgets half the call does not file an empty plan.
+func TestAnEmptyPlanIsRefusedBeforeCalling(t *testing.T) {
 	stub := &stubCaller{status: 200, resp: `{}`}
-	res := call(t, stub, "workgraph_file_work", map[string]any{"brief": "   "})
+	res := call(t, stub, "workgraph_beads_file", map[string]any{"project": "   "})
 	if !res.IsError {
-		t.Fatal("an empty brief was accepted")
+		t.Fatal("a plan with no project was accepted")
 	}
 	if stub.method != "" {
 		t.Errorf("it called %s %s anyway", stub.method, stub.path)
@@ -325,7 +321,7 @@ func TestAnEmptyBriefIsRefusedBeforeCalling(t *testing.T) {
 }
 
 // The observer sees the tool name and the outcome, and is not given the
-// arguments at all — it cannot leak a brief because it never receives one.
+// arguments at all — it cannot leak a plan because it never receives one.
 func TestTheObserverSeesTheOutcomeAndNotTheArguments(t *testing.T) {
 	var gotTool string
 	var gotRefusal Refusal
@@ -336,8 +332,11 @@ func TestTheObserverSeesTheOutcomeAndNotTheArguments(t *testing.T) {
 			gotTool, gotRefusal = tool, r
 		},
 	})
-	callOn(t, s, "workgraph_file_work", map[string]any{"brief": "a secret brief nobody should log"})
-	if gotTool != "workgraph_file_work" {
+	callOn(t, s, "workgraph_beads_file", map[string]any{
+		"project": "msf",
+		"beads":   []any{map[string]any{"ref": "a", "title": "a secret title nobody should log"}},
+	})
+	if gotTool != "workgraph_beads_file" {
 		t.Errorf("the observer saw tool %q", gotTool)
 	}
 	if gotRefusal != RefusalPolicy {
