@@ -272,3 +272,115 @@ func TestContractPinnedVersion(t *testing.T) {
 		t.Error("versions.lock no longer pins bd v1.0.4; the contract tests need revisiting")
 	}
 }
+
+// Acceptance criteria survive the round trip through the real bd.
+//
+// A bead filed from outside -- by a person planning in their own tool rather
+// than by a planning agent -- is only actionable if it says what finishing
+// looks like. An agent given a title and no acceptance invents one, and then
+// closes the bead against the criteria it invented.
+//
+// Asserted against the real binary because the flag is bd's, not ours: if a
+// future bd renames --acceptance, this fails here instead of silently
+// dropping the field on every bead anyone files.
+func TestContractCreateCarriesAcceptance(t *testing.T) {
+	c, db := newTestDB(t)
+	ctx := context.Background()
+
+	ref, err := c.Create(ctx, db, Issue{
+		Title:      "a bead filed from outside",
+		Type:       "task",
+		Priority:   1,
+		Acceptance: "1) the endpoint answers 200. 2) the test names the case.",
+		Design:     "reuse the existing adapter rather than adding a second one",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := c.Get(ctx, ref)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Title != "a bead filed from outside" {
+		t.Errorf("title = %q", got.Title)
+	}
+	// bd is the authority on where it stores these; what must hold is that
+	// they were accepted and are visible on the bead somewhere a reader will
+	// find them.
+	show, err := c.run(ctx, db, "show", ref.BeadID)
+	if err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	body := string(show)
+	if !strings.Contains(body, "the endpoint answers 200") {
+		t.Errorf("the acceptance criteria are not on the bead:\n%s", body)
+	}
+	if !strings.Contains(body, "reuse the existing adapter") {
+		t.Errorf("the design note is not on the bead:\n%s", body)
+	}
+}
+
+// Re-filing the same plan revises beads instead of duplicating them.
+//
+// Planning is moving out of the platform, and a person who re-plans in their
+// own tool knows their own names for things -- "scaffold", "deploy" -- not
+// that the platform called them sa-7dc and sa-fj3. So a filing carries the
+// planner's key in bd's external_ref, and this is the lookup that makes
+// re-filing an update rather than a second bead.
+func TestContractExternalRefIsAnUpsertKey(t *testing.T) {
+	c, db := newTestDB(t)
+	ctx := context.Background()
+
+	const key = "plan:msf/scaffold"
+	first, err := c.Create(ctx, db, Issue{
+		Title: "Scaffold the portal", Type: "task", ExternalRef: key,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	found, ok, err := c.ByExternalRef(ctx, db, key)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if !ok {
+		t.Fatal("a bead filed with an external ref cannot be found by it, so every " +
+			"re-plan would file duplicates")
+	}
+	if found.Ref.BeadID != first.BeadID {
+		t.Errorf("found %s, filed %s", found.Ref.BeadID, first.BeadID)
+	}
+
+	// The revision path: same key, new content, same bead.
+	if err := c.Update(ctx, first, Issue{
+		Title:      "Scaffold the portal (revised)",
+		Acceptance: "1) it builds. 2) the landing page renders.",
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	again, err := c.Get(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Title != "Scaffold the portal (revised)" {
+		t.Errorf("the revision did not take: %q", again.Title)
+	}
+
+	// A key nobody filed is the CREATE branch, not an error.
+	if _, ok, err := c.ByExternalRef(ctx, db, "plan:msf/never-filed"); err != nil {
+		t.Errorf("an unknown key is an error rather than a miss: %v", err)
+	} else if ok {
+		t.Error("an unknown key matched something")
+	}
+
+	// And a closed bead is still found, or a re-plan would duplicate every
+	// bead that has already been finished -- the worst answer available: the
+	// work is done and the graph now says it is not.
+	if err := c.Close(ctx, first, "done for the test"); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, ok, err := c.ByExternalRef(ctx, db, key); err != nil || !ok {
+		t.Errorf("a closed bead is invisible to the upsert key (ok=%v, err=%v)", ok, err)
+	}
+}

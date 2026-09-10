@@ -43,8 +43,17 @@ type Issue struct {
 	Type        string
 	Status      string
 	Priority    int
-	Labels      []string
-	Assignee    string
+	// Acceptance is what "done" means for this bead, in the field bd keeps
+	// for it. Carried because a bead filed from outside -- by a person
+	// planning in their own tool -- is only actionable if it says what
+	// finishing looks like, and an agent that has to infer that invents it.
+	Acceptance string
+	// Design is the how, when the filer has an opinion about it. Separate
+	// from Description so that "what to do" and "how it was decided" do not
+	// have to be one paragraph.
+	Design   string
+	Labels   []string
+	Assignee string
 	// Due is the date the work is expected by, if the source named one. Zero
 	// means no due date rather than "today".
 	Due time.Time
@@ -191,6 +200,45 @@ func (c *CLIClient) ByLabel(ctx context.Context, db DatabaseRef, label string) (
 	return c.decodeIssues(out, db)
 }
 
+// ByExternalRef finds the bead a previous filing created for this key, if any.
+//
+// The upsert key for planning done outside the platform. A person re-planning
+// in their own tool knows their own names for things -- "scaffold", "deploy"
+// -- and does not know, and should not have to track, that the platform
+// called them sa-7dc and sa-fj3. So a filing carries the planner's key in
+// bd's external_ref, and re-filing the same key revises that bead instead of
+// making a second one.
+//
+// Matched client-side over `bd list`, because bd has no query for this field.
+// That is linear in the graph's size and the graph is a few hundred beads, so
+// it is cheap enough; a graph large enough for it to hurt needs an index in
+// bd, not a cleverer loop here.
+//
+// Returns the zero Issue and false when nothing matches, which is the CREATE
+// branch of the upsert rather than an error.
+func (c *CLIClient) ByExternalRef(ctx context.Context, db DatabaseRef, key string) (Issue, bool, error) {
+	if strings.TrimSpace(key) == "" {
+		return Issue{}, false, errors.New("an external-ref lookup needs a key")
+	}
+	// --all, so a closed bead is found too. Without it a re-plan would file a
+	// duplicate of every bead already finished, which is the worst possible
+	// answer: the work is done and the graph now says it is not.
+	out, err := c.run(ctx, db, "list", "--all", "--json")
+	if err != nil {
+		return Issue{}, false, err
+	}
+	issues, err := c.decodeIssues(out, db)
+	if err != nil {
+		return Issue{}, false, err
+	}
+	for _, i := range issues {
+		if i.ExternalRef == key {
+			return i, true, nil
+		}
+	}
+	return Issue{}, false, nil
+}
+
 // Get returns one issue.
 func (c *CLIClient) Get(ctx context.Context, ref domain.WorkRef) (Issue, error) {
 	if err := ref.Validate(); err != nil {
@@ -231,6 +279,12 @@ func (c *CLIClient) Create(ctx context.Context, db DatabaseRef, issue Issue) (do
 	}
 	if issue.Priority > 0 {
 		args = append(args, "--priority", strconv.Itoa(issue.Priority))
+	}
+	if issue.Acceptance != "" {
+		args = append(args, "--acceptance", issue.Acceptance)
+	}
+	if issue.Design != "" {
+		args = append(args, "--design", issue.Design)
 	}
 	if len(issue.Labels) > 0 {
 		args = append(args, "--labels", strings.Join(issue.Labels, ","))
@@ -278,6 +332,41 @@ func (c *CLIClient) Update(ctx context.Context, ref domain.WorkRef, issue Issue)
 	}
 	if issue.Assignee != "" {
 		args = append(args, "--assignee", issue.Assignee)
+	}
+	// The fields a re-plan actually changes.
+	//
+	// Update took status, title and assignee, which is enough to move a bead
+	// along and not enough to REVISE one. Planning is moving out of the
+	// platform, so a person re-planning in their own tool needs the same
+	// filing to change what a bead says -- otherwise revising means closing
+	// the old bead and filing a new one, which throws away its id, its
+	// history and every dependency pointing at it.
+	//
+	// Empty means "leave alone" rather than "clear", deliberately: a plan
+	// that omits a field is not asking for it to be deleted, and an upsert
+	// that blanked the acceptance criteria of every bead it did not mention
+	// would be worse than no upsert.
+	if issue.Description != "" {
+		args = append(args, "--description", issue.Description)
+	}
+	if issue.Priority > 0 {
+		args = append(args, "--priority", strconv.Itoa(issue.Priority))
+	}
+	if issue.Acceptance != "" {
+		args = append(args, "--acceptance", issue.Acceptance)
+	}
+	if issue.Design != "" {
+		args = append(args, "--design", issue.Design)
+	}
+	if issue.ExternalRef != "" {
+		args = append(args, "--external-ref", issue.ExternalRef)
+	}
+	// Added, never replaced. bd has --add-label and --remove-label rather
+	// than a set operation, and a filing that silently dropped labels it did
+	// not know about would take the project label off every bead the moment
+	// somebody filed from a tool that does not know about project labels.
+	for _, l := range issue.Labels {
+		args = append(args, "--add-label", l)
 	}
 	if len(args) == 2 {
 		return errors.New("update was asked to change nothing")
