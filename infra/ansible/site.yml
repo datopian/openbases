@@ -50,6 +50,35 @@
           --skip-tags binaries.
         success_msg: "{{ built.matched }} binaries ready to install"
 
+    # Present is not the same as current.
+    #
+    # A deploy of the filing endpoint installed binaries built before the
+    # merge: fifteen files were there, the count guard passed, ansible
+    # reported failed=0, and the node went on running the previous build --
+    # visible only because migrate said "found 99" when the repository held
+    # a hundred. Counting files cannot tell a fresh build from a stale one.
+    - name: Find the newest source file
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../.."
+        patterns: ["*.go", "*.sql"]
+        excludes: ["*_test.go"]
+        recurse: true
+      register: sources
+      failed_when: false
+
+    - name: The binaries must be newer than the code they were built from
+      vars:
+        newest_binary: "{{ built.files | map(attribute='mtime') | max | default(0) }}"
+        newest_source: "{{ sources.files | map(attribute='mtime') | max | default(0) }}"
+      ansible.builtin.assert:
+        that: newest_binary | float >= newest_source | float
+        fail_msg: >-
+          {{ workgraph_build_dir }} is older than the source it was built
+          from, so this deploy would install the PREVIOUS build and report
+          success. Run `make build-linux` and deploy again.
+        success_msg: >-
+          the build is newer than every source file
+
 - name: Harden every node
   hosts: all
   become: false          # cloud-init leaves us as root; no sudo layer to add
