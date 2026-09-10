@@ -14,14 +14,22 @@ watching an autonomous run, and the code expires in minutes.
    shell is the cell user, so the blast radius is exactly what the token is
    allowed to do.
 
-2. Add it to the encrypted secrets, which live in git as ciphertext:
+2. Add it to the encrypted secrets, which live in git as ciphertext.
+
+   `sops` needs to be told where the private key is — the wrapper sets this
+   for itself, so a bare `sops` fails with *"identity did not match any of the
+   recipients"*:
 
    ```
+   export SOPS_AGE_KEY_FILE=~/.config/datopian-workgraph/age-workgraph.key
    sops infra/secrets/staging.enc.yaml
    ```
 
+   The key in the file is lower case, like every other key in it. The mapping
+   to the environment variable Ansible reads lives in `with_secrets.sh`:
+
    ```yaml
-   PORTALJS_TOKEN: arc_...
+   portaljs_token: arc_...
    ```
 
 3. Deploy. The gastown role writes it to
@@ -54,6 +62,15 @@ narrower grant.
 If a direct-to-Cloudflare path is ever needed, mint a *separate* token limited
 to Workers Scripts:Edit and one bucket on one account. Never reuse the
 terraform one.
+
+## Why two names for one secret
+
+The file key is `portaljs_token` and the environment variable is
+`PORTALJS_TOKEN`, mapped by hand in `scripts/with_secrets.sh`. That mapping is
+written out rather than derived so a rename is a visible edit — and its cost is
+that a forgotten line makes the lookup resolve to `""` on every deploy, so the
+credential is silently never installed. `check_infra.py` now fails when a
+`lookup('env', ...)` in `group_vars` has no matching export.
 
 ## Rotating
 
