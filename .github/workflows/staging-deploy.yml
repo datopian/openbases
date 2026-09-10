@@ -1,35 +1,42 @@
 name: staging-deploy
 
 # Every merge to main deploys automatically to staging (plan section 16.4).
+#
+# EXCEPT THAT IT DOES NOT, TODAY. This workflow queues forever and deploys
+# nothing; staging is deployed by hand. The first line stayed true-sounding for
+# two days while every run sat pending, so it is contradicted here rather than
+# quietly left. See the block below, and docs/runbooks/deploying.md.
 # The job is gated on the staging environment actually existing: until WP-B1
 # provisions it, the job skips rather than reporting a deployment that did not
 # happen.
 
 # ---------------------------------------------------------------------------
-# THIS WORKFLOW CANNOT RUN WHILE THE REPOSITORY IS PUBLIC. Decided 2026-09-08.
+# THIS WORKFLOW CANNOT RUN WHILE THE REPOSITORY IS PUBLIC. Decided 2026-09-08,
+# and unlike the other three, still true on 2026-09-10.
 #
 # It needs a self-hosted runner, and the org runner group sets
 # allows_public_repositories=false. That flag gates on repository VISIBILITY,
 # not on the trigger -- so it blocks this workflow even though no fork can
-# trigger it (a fork cannot push to main, and schedules only ever run on the
-# base repository's default branch). Jobs queue indefinitely against idle
-# runners rather than failing, which is why this notice is here and not in a
-# commit message somebody would have to find.
+# trigger it. Jobs queue indefinitely against idle runners rather than failing.
 #
-# The alternative was allows_public_repositories=true, with pull-request CI
-# already moved to GitHub's hosted fleet and fork runs gated on maintainer
-# approval. That was declined deliberately: no fork code on Datopian machines,
-# at the price of these workflows.
+# external-probe, main-push-guard and toolchain-upgrade moved to GitHub's
+# hosted fleet, because none of them touches this infrastructure. This one
+# cannot follow them: it runs ansible against the nodes through an SSH
+# ProxyCommand, and it needs scripts/with_secrets.sh, which needs the age
+# private key. Putting that key in GitHub would hand every secret this project
+# has to whoever compromises an Actions runner -- a strictly worse trade than
+# deploying by hand.
 #
-# Deploy by hand instead:
+# So deploys are manual, and that is a deliberate position rather than a gap
+# waiting to be filled:
 #
 #   cd infra/ansible
 #   ../../scripts/with_secrets.sh staging \
-#     ansible-playbook -i inventory/staging.yml site.yml --tags code
+#     ansible-playbook -i inventory/staging.yml site.yml
 #
-# Run it from infra/ansible (ansible.cfg carries the ProxyCommand that
-# reaches the nodes) and through with_secrets.sh, or it fails on an empty
-# postgres password. Expect the Access tunnel to drop; re-run.
+# What would change it: a self-hosted runner in a group that permits public
+# repositories, holding no fork code -- which is an org-level decision about
+# runner isolation, not a change to this file.
 # ---------------------------------------------------------------------------
 
 on:

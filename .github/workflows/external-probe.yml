@@ -17,23 +17,35 @@ name: external-probe
 # naive version of this check is theatre.
 
 # ---------------------------------------------------------------------------
-# THIS WORKFLOW CANNOT RUN WHILE THE REPOSITORY IS PUBLIC. Decided 2026-09-08.
+# Runs on GitHub's hosted fleet, not on a Datopian machine. Changed 2026-09-10.
 #
-# It needs a self-hosted runner, and the org runner group sets
-# allows_public_repositories=false. That flag gates on repository VISIBILITY,
-# not on the trigger -- so it blocks this workflow even though no fork can
-# trigger it (a fork cannot push to main, and schedules only ever run on the
-# base repository's default branch). Jobs queue indefinitely against idle
-# runners rather than failing, which is why this notice is here and not in a
-# commit message somebody would have to find.
+# It was self-hosted, and when the repository went public the org runner group
+# blocked it: allows_public_repositories=false gates on repository VISIBILITY,
+# not on the trigger, so the job queued against idle runners forever rather
+# than failing. Nothing watched staging for two days, and nothing said so --
+# 24 runs were sitting queued when someone finally looked.
 #
-# The alternative was allows_public_repositories=true, with pull-request CI
-# already moved to GitHub's hosted fleet and fork runs gated on maintainer
-# approval. That was declined deliberately: no fork code on Datopian machines,
-# at the price of these workflows.
+# The choice at the time was framed as "allow public repositories on the
+# runner group, or lose the probe", and losing it was chosen: no fork code on
+# Datopian machines. That framing had a third option in it. This job is curl
+# with two headers. It never needed a Datopian machine.
 #
-# CONSEQUENCE: there is no external monitoring while this is blocked.
-# Nothing is watching staging from outside, and nothing will say so.
+# The original reason for self-hosted was cost -- "a hosted runner cannot start
+# once the Actions spending limit is reached, and a prober that silently stops
+# is worse than no prober". That argument died when the repository went public:
+# standard hosted runners are free for public repositories, which is why pull
+# request CI already runs on this same label.
+#
+# And it makes the probe BETTER on its own terms. The old note admitted the
+# self-hosted prober sat in a different Hetzner project but the same provider,
+# so a Hetzner-wide outage would take the node and the prober together. A
+# GitHub-hosted runner is a different provider entirely, which closes exactly
+# that gap.
+#
+# staging-deploy stays self-hosted and stays blocked: it needs the age key and
+# SSH to the nodes, and moving it here would mean putting the key that
+# decrypts every secret into GitHub. Deploys are run by hand through
+# scripts/with_secrets.sh, which is what has been happening anyway.
 # ---------------------------------------------------------------------------
 
 on:
@@ -50,16 +62,10 @@ permissions:
 jobs:
   probe:
     name: the control node answers from outside itself
-    # Self-hosted, like everything else here: a hosted runner cannot start once
-    # the Actions spending limit is reached, and a prober that silently stops is
-    # worse than no prober.
-    #
-    # It is a different machine in a different Hetzner project, so it satisfies
-    # "nothing on the node participates". It is not a different PROVIDER, and a
-    # Hetzner-wide outage would take both. That residual gap is stated here
-    # rather than left to be discovered: closing it needs a prober somewhere
-    # else entirely, which is a vendor decision rather than a code change.
-    runs-on: self-hosted
+    # Hosted, and off Datopian infrastructure entirely -- see the note at the
+    # top. "Nothing on the node participates" is satisfied more completely than
+    # it was by a second Hetzner project.
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: probe /health/ready through Access
         env:

@@ -46,7 +46,10 @@ permissions:
 jobs:
   check:
     name: check for newer pinned versions
-    runs-on: self-hosted
+    # Hosted: this job only compares versions.lock against upstream releases, so it never needed a Datopian
+    # machine -- and while it was self-hosted the public-repository rule on
+    # the runner group left it queued forever instead of running.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
