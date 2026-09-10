@@ -53,6 +53,7 @@ type WorkItem struct {
 	// but "what does finishing it release".
 	Blocking []string `json:"blocking,omitempty"`
 	// Outcome is what happened to it: never_dispatched, queued, running,
+	// closed_unlanded (closed, and nothing reached the repository),
 	// failed, landed, blocked or done.
 	//
 	// Carried per row because a list that cannot say this shows a bead that

@@ -690,6 +690,41 @@ def check_every_ansible_secret_is_exported_by_the_deploy() -> None:
                 f"Add: export {name}=\"$(read_key <key_in_the_sops_file>)\"")
 
 
+def check_no_unit_derives_a_username_from_an_instance_name() -> None:
+    """A systemd template unit must not build a Linux user out of `%i`.
+
+    Cell accounts replace dashes with underscores -- `client-nged` is served by
+    `wgcell_client_nged` -- because a dash is not portable in a username. A
+    template unit cannot do that substitution: systemd has no string
+    transform, so `User=wgcell_%i` asks for `wgcell_client-nged`, which does
+    not exist.
+
+    The service then dies with 217/USER on every start and sits in
+    `activating (auto-restart)` forever. Nothing alerts on that. The
+    deterministic witness had not run on either client cell since it was
+    installed -- so nothing was reaping stalled polecats or nuking finished
+    sandboxes there -- and the only symptom was a status nobody had looked at.
+
+    Ansible can do the substitution, and does it everywhere else. The rule is
+    therefore: derive the account in Jinja and render one unit per cell, the
+    way the dispatcher and the witness both now do.
+    """
+    roles = ROOT / "infra" / "ansible" / "roles"
+    pattern = re.compile(r"^\s*User\s*=\s*(\S*%i\S*)\s*$", re.M)
+    for path in sorted(roles.rglob("*")):
+        if not path.is_file() or path.suffix not in {".yml", ".yaml", ".j2", ".service"}:
+            continue
+        for match in pattern.finditer(path.read_text()):
+            problems.append(
+                f"{path.relative_to(ROOT)}: `User={match.group(1)}` builds a Linux "
+                f"account from a systemd instance name. A cell slug with a dash "
+                f"("
+                f"client-nged) does not match its account (wgcell_client_nged), so "
+                f"the unit fails 217/USER on every start and restart-loops in "
+                f"silence. Render one unit per cell and derive the account with "
+                f"`| replace('-', '_')`.")
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -707,6 +742,7 @@ def main() -> int:
         check_every_installed_binary_has_a_source,
         check_restart_handlers_can_fire_on_a_tagged_deploy,
         check_a_job_deadline_stays_under_the_cell_ceiling,
+        check_no_unit_derives_a_username_from_an_instance_name,
         check_every_ansible_secret_is_exported_by_the_deploy,
     ):
         check()

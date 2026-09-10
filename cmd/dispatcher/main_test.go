@@ -654,3 +654,60 @@ func TestTheBodySaysTheShapeOfTheChangeAndWhyTheRunEnded(t *testing.T) {
 		t.Errorf("an empty change reads as %q", got)
 	}
 }
+
+// A shutdown records the outcome instead of stranding the job.
+//
+// The report is the one call that closes the row, and it was made with the
+// same context SIGTERM cancels. So a dispatcher restart killed the run and
+// then failed to report it -- instantly, "context canceled" -- leaving the
+// job `running` for ever with a frozen heartbeat and no process behind it.
+//
+// Every deploy restarts the dispatcher, so every deploy stranded whatever was
+// in flight. A filing job orphaned at 11:59 still read `running` twenty-four
+// minutes later, and the person who filed it saw no beads, no error, and a
+// status claiming it was working.
+func TestAShutdownRecordsTheOutcomeRatherThanStrandingTheJob(t *testing.T) {
+	var reported []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/result") || strings.Contains(r.URL.Path, "result") {
+			b, _ := io.ReadAll(r.Body)
+			reported = append(reported, string(b))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	d := &dispatcher{
+		api: srv.URL, cell: "oss", http: srv.Client(),
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	// A context already cancelled, which is exactly the state the run loop is
+	// in the instant after SIGTERM.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// The old code passed this ctx straight to report, and the request never
+	// left the process.
+	d.report(outcomeCtx(ctx), "j-stranded", work.Result{OK: false, Output: "killed"})
+
+	if len(reported) == 0 {
+		t.Fatal("the outcome was not reported on a cancelled context: the job stays " +
+			"`running` for ever, which is the bug")
+	}
+
+	// And the record says a stop was a stop, rather than looking like the run
+	// failed on its own merits.
+	note := shutdownNote(ctx, "partial output", nil)
+	if !strings.Contains(note, "dispatcher was stopped") {
+		t.Errorf("the record does not say the run was interrupted: %q", note)
+	}
+	if !strings.Contains(note, "partial output") {
+		t.Errorf("the run's own output was discarded: %q", note)
+	}
+	// An uncancelled context must not have the note bolted on.
+	if got := shutdownNote(context.Background(), "clean output", nil); got != "clean output" {
+		t.Errorf("a normal run was annotated as interrupted: %q", got)
+	}
+}

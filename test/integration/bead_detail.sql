@@ -59,18 +59,41 @@ BEGIN
                               ARRAY['wg-project-detail-proj']);
   PERFORM system_project_bead('detail-cell', 'dt-fresh', 'Never run', 'task', 'open',
                               ARRAY['wg-project-detail-proj']);
+  -- Closed, ran successfully, and nothing reached the repository. sa-iyu was
+  -- exactly this and reported `done` while 29 finished files sat uncommitted
+  -- on a node.
+  PERFORM system_project_bead('detail-cell', 'dt-unlanded', 'Closed, nothing landed',
+                              'task', 'closed', ARRAY['wg-project-detail-proj']);
 
   INSERT INTO work_queue (kind, cell, rig, bead, status, project_id, finished_at, result)
   VALUES ('work', 'detail-cell', 'sandbox', 'dt-done', 'done', proj, now(), 'ok'),
          ('work', 'detail-cell', 'sandbox', 'dt-blocked', 'done', proj, now(), 'ran, did nothing'),
-         ('work', 'detail-cell', 'sandbox', 'dt-failed', 'failed', proj, now(), 'boom');
+         ('work', 'detail-cell', 'sandbox', 'dt-failed', 'failed', proj, now(), 'boom'),
+         ('work', 'detail-cell', 'sandbox', 'dt-unlanded', 'done', proj, now(), 'ok');
+
+  -- `done` requires a pull request as well as a closed bead, so dt-done needs
+  -- one. Without it dt-done and dt-unlanded are the same row set, which is
+  -- precisely the confusion this distinction removes.
+  INSERT INTO bead_pull_requests (bead, execution_cell_id, rig, provider, owner, name,
+                                  number, url, head, base)
+  VALUES ('dt-done', cell, 'sandbox', 'github', 'datopian', 'probe', 1,
+          'https://github.com/datopian/probe/pull/1', 'bead/dt-done', 'main');
 
   PERFORM set_config('workgraph.user_id', u::text, true);
 
-  -- A run that succeeded AND closed the bead is the only `done`.
+  -- A run that succeeded, closed the bead, AND landed something is `done`.
   d := system_bead_detail('dt-done');
   IF d->>'outcome' <> 'done' THEN
-    RAISE EXCEPTION 'a closed bead after a successful run is %, want done', d->>'outcome';
+    RAISE EXCEPTION 'a closed bead whose work landed is %, want done', d->>'outcome';
+  END IF;
+
+  -- Closed, successful, and nothing in the repository. Not a failure -- a bead
+  -- needing no code change looks like this -- but it must not read as `done`,
+  -- which is what let sa-iyu report success with its work uncommitted.
+  d := system_bead_detail('dt-unlanded');
+  IF d->>'outcome' <> 'closed_unlanded' THEN
+    RAISE EXCEPTION 'a closed bead that landed nothing is %, want closed_unlanded',
+      d->>'outcome';
   END IF;
 
   -- THE CASE THIS EXISTS FOR. The run exited 0 and the bead is still open, so

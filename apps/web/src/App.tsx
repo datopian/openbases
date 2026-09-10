@@ -554,7 +554,14 @@ export function ProjectWork({
                   has picked up -- which is what sent somebody to dispatch it
                   again.
                 */}
-                {(w.outcome === "blocked" || w.outcome === "failed") && (
+                {(w.outcome === "blocked" ||
+                  w.outcome === "failed" ||
+                  // Closed with nothing in the repository. Not an
+                  // error -- a bead needing no code change closes
+                  // this way -- but sa-iyu closed like this with 29
+                  // finished files uncommitted on a node, and the
+                  // list said nothing at all.
+                  w.outcome === "closed_unlanded") && (
                   <span
                     style={{ ...css.muted, fontSize: "0.75rem", color: "#8a1c1c" }}
                     title={

@@ -177,7 +177,7 @@ func (d *dispatcher) pass(ctx context.Context) {
 	}
 	if err := job.Validate(); err != nil {
 		d.log.Error("refusing an unrunnable job", "job", job.ID, "error", err)
-		d.report(ctx, job.ID, work.Result{OK: false, Output: err.Error()})
+		d.report(outcomeCtx(ctx), job.ID, work.Result{OK: false, Output: err.Error()})
 		return
 	}
 
@@ -194,7 +194,7 @@ func (d *dispatcher) pass(ctx context.Context) {
 		// Reported as the job's failure rather than swallowed: the work cannot
 		// run, and a job left claimed with no explanation is worse than one
 		// that says the checkout could not be made.
-		d.report(ctx, job.ID, work.Result{OK: false,
+		d.report(outcomeCtx(ctx), job.ID, work.Result{OK: false,
 			Output: "the repository for this work could not be checked out: " + err.Error()})
 		return
 	}
@@ -292,7 +292,25 @@ func (d *dispatcher) pass(ctx context.Context) {
 		d.landWork(ctx, *job, jobRig, out, tree, checked, runErr)
 	}
 
-	d.report(ctx, job.ID, work.Result{OK: runErr == nil, Output: out})
+	// Reported on a context that SHUTDOWN CANNOT CANCEL.
+	//
+	// This is the one call that closes the row, and it was made with the same
+	// ctx that SIGTERM cancels. So a dispatcher restart killed the run, and
+	// then the report of that failure failed too, instantly, with "context
+	// canceled" -- leaving the job `running` for ever with a frozen
+	// heartbeat, no process behind it and nothing to say so.
+	//
+	// A deploy restarts the dispatcher, so every deploy silently stranded
+	// whatever was in flight. A filing job orphaned at 11:59 on 2026-09-10
+	// still read `running` twenty-four minutes later, and the person who
+	// filed it had no way to tell it was dead: no beads appeared, no error
+	// appeared, and the status said it was working.
+	//
+	// The outcome outlives the shutdown that caused it.
+	d.report(outcomeCtx(ctx), job.ID, work.Result{
+		OK:     runErr == nil,
+		Output: shutdownNote(ctx, out, runErr),
+	})
 	if runErr != nil {
 		d.log.Error("job failed", "job", job.ID, "error", runErr)
 	} else {
@@ -483,6 +501,40 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 			d.heartbeat(ctx, job.ID, buf.progress()+touched(job.Checkout))
 		}
 	}
+}
+
+// outcomeCtx is a context for recording what happened, detached from the one
+// that may have just caused it.
+//
+// Everything else a dispatcher does should stop when it is asked to stop.
+// Recording an outcome is the exception: the row is already claimed, and
+// abandoning it mid-shutdown is what leaves a job `running` for ever.
+//
+// Bounded, because "cannot be cancelled" must not mean "can hang": a control
+// plane that does not answer delays the exit by this much and no more.
+func outcomeCtx(ctx context.Context) context.Context {
+	out, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	// The caller reports and returns immediately; the timeout is the real
+	// bound and this only releases the timer.
+	_ = cancel
+	return out
+}
+
+// shutdownNote says a stop was a stop, in the text a person reads on the bead.
+//
+// Without it the record is whatever the killed process had buffered -- often
+// nothing -- and the run looks like it failed on its own merits rather than
+// having been interrupted by a deploy.
+func shutdownNote(ctx context.Context, out string, runErr error) string {
+	if ctx.Err() == nil {
+		return out
+	}
+	note := "the dispatcher was stopped (deploy or restart) and this run was " +
+		"interrupted; it did not fail on its own. Re-dispatch it."
+	if strings.TrimSpace(out) == "" {
+		return note
+	}
+	return out + "\n\n" + note
 }
 
 // syncBuffer collects the run's output and can be read while it is being

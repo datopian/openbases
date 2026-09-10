@@ -60,7 +60,11 @@ BEGIN
          (org, graph, cell, 'oc-failed', 'failed',           'task', 'open'),
          (org, graph, cell, 'oc-landed', 'in a pull request','task', 'open'),
          (org, graph, cell, 'oc-blocked','ran, no delivery', 'task', 'open'),
-         (org, graph, cell, 'oc-done',   'finished',         'task', 'closed');
+         (org, graph, cell, 'oc-done',   'finished',         'task', 'closed'),
+         -- Closed, and nothing reached the repository. sa-iyu closed exactly
+         -- like this while 29 finished files sat uncommitted on a node, and
+         -- every surface reported `done`.
+         (org, graph, cell, 'oc-unlanded','closed, nothing landed','task','closed');
 
   INSERT INTO work_queue (kind, cell, rig, bead, status, requested_by)
   VALUES ('work','out-cell','r','oc-queued', 'queued',  u),
@@ -68,7 +72,8 @@ BEGIN
          ('work','out-cell','r','oc-failed', 'failed',  u),
          ('work','out-cell','r','oc-landed', 'done',    u),
          ('work','out-cell','r','oc-blocked','done',    u),
-         ('work','out-cell','r','oc-done',   'done',    u);
+         ('work','out-cell','r','oc-done',   'done',    u),
+         ('work','out-cell','r','oc-unlanded','done',    u);
 
   -- `landed` is the branch that must come BEFORE the closed check: an open
   -- bead whose work is in a pull request is awaiting review, not stuck.
@@ -76,7 +81,12 @@ BEGIN
   INSERT INTO bead_pull_requests (bead, execution_cell_id, rig, provider, owner, name,
                                   number, url, head, base)
   VALUES ('oc-landed', cell, 'r', 'github', 'datopian', 'probe', 1,
-          'https://github.com/datopian/probe/pull/1', 'bead/oc-landed', 'main');
+          'https://github.com/datopian/probe/pull/1', 'bead/oc-landed', 'main'),
+         -- `done` now requires this row as well as a closed bead. Without it
+         -- oc-done is indistinguishable from oc-unlanded, which is the whole
+         -- point of the distinction.
+         ('oc-done', cell, 'r', 'github', 'datopian', 'probe', 2,
+          'https://github.com/datopian/probe/pull/2', 'bead/oc-done', 'main');
 
   SELECT g.user_id INTO admin
     FROM role_grants g
@@ -92,7 +102,8 @@ BEGIN
       SELECT * FROM (VALUES
         ('oc-never','never_dispatched'), ('oc-queued','queued'),
         ('oc-running','running'), ('oc-failed','failed'),
-        ('oc-landed','landed'), ('oc-blocked','blocked'), ('oc-done','done')
+        ('oc-landed','landed'), ('oc-blocked','blocked'), ('oc-done','done'),
+        ('oc-unlanded','closed_unlanded')
       ) AS v(b, want)
   LOOP
       SELECT system_bead_outcome(b) INTO got_out;
