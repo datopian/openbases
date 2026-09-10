@@ -624,32 +624,52 @@
   notify: Restart the witness
   tags: [binaries, code]
 
-- name: Install the witness unit
+# One unit per cell, rendered here -- NOT a systemd template unit.
+#
+# It was `wg-witness@.service` with `User=wgcell_%i`, and that is broken for
+# every cell whose slug contains a dash. systemd substitutes the instance name
+# verbatim, so client-nged asked for the user `wgcell_client-nged` while the
+# account is `wgcell_client_nged`, and the service died with 217/USER on every
+# start. Two of the three cells on this node were affected; oss worked only
+# because its name has no dash.
+#
+# It failed silently, which is the part worth fixing rather than patching. A
+# unit in `activating (auto-restart)` produces no alert and no red anywhere,
+# so the deterministic witness -- the thing that reaps stalled polecats and
+# nukes finished sandboxes -- had not run on either client cell since it was
+# installed, and nothing said so.
+#
+# systemd has no string transform, so `%i` cannot be sanitised. Ansible can,
+# and already does for the dispatcher, whose units are rendered per cell for
+# exactly this reason. The witness now matches it.
+- name: Install the witness unit for each cell
   ansible.builtin.copy:
-    dest: /etc/systemd/system/wg-witness@.service
+    dest: "/etc/systemd/system/wg-witness-{{ item.name }}.service"
     owner: root
     group: root
     mode: "0644"
     content: |
-      # Managed by Ansible (ADR-0019). One instance per cell: wg-witness@oss.
+      # Managed by Ansible (ADR-0019). One unit per cell.
       [Unit]
-      Description=Deterministic polecat health monitor for cell %i
+      Description=Deterministic polecat health monitor for cell {{ item.name }}
       After=network-online.target
 
       [Service]
-      User=wgcell_%i
+      # The account name, not the cell slug: they differ whenever the slug has
+      # a dash, and getting this wrong is 217/USER on every start.
+      User=wgcell_{{ item.name | replace('-', '_') }}
       # HOME matters more than it looks: Dolt segfaults without one, and gt
       # shells out to Dolt. A witness that crashes on start is a witness that
       # is not watching.
-      Environment=HOME={{ cells_root }}/%i
+      Environment=HOME={{ cells_root }}/{{ item.name }}
       Environment=PATH=/usr/local/bin:/usr/bin:/bin
       # The cell's Access service token, so escalations can reach the control
       # plane. Absent, the witness still runs and logs its findings to the
       # journal rather than failing.
-      EnvironmentFile=-{{ cells_root }}/%i/.credentials/control-api.env
+      EnvironmentFile=-{{ cells_root }}/{{ item.name }}/.credentials/control-api.env
       ExecStart={{ witness_binary }} \
-        -town {{ cells_root }}/%i/town \
-        -cell %i \
+        -town {{ cells_root }}/{{ item.name }}/town \
+        -cell {{ item.name }} \
         -interval {{ witness_interval }} \
         -sweep {{ witness_sweep }} \
         -stall-after {{ witness_stall_after }} \
@@ -661,13 +681,37 @@
       PrivateTmp=true
       ProtectSystem=strict
       ProtectHome=false
-      ReadWritePaths={{ cells_root }}/%i
+      ReadWritePaths={{ cells_root }}/{{ item.name }}
 
       [Install]
       WantedBy=multi-user.target
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
   notify:
     - Reload systemd
     - Restart the witness
+
+# The template unit and its instances, removed.
+#
+# Left behind, `wg-witness@client-nged` stays enabled and keeps restart-looping
+# next to the unit that replaces it -- two services for one job, one of them
+# permanently failing.
+- name: Stop the old templated witness instances
+  ansible.builtin.systemd_service:
+    name: "wg-witness@{{ item.name }}.service"
+    enabled: false
+    state: stopped
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  failed_when: false
+
+- name: Remove the old witness template unit
+  ansible.builtin.file:
+    path: /etc/systemd/system/wg-witness@.service
+    state: absent
+  notify: Reload systemd
 
 - name: Check whether the witness binary is present
   ansible.builtin.stat:
@@ -676,7 +720,7 @@
 
 - name: Enable the witness for each cell
   ansible.builtin.systemd_service:
-    name: "wg-witness@{{ item.name }}.service"
+    name: "wg-witness-{{ item.name }}.service"
     enabled: true
     state: started
     daemon_reload: true
