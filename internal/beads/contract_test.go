@@ -320,3 +320,67 @@ func TestContractCreateCarriesAcceptance(t *testing.T) {
 		t.Errorf("the design note is not on the bead:\n%s", body)
 	}
 }
+
+// Re-filing the same plan revises beads instead of duplicating them.
+//
+// Planning is moving out of the platform, and a person who re-plans in their
+// own tool knows their own names for things -- "scaffold", "deploy" -- not
+// that the platform called them sa-7dc and sa-fj3. So a filing carries the
+// planner's key in bd's external_ref, and this is the lookup that makes
+// re-filing an update rather than a second bead.
+func TestContractExternalRefIsAnUpsertKey(t *testing.T) {
+	c, db := newTestDB(t)
+	ctx := context.Background()
+
+	const key = "plan:msf/scaffold"
+	first, err := c.Create(ctx, db, Issue{
+		Title: "Scaffold the portal", Type: "task", ExternalRef: key,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	found, ok, err := c.ByExternalRef(ctx, db, key)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if !ok {
+		t.Fatal("a bead filed with an external ref cannot be found by it, so every " +
+			"re-plan would file duplicates")
+	}
+	if found.Ref.BeadID != first.BeadID {
+		t.Errorf("found %s, filed %s", found.Ref.BeadID, first.BeadID)
+	}
+
+	// The revision path: same key, new content, same bead.
+	if err := c.Update(ctx, first, Issue{
+		Title:      "Scaffold the portal (revised)",
+		Acceptance: "1) it builds. 2) the landing page renders.",
+	}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	again, err := c.Get(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Title != "Scaffold the portal (revised)" {
+		t.Errorf("the revision did not take: %q", again.Title)
+	}
+
+	// A key nobody filed is the CREATE branch, not an error.
+	if _, ok, err := c.ByExternalRef(ctx, db, "plan:msf/never-filed"); err != nil {
+		t.Errorf("an unknown key is an error rather than a miss: %v", err)
+	} else if ok {
+		t.Error("an unknown key matched something")
+	}
+
+	// And a closed bead is still found, or a re-plan would duplicate every
+	// bead that has already been finished -- the worst answer available: the
+	// work is done and the graph now says it is not.
+	if err := c.Close(ctx, first, "done for the test"); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, ok, err := c.ByExternalRef(ctx, db, key); err != nil || !ok {
+		t.Errorf("a closed bead is invisible to the upsert key (ok=%v, err=%v)", ok, err)
+	}
+}
