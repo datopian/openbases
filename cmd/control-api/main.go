@@ -1412,69 +1412,6 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, out)
 	})
 
-	// Turn a brief into beads.
-	//
-	// Enqueued rather than run: the node claims it. That is not only an
-	// architectural necessity — it also means this returns immediately and the
-	// page can show the job moving through queued, running and done, rather than
-	// holding a request open for however long an agent takes.
-	authed.HandleFunc("POST /v1/work/plan", func(w http.ResponseWriter, r *http.Request) {
-		id, _ := authn.FromContext(r.Context())
-		if id.UserID == "" {
-			writeJSON(w, http.StatusForbidden, map[string]any{"error": "a user is required"})
-			return
-		}
-		var payload struct {
-			Brief   string `json:"brief"`
-			Cell    string `json:"cell"`
-			Rig     string `json:"rig"`
-			Project string `json:"project"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
-			return
-		}
-		if strings.TrimSpace(payload.Brief) == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "a brief is required"})
-			return
-		}
-		if strings.TrimSpace(payload.Cell) == "" {
-			payload.Cell = "oss"
-		}
-		if db == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
-			return
-		}
-		var jobID string
-		// id.UserID, never a user from the body: system_enqueue_work checks
-		// THAT user's membership of the project, so passing anything the
-		// caller supplied would make the check check nothing.
-		if err := db.QueryRowContext(r.Context(),
-			`SELECT system_enqueue_work('plan', $1, $2, NULL, $3, $4, $5)`,
-			payload.Cell, payload.Rig, payload.Brief, id.UserID,
-			nullableParam(strings.TrimSpace(payload.Project))).Scan(&jobID); err != nil {
-			// The function raises for an unknown project and for a requester
-			// who is not a member. Both are the caller's mistake and both are
-			// safe to name -- "not a member of project x" tells them nothing
-			// they did not just assert -- so this is a 400 with the reason
-			// rather than a 500 with "internal error".
-			msg := err.Error()
-			if strings.Contains(msg, "no project with the slug") ||
-				strings.Contains(msg, "is not a member of project") {
-				log.Info("plan refused", "by", id.UserID, "project", payload.Project, "reason", msg)
-				writeJSON(w, http.StatusBadRequest, map[string]any{
-					"error": "that project is not one you can file work into"})
-				return
-			}
-			log.Error("enqueueing a plan", "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
-			return
-		}
-		log.Info("plan enqueued", "job", jobID, "cell", payload.Cell,
-			"project", payload.Project, "by", id.UserID)
-		writeJSON(w, http.StatusAccepted, map[string]any{"job": jobID, "status": "queued"})
-	})
-
 	// Send one bead to an agent.
 	authed.HandleFunc("POST /v1/work/{bead}/dispatch", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := authn.FromContext(r.Context())

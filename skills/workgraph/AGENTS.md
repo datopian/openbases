@@ -17,7 +17,7 @@ them, and the attention inbox that says what needs a person.
 **Look at your own tool list first.** If you can see tools named
 `workgraph_inbox`, `workgraph_ask`, `workgraph_work_list`, `workgraph_bead`,
 `workgraph_project_list`, `workgraph_project_create`,
-`workgraph_repositories_attach`, `workgraph_file_work` and
+`workgraph_repositories_attach`, `workgraph_beads_file` and
 `workgraph_dispatch`, then Workgraph is already connected and **you should use
 those tools and stop reading this section.** They are the same operations the
 rest of this skill describes, they carry the person's own identity, and they
@@ -184,8 +184,9 @@ curl -sS -H "$AUTH" "$API/v1/work"                  # beads, queue state, spend
 curl -sS "$API/v1/openapi.json"                     # the contract; needs no token
 
 curl -sS -H "$AUTH" -H 'Content-Type: application/json' \
-  -X POST "$API/v1/work/plan" \
-  -d '{"brief":"...","project":"poc"}'              # spends money
+  -X POST "$API/v1/work/beads" \
+  -d '{"project":"poc","beads":[{"ref":"scaffold","title":"Scaffold the portal","acceptance":"npm run build passes"},{"ref":"deploy","title":"Deploy it","depends_on":["scaffold"]}]}'
+                                                    # costs nothing: no agent runs
 ```
 
 Branch on the HTTP status, which carries the same meanings as the exit codes
@@ -233,12 +234,19 @@ tool is unreliable.
 
 ```bash
 wg project list                                    # what you may file into
-wg work plan "one paragraph describing the outcome" --project <slug>
+wg work file plan.json --project <slug>            # costs nothing: no agent runs
 ```
 
+Planning happens in whatever you think in. Workgraph records the result: a
+list of beads with titles, acceptance criteria, priorities and the
+dependencies between them, filed in one call because a plan is a graph.
+`ref` is your own name for each bead and is the key a re-plan matches on, so
+re-filing revises those beads rather than duplicating them — re-plan as often
+as you like.
+
 A bead needs acceptance criteria — something that can be checked, not "make it
-better". If the user's brief has none, ask for one before filing. A bead nobody
-can close is worse than no bead.
+better". If the plan has none, add one before filing. A bead nobody can close
+is worse than no bead.
 
 **Ask which project before filing, and do not guess one.** Omitting `--project`
 files the beads company-wide, and company-wide means every colleague who can log
@@ -350,7 +358,7 @@ the user to do it in the interface.
 wg inbox                      # what needs me
 wg ask ["question"]           # chief of staff; no argument lists what it answers
 wg work list | queue          # what exists, what is queued, what it cost
-wg work plan "brief" [--project <slug>]   # queue a planning job (spends money)
+wg work file <plan.json> [--project <slug>]  # file a plan you made (free)
 wg work dispatch <bead>       # run one bead (spends money)
 wg project list | show <slug>
 wg tokens list                # this credential's siblings

@@ -207,19 +207,21 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// The beads that existed before the run, so the ones it creates can be
 	// identified afterwards and labelled with the job's project (wg-sjm).
 	//
-	// This replaces asking the agent to do it. internal/work's planning prompt
-	// says "Label every bead you create with `wg-project-<slug>`", and on
+	// This replaces asking the agent to do it. The planning prompt used to say
+	// "Label every bead you create with `wg-project-<slug>`", and on
 	// 4 September a plan job produced three beads with no labels at all: the
 	// instruction was followed by nobody and the beads were unattributable, so
-	// no project page could show them.
+	// no project page could show them. Planning has since left the platform
+	// entirely, but a work agent still creates beads as it goes, and they need
+	// the same label for the same reason.
 	//
 	// The project is known exactly when the job is enqueued -- work_queue
 	// carries it, verified against the requester's membership -- and routing a
 	// fact like that through a prompt and hoping it comes back is not a
 	// mechanism. It governs who may read the work.
 	//
-	// The prompt still asks, because a bead the agent labels itself is not
-	// wrong and costs nothing. Nothing depends on it.
+	// An agent that labels a bead itself is not wrong and costs nothing.
+	// Nothing depends on it.
 	//
 	// The job's OWN rig: the run works in the rig that holds the repository the
 	// bead is about, and the beads it creates land in that rig's graph, not in
@@ -482,12 +484,13 @@ func (d *dispatcher) rigFor(job work.Job) string {
 // deadline and the teardown. Nothing about how an agent is started belongs here.
 func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (string, error) {
 	rig := d.rigFor(job)
-	// A plan job has no bead of its own, so it needs a name for its run
-	// directory and its cost attribution. The job id is the honest one: the
-	// spend belongs to the act of planning, not to any bead it produces.
+	// Every job that reaches here has a bead -- Validate refuses a work job
+	// without one, and a file job never gets this far. The fallback stays as
+	// a name for the run directory and the cost record, because a run with no
+	// name at all writes its spend nowhere.
 	bead := job.Bead
 	if bead == "" {
-		bead = "plan-" + job.ID
+		bead = "job-" + job.ID
 	}
 
 	// The rig's canonical working tree, which is what `gt rig add` calls the

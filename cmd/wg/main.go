@@ -5,7 +5,7 @@
 //	wg inbox                    what needs me
 //	wg ask "what changed"       the chief-of-staff questions
 //	wg work list|queue          what work exists, and what it cost
-//	wg work plan "a brief" [--project <slug>]
+//	wg work file <plan.json> [--project <slug>]
 //	                            queue a planning job
 //	wg work dispatch wg-abc     run one bead
 //	wg project list|show <slug>
@@ -117,26 +117,35 @@ func run(cmd string, args []string, jsonOut bool) (int, error) {
 
 func work(args []string, jsonOut bool) (int, error) {
 	if len(args) == 0 {
-		return exitUsage, errors.New("wg work list|queue|plan|dispatch")
+		return exitUsage, errors.New("wg work list|queue|file|dispatch")
 	}
 	switch args[0] {
 	case "list":
 		return get("/v1/work", jsonOut, renderWork)
 	case "queue":
 		return get("/v1/work/queue", jsonOut, renderWork)
-	case "plan":
-		// A trailing --project <slug> rather than a leading flag, because the
-		// brief is a multi-word positional and a flag package would need the
-		// user to quote it differently from every other wg command.
+	case "file":
+		// Planning happens outside Workgraph now. You plan in whatever you
+		// think in, save the JSON, and this records it: no agent runs, so
+		// filing costs nothing and re-filing revises rather than duplicates.
 		rest, project := takeProject(args[1:])
 		if len(rest) == 0 {
-			return exitUsage, errors.New(`wg work plan "a brief" [--project <slug>]`)
+			return exitUsage, errors.New(`wg work file <plan.json> [--project <slug>]`)
 		}
-		body := map[string]any{"brief": strings.Join(rest, " ")}
+		raw, err := os.ReadFile(rest[0])
+		if err != nil {
+			return exitUsage, err
+		}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			return exitUsage, fmt.Errorf("%s is not a readable plan: %w", rest[0], err)
+		}
 		if project != "" {
+			// The flag wins, so one plan file can be filed into a project
+			// without editing it.
 			body["project"] = project
 		}
-		return post("/v1/work/plan", body, jsonOut)
+		return post("/v1/work/beads", body, jsonOut)
 	case "dispatch":
 		if len(args) < 2 {
 			return exitUsage, errors.New("wg work dispatch <bead>")
