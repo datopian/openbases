@@ -43,8 +43,17 @@ type Issue struct {
 	Type        string
 	Status      string
 	Priority    int
-	Labels      []string
-	Assignee    string
+	// Acceptance is what "done" means for this bead, in the field bd keeps
+	// for it. Carried because a bead filed from outside -- by a person
+	// planning in their own tool -- is only actionable if it says what
+	// finishing looks like, and an agent that has to infer that invents it.
+	Acceptance string
+	// Design is the how, when the filer has an opinion about it. Separate
+	// from Description so that "what to do" and "how it was decided" do not
+	// have to be one paragraph.
+	Design   string
+	Labels   []string
+	Assignee string
 	// Due is the date the work is expected by, if the source named one. Zero
 	// means no due date rather than "today".
 	Due time.Time
@@ -231,6 +240,12 @@ func (c *CLIClient) Create(ctx context.Context, db DatabaseRef, issue Issue) (do
 	}
 	if issue.Priority > 0 {
 		args = append(args, "--priority", strconv.Itoa(issue.Priority))
+	}
+	if issue.Acceptance != "" {
+		args = append(args, "--acceptance", issue.Acceptance)
+	}
+	if issue.Design != "" {
+		args = append(args, "--design", issue.Design)
 	}
 	if len(issue.Labels) > 0 {
 		args = append(args, "--labels", strings.Join(issue.Labels, ","))
