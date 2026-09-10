@@ -112,7 +112,7 @@ func (d *dispatcher) fileplan(ctx context.Context, job work.Job) (string, error)
 	// worth one pass and worth saying loudly.
 	if cycles, err := client.Cycles(ctx, db); err != nil {
 		d.log.Warn("could not check for dependency cycles", "rig", rig, "error", err)
-	} else if cycles != "" && !strings.Contains(strings.ToLower(cycles), "no cycles") {
+	} else if cycles != "" {
 		d.log.Error("this plan left a dependency cycle", "rig", rig, "cycles", cycles)
 		body, _ := json.Marshal(map[string]any{"filed": out, "cycles": cycles})
 		return string(body), fmt.Errorf("the beads were filed, but they contain a "+
