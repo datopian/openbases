@@ -248,6 +248,19 @@ func restore(git Git, prevTip, base string) ([]string, error) {
 	return done, nil
 }
 
+// onBranch reports whether HEAD is on the named branch.
+//
+// The question a failed checkout leaves open: did the branch move or not. git
+// answers it directly, and its answer is worth more than the exit status of
+// whatever hook ran afterwards.
+func onBranch(git Git, name string) bool {
+	out, err := git("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) == name
+}
+
 // beadTip is the ref carrying what this bead has already delivered.
 //
 // The remote-tracking ref FIRST, and that ordering is the whole fix.
@@ -670,23 +683,44 @@ func Land(git Git, s Spec) (*Result, error) {
 	// thing -- a branch accumulating two runs' partial attempts is not. It
 	// relies on the bead describing an outcome rather than a step, which is
 	// what acceptance criteria are for and what the runner gives the agent.
-	if _, err := git("checkout", "-B", branch); err != nil {
-		return nil, fmt.Errorf("cannot reach branch %s: %w", branch, err)
-	}
-
-	// From here the tree is on the bead's branch with an index being built, so
-	// every exit has to put it back -- including the ones that return an
-	// error.
+	// Registered BEFORE the checkout, not after it.
 	//
-	// It did not, and the consequence was a rig wedged for good: the tree sat
-	// on bead/sa-7dc with 77 files staged, so the next run began on the wrong
-	// branch with the wrong index and failed the same way, forever. A deferred
-	// cleanup rather than a line before each return, because the failure was
-	// exactly a path that had been added without one.
+	// Every exit from here has to put the tree back -- including the ones that
+	// return an error, and including a checkout that FAILS. `checkout -B`
+	// switches the branch and then runs post-checkout hooks, so a failure can
+	// leave the tree already switched: sa-fj3 aborted here and left the msf
+	// rig sitting on bead/sa-fj3, because the cleanup was registered on the
+	// line after the call that had just moved it.
 	defer func() {
 		_, _ = git("reset", "--quiet")
 		_, _ = git("checkout", base)
 	}()
+
+	if _, err := git("checkout", "-B", branch); err != nil {
+		// A hook that complains is not a failed checkout.
+		//
+		// git runs post-checkout hooks after switching, and reports THEIR exit
+		// status as its own. The msf repository is a PortalJS portal, so it
+		// ships Git LFS hooks, and on a node without the git-lfs binary every
+		// checkout ends:
+		//
+		//	Switched to and reset branch 'bead/sa-fj3'
+		//	...
+		//	This repository is configured for Git LFS but 'git-lfs' was not
+		//	found on your path.
+		//
+		// exit status 1. The switch had happened; the landing threw the run's
+		// work away anyway, and would have done so on every future run of that
+		// repository. Hooks are the repository's, not ours, and they fail for
+		// reasons that have nothing to do with whether the branch moved.
+		//
+		// So the outcome is asked of git rather than inferred from the exit
+		// code -- and if the branch really was not reached, the original error
+		// is still what the caller sees.
+		if !onBranch(git, branch) {
+			return nil, fmt.Errorf("cannot reach branch %s: %w", branch, err)
+		}
+	}
 
 	// Staged by path, not `git add -A`.
 	//

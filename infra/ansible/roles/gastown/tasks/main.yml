@@ -39,9 +39,26 @@
 # being true: a repository check runs the repository's own build or test
 # command, so Node is now a runtime for other people's code. Debian's 18 is too
 # old for five of the twelve repositories on the oss cell.
+# git-lfs is here because of what these agents build, and because of what its
+# absence does.
+#
+# The portals are data portals: PortalJS ships .lfsconfig and Git LFS hooks,
+# and Giftless -- the Datopian LFS server the msf demo stores its geospatial
+# files in -- is Git LFS. So a rig for one of these repositories has LFS hooks
+# whether or not the binary exists.
+#
+# Without the binary the hooks still run, and every `git checkout` ends
+#
+#	This repository is configured for Git LFS but 'git-lfs' was not found
+#	on your path
+#
+# with exit status 1 AFTER switching the branch. That is not cosmetic: it took
+# the landing down for the whole repository (the landing now judges a checkout
+# by where HEAD ends up, which is the other half of this fix), and it leaves an
+# agent unable to fetch or push the very objects the work is about.
 - name: Install the packages Gas Town needs
   ansible.builtin.apt:
-    name: [nodejs, npm, tmux, git]
+    name: [nodejs, npm, tmux, git, git-lfs]
     state: present
     update_cache: true
 
