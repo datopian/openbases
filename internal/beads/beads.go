@@ -467,12 +467,33 @@ func (c *CLIClient) DependOn(ctx context.Context, db DatabaseRef, blocked, block
 // affordable, and this is the other half of that bargain. A cycle is not a
 // cosmetic problem: every bead in it is blocked for ever, by each other, and
 // nothing in the interface says why.
+// It returns the empty string when the graph is clean.
+//
+// --json, because the prose cannot be matched on. The first version looked
+// for "no cycles" in the output; bd prints "✓ No dependency cycles detected",
+// so a clean twelve-bead filing was reported as a graph full of cycles and
+// the job was marked failed after every bead had been written correctly. The
+// JSON is a list: empty means clean, and nothing about that can be misread.
 func (c *CLIClient) Cycles(ctx context.Context, db DatabaseRef) (string, error) {
-	out, err := c.run(ctx, db, "dep", "cycles")
+	out, err := c.run(ctx, db, "dep", "cycles", "--json")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return "", nil
+	}
+	var found []json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &found); err != nil {
+		// Not the shape expected. Reported rather than swallowed: a caller
+		// that cannot tell whether the graph is clean should say so, not
+		// decide it is.
+		return "", fmt.Errorf("reading dep cycles: %w: %s", err, trimmed)
+	}
+	if len(found) == 0 {
+		return "", nil
+	}
+	return trimmed, nil
 }
 
 // Backup runs the Beads native backup.

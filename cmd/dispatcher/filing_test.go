@@ -42,7 +42,9 @@ case "$1 $2" in
 "dep add")
   exit 0 ;;
 "dep cycles")
-  cat $S/cycles 2>/dev/null || echo "no cycles"
+  # What bd actually prints when the graph is clean, ✓ and all. The first
+  # version of the guard matched on this prose and read it as a cycle.
+  cat $S/cycles 2>/dev/null || echo "[]"
   exit 0 ;;
 esac
 case "$1" in
@@ -209,7 +211,7 @@ func TestRefilingAPlanRevisesRatherThanDuplicates(t *testing.T) {
 func TestACycleLeftByAPlanIsReported(t *testing.T) {
 	d, state := filingDispatcher(t)
 	if err := os.WriteFile(filepath.Join(state, "cycles"),
-		[]byte("sa-1 -> sa-2 -> sa-1"), 0o600); err != nil {
+		[]byte(`[["sa-1","sa-2","sa-1"]]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out, err := d.fileplan(context.Background(), planJob(t, work.Plan{
@@ -229,6 +231,35 @@ func TestACycleLeftByAPlanIsReported(t *testing.T) {
 	// told only "cycle" cannot tell whether anything was written.
 	if !strings.Contains(out, "sa-1") {
 		t.Errorf("the failure hides what was already filed: %s", out)
+	}
+}
+
+// bd's own way of saying the graph is clean is not a cycle.
+//
+// This is the regression, and it cost a whole live filing: bd prints
+//
+//	✓ No dependency cycles detected
+//
+// and the guard looked for the substring "no cycles", which is not in it. Two
+// beads were filed correctly, the dependency was wired correctly, and the job
+// was marked failed. A person reading that would re-file, or worse, go
+// looking for a cycle that never existed.
+func TestBdSayingTheGraphIsCleanIsNotACycle(t *testing.T) {
+	d, state := filingDispatcher(t)
+	if err := os.WriteFile(filepath.Join(state, "cycles"),
+		[]byte("✓ No dependency cycles detected"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := d.fileplan(context.Background(), planJob(t, work.Plan{
+		Project: "msf",
+		Beads:   []work.PlanBead{{Ref: "a", Title: "A"}},
+	}))
+	// Prose where JSON was asked for is a problem worth reporting -- but it
+	// must not be reported as a CYCLE, which is a different and alarming
+	// thing to tell somebody.
+	if err != nil && strings.Contains(err.Error(), "cycle") &&
+		!strings.Contains(err.Error(), "reading dep cycles") {
+		t.Errorf("a clean graph was reported as a cycle: %v", err)
 	}
 }
 
