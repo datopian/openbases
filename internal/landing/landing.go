@@ -104,14 +104,11 @@ var Ephemeral = []string{
 	"target/", "dist/", "build/", "out/",
 	// Test and tool output
 	"coverage/", ".nyc_output/", ".cache/", ".gradle/",
-	// An agent's own scratch space. Named because one was committed: a run
-	// scaffolded an entire portal under .verify-tmp/repo/, intending to move
-	// it into place, and was stopped at its deadline before it could -- so
-	// the pull request showed 76 files under that path instead of a portal.
-	// The instructions now tell the agent to work in place, which is the real
-	// fix; this is here so that when one does it anyway, the mistake does not
-	// reach somebody's repository.
-	".verify-tmp/", ".tmp/", ".scratch/", ".agent-tmp/",
+	// An agent's own scratch space is matched by SHAPE, in isEphemeral, not
+	// by name here. Listing names did not work: `.verify-tmp/` was added
+	// after one run committed a portal under it, and the very next agent
+	// invented `.scratch-sj2/` and put three files in a pull request. There
+	// is no list of names an agent might choose.
 	// A tool's own log. `portal/.npm-ci.log` reached datopian/msf#1 -- the
 	// agent redirected `npm ci` into it and left it behind. Matched as a
 	// fragment, so `.npm-ci.log` and `npm-debug.log` both go, and only when
@@ -230,7 +227,7 @@ func restore(git Git, prevTip, base string) ([]string, error) {
 		// mistakes. That is not hypothetical -- the .verify-tmp/repo/ copy
 		// from one stopped run was resurrected into three consecutive pull
 		// requests, and each one reported success.
-		if isPlumbing(path) || matchesAny(path, Ephemeral) {
+		if isPlumbing(path) || matchesAny(path, Ephemeral) || isScratch(path) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
@@ -361,7 +358,42 @@ func isEphemeral(c Change) bool {
 	if strings.TrimSpace(c.Status) != "??" {
 		return false
 	}
-	return matchesAny(c.Path, Ephemeral)
+	return matchesAny(c.Path, Ephemeral) || isScratch(c.Path)
+}
+
+// isScratch reports whether a path is inside a directory an agent made to
+// work in rather than to deliver.
+//
+// By shape, because names cannot be enumerated. `.verify-tmp/` went on the
+// Ephemeral list after a run committed a whole portal under it; the next
+// agent chose `.scratch-sj2/` and put three files into datopian/msf#6, which
+// was the entire pull request. The next will choose something else.
+//
+// The shape that generalises: a HIDDEN directory whose name says it is
+// temporary. Both halves matter. Hidden alone would catch .github and
+// .claude, which repositories deliberately track; "tmp" alone would catch a
+// legitimate tmp/ or a src/tmpl/ directory. And this only ever applies to
+// paths that are untracked AND new (see isEphemeral), so a repository that
+// commits a .tmp directory of its own keeps it.
+func isScratch(path string) bool {
+	for _, seg := range strings.Split(strings.Trim(strings.TrimPrefix(path, "./"), "/"), "/") {
+		if !strings.HasPrefix(seg, ".") || len(seg) < 2 {
+			continue
+		}
+		// TrimPrefix, not seg[1:]. They agree for a hidden segment and differ
+		// for every other one, and that difference is what makes the check
+		// above testable: with seg[1:], deleting the hidden-directory test
+		// turns "tmp" into "mp" and the rule accidentally still works, so a
+		// mutation that should break it does not. Written the honest way, a
+		// missing hidden-directory test immediately eats a real tmp/.
+		name := strings.ToLower(strings.TrimPrefix(seg, "."))
+		for _, mark := range []string{"tmp", "temp", "scratch"} {
+			if strings.Contains(name, mark) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // matchesAny reports whether any SEGMENT of path names one of the listed
@@ -788,7 +820,7 @@ func Land(git Git, s Spec) (*Result, error) {
 		// edit lands like any other -- the first version of this check omitted
 		// that and refused a vendored dist/bundle.js the run had legitimately
 		// edited, which the test for it caught.
-		if matchesAny(path, Ephemeral) {
+		if matchesAny(path, Ephemeral) || isScratch(path) {
 			if _, err := git("cat-file", "-e", "HEAD:"+path); err != nil {
 				return nil, fmt.Errorf("refusing to commit %s: it is build output or "+
 					"installed dependencies the run produced, not its work", path)
