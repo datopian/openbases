@@ -487,6 +487,23 @@ func New(s Spec) (Plan, error) {
 	}
 
 	p.Env = map[string]string{}
+
+	// The cell's PortalJS Arc credential, when it has one.
+	//
+	// Put in the environment rather than left in the file for the agent to
+	// find, because every CLI that talks to Arc already reads PORTALJS_TOKEN
+	// from there -- and an agent that has to be told to source a file is an
+	// agent that will sometimes not.
+	//
+	// No weaker than the file it comes from: that file is 0600 and owned by
+	// the cell user, which is the agent, so this is ergonomics rather than a
+	// new grant. It is deliberately the ONLY deploy credential a cell gets --
+	// the Cloudflare token terraform uses can edit DNS, Access policies and
+	// every bucket, and is kept away from agent-run code.
+	for k, v := range deployCredentials(s.CellRoot) {
+		p.Env[k] = v
+	}
+
 	if p.BeadsDir != "" {
 		// bd reads this from the environment, and it is not a secret.
 		p.Env["BEADS_DIR"] = filepath.Join(p.BeadsDir, ".beads")
@@ -511,6 +528,26 @@ func New(s Spec) (Plan, error) {
 	// spent forty calls discovering it could not push: an environment the
 	// instructions do not describe gets investigated, and investigation is
 	// the whole budget.
+	// Whether this run can deploy, said either way.
+	//
+	// sa-fj3 spent a run finding out that it could not: it probed Arc, got a
+	// device-flow code that needs a human to click "Authorize this device",
+	// and correctly wrote the finding into the bead. That is a good report and
+	// an expensive way to learn a fact the node already knew.
+	if _, ok := p.Env["PORTALJS_TOKEN"]; ok {
+		s.Instructions += "\n\nThis cell can deploy to PortalJS Arc: PORTALJS_TOKEN is " +
+			"already in your environment, so the Arc CLI and API calls authenticate " +
+			"without a login. Do not start a device flow -- it waits for a human to " +
+			"click and there is nobody here to click it."
+	} else {
+		s.Instructions += "\n\nThis cell has NO PortalJS Arc credential, so a live " +
+			"deploy is not possible from this run. Do not attempt the device flow: it " +
+			"issues a code that needs a human to click \"Authorize this device\", and " +
+			"the code expires before anyone will. Do everything that does not need the " +
+			"deploy -- build, export, verify locally, write the runbook -- and say in " +
+			"the bead that the deploy is waiting on a token."
+	}
+
 	// Folded into the Spec the two planners receive, which is passed by value,
 	// so each runtime's argv carries it without either having to remember to.
 	if p.BeadsDir != "" && p.RigDir != "" && p.BeadsDir != p.RigDir {
@@ -884,6 +921,45 @@ func renderSettings(headers string, tools []string, rigDir, beadsDir string) (st
 }
 
 // dirs returns a one-element list, or none, without a nil in the JSON.
+// deployCredentials reads the cell's deploy credential file, if it has one.
+//
+// One file, one shape: KEY=value lines, as ansible writes it. Absent is the
+// ordinary case and returns nothing -- a cell with no token is a cell that
+// cannot deploy, which the instructions then say out loud rather than leaving
+// the agent to discover through a 401.
+//
+// Only keys this function knows are passed on. A credential file that grows a
+// line should not silently become part of every agent's environment.
+func deployCredentials(cellRoot string) map[string]string {
+	if strings.TrimSpace(cellRoot) == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(cellRoot, ".credentials", "portaljs.env"))
+	if err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		switch key {
+		case "PORTALJS_TOKEN", "PORTALJS_API":
+			out[key] = value
+		}
+	}
+	return out
+}
+
 // rigOwningBead finds the rig whose graph a bead id belongs to, by its prefix.
 //
 // The prefix is what makes an id unambiguous across graphs, and every rig

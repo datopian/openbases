@@ -214,6 +214,35 @@
   no_log: true
   when: access_service_client_secret | default("") | length > 0
 
+- name: Install the cell's PortalJS Arc credentials
+  ansible.builtin.template:
+    src: portaljs.env.j2
+    dest: "{{ cells_root }}/{{ item.name }}/.credentials/portaljs.env"
+    owner: "wgcell_{{ item.name | replace('-', '_') }}"
+    group: "wgcell_{{ item.name | replace('-', '_') }}"
+    mode: "0600"
+  loop: "{{ execution_cells }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: portaljs_arc_token | default("") | length > 0
+
+# Said out loud when it is absent, rather than skipped in silence.
+#
+# The empty-means-skip contract is right -- a deploy with no token must not
+# install a broken credential -- but a skipped task reports `ok` and an agent
+# then spends a whole run rediscovering that Arc returns 401. sa-fj3 did
+# exactly that: it probed the device flow, got a user code nobody could click,
+# and wrote the finding into the bead.
+- name: Say that agents cannot deploy without an Arc token
+  ansible.builtin.debug:
+    msg: >-
+      No PORTALJS_TOKEN in the environment, so
+      {{ cells_root }}/<cell>/.credentials/portaljs.env was not written and
+      agents cannot deploy to PortalJS Arc. Mint a token scoped to the project
+      and add it to infra/secrets/<env>.enc.yaml as PORTALJS_TOKEN.
+  when: portaljs_arc_token | default("") | length == 0
+
 - name: Create the cell bin directory
   ansible.builtin.file:
     path: "{{ cells_root }}/{{ item.name }}/bin"

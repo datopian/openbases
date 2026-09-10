@@ -1064,3 +1064,93 @@ func TestAnAgentIsToldWhichGraphHoldsItsBead(t *testing.T) {
 			strings.Join(q.Argv, " "))
 	}
 }
+
+// A cell with an Arc token can deploy, and one without is told so.
+//
+// sa-fj3 is why. The agent built the portal, produced a clean static export,
+// verified it locally and wrote the runbook -- then spent the rest of the run
+// discovering it could not deploy: Arc's non-interactive path needs a token,
+// and its other path issues a device code that waits for a human to click
+// "Authorize this device". Nobody was going to click, and the code expires in
+// minutes. The node knew both facts before the run started.
+func TestACellsDeployCredentialReachesTheAgent(t *testing.T) {
+	cell := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cell, ".credentials"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(cell, ".credentials", "portaljs.env"),
+			[]byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// With a token: it reaches the agent's environment, and the agent is told
+	// not to burn the run on a device flow.
+	write("# a comment\nPORTALJS_TOKEN=arc-tok-123\nPORTALJS_API=https://api.arc.portaljs.com\n")
+	s := spec()
+	s.CellRoot = cell
+	p, err := New(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Env["PORTALJS_TOKEN"] != "arc-tok-123" {
+		t.Errorf("the token did not reach the agent: %q", p.Env["PORTALJS_TOKEN"])
+	}
+	if p.Env["PORTALJS_API"] != "https://api.arc.portaljs.com" {
+		t.Errorf("the API base did not reach the agent: %q", p.Env["PORTALJS_API"])
+	}
+	argv := strings.Join(p.Argv, " ")
+	if !strings.Contains(argv, "can deploy to PortalJS Arc") {
+		t.Errorf("the agent was not told it can deploy:\n%s", argv)
+	}
+	if !strings.Contains(argv, "Do not start a device flow") {
+		t.Errorf("the agent was not warned off the device flow:\n%s", argv)
+	}
+
+	// The credential must never travel in the gateway metadata, which is
+	// logged for every call.
+	if md := mustJSONString(t, p.Metadata); strings.Contains(md, "arc-tok-123") {
+		t.Errorf("the deploy token is in the gateway metadata: %s", md)
+	}
+
+	// Only known keys. A credential file that grows a line must not silently
+	// become part of every agent's environment.
+	write("PORTALJS_TOKEN=arc-tok-123\nAWS_SECRET_ACCESS_KEY=nope\n")
+	p, err = New(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.Env["AWS_SECRET_ACCESS_KEY"]; ok {
+		t.Error("an unknown key from the credential file reached the agent")
+	}
+
+	// Without the file: no credential, and the agent is told plainly rather
+	// than left to find out from a 401.
+	if err := os.Remove(filepath.Join(cell, ".credentials", "portaljs.env")); err != nil {
+		t.Fatal(err)
+	}
+	p, err = New(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.Env["PORTALJS_TOKEN"]; ok {
+		t.Error("a token appeared with no credential file")
+	}
+	argv = strings.Join(p.Argv, " ")
+	if !strings.Contains(argv, "NO PortalJS Arc credential") {
+		t.Errorf("the agent was not told it cannot deploy:\n%s", argv)
+	}
+	if !strings.Contains(argv, "Do not attempt the device flow") {
+		t.Errorf("the agent was not warned off the device flow:\n%s", argv)
+	}
+}
+
+func mustJSONString(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}

@@ -159,3 +159,8 @@ gastown_role_effort:
   polecat: medium
   refinery: low
   witness: low
+
+# The PortalJS Arc API base. Not a secret; it sits beside the token so that a
+# staging or self-hosted Arc can be pointed at without a code change. Empty
+# means the CLI's own default.
+portaljs_arc_api: ""
