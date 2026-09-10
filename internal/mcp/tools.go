@@ -54,6 +54,29 @@ type fileWorkArgs struct {
 	Project string `json:"project,omitempty" jsonschema:"Project slug to file the beads into, from workgraph_project_list. Omit ONLY for company-wide work: a brief filed with no project produces beads every colleague who can log in may read. Anything client-shaped needs one, and the server refuses a project you are not a member of."`
 }
 
+type fileBeadsArgs struct {
+	Project string         `json:"project" jsonschema:"the project slug these beads belong to"`
+	Beads   []planBeadArgs `json:"beads" jsonschema:"the plan: every bead, with the dependencies between them"`
+	Cell    string         `json:"cell,omitempty" jsonschema:"the execution cell; defaults to oss"`
+	Rig     string         `json:"rig,omitempty" jsonschema:"the rig whose graph holds the beads; defaults to the cell's"`
+}
+
+// planBeadArgs mirrors work.PlanBead. Declared here rather than reused so the
+// jsonschema descriptions -- which are what the model actually reads -- live
+// next to the tool that shows them.
+type planBeadArgs struct {
+	Ref         string   `json:"ref" jsonschema:"your name for this bead, stable across re-plans; it is the upsert key"`
+	Title       string   `json:"title" jsonschema:"one line saying what to do"`
+	Description string   `json:"description,omitempty" jsonschema:"the context an agent needs"`
+	Acceptance  string   `json:"acceptance,omitempty" jsonschema:"what finishing means, checkable; without it an agent invents its own criteria and closes against those"`
+	Design      string   `json:"design,omitempty" jsonschema:"how it should be done, if you have an opinion"`
+	Type        string   `json:"type,omitempty" jsonschema:"task, feature, bug, chore"`
+	Priority    int      `json:"priority,omitempty" jsonschema:"0 highest to 4 lowest; omit if you do not care"`
+	Labels      []string `json:"labels,omitempty"`
+	DependsOn   []string `json:"depends_on,omitempty" jsonschema:"refs in this plan, or existing bead ids, that must finish first"`
+	Status      string   `json:"status,omitempty" jsonschema:"set to closed to close a bead this plan owns"`
+}
+
 type jobArgs struct {
 	Job string `json:"job" jsonschema:"the job id that filing or dispatching returned"`
 }
@@ -132,6 +155,7 @@ var Routes = []Route{
 	// asserts they agree index by index.
 	{Tool: "workgraph_job", Method: http.MethodGet, Path: "/v1/work/jobs/{id}", ReadOnly: true},
 	{Tool: "workgraph_project_list", Method: http.MethodGet, Path: "/v1/projects", ReadOnly: true},
+	{Tool: "workgraph_beads_file", Method: http.MethodPost, Path: "/v1/work/beads"},
 	// The writes that set a project up. None of them spends money: they change
 	// the registry, and the registry is what later decides where work runs and
 	// who may read it.
@@ -282,6 +306,37 @@ var (
 		},
 	}
 
+	// File a plan made somewhere else.
+	//
+	// The replacement for workgraph_file_work, which starts an agent to
+	// decide what the work is. This decides nothing and spends nothing: the
+	// plan arrives already made, from whatever the person planned in.
+	//
+	// The whole plan goes in one call because a plan is a graph. Filing it a
+	// bead at a time can half-fail, and a half-filed graph is worse than a
+	// refused one -- the next re-plan has to reconcile it and nobody can tell
+	// which half landed.
+	toolFileBeads = &sdk.Tool{
+		Name: "workgraph_beads_file",
+		Description: "File a plan you already made: a list of beads with titles, " +
+			"acceptance criteria, priorities and the dependencies between them. " +
+			"Costs NOTHING -- no agent runs, this only writes the graph. " +
+			"Each bead needs a `ref`, YOUR name for it (\"scaffold\", \"deploy\"), " +
+			"and `depends_on` names other refs in the same plan or existing bead ids. " +
+			"Re-filing the same plan REVISES those beads rather than duplicating them, " +
+			"so re-plan as often as you like; a field you leave out is left alone, not " +
+			"cleared. Answers with each ref and the bead it became, or a job id if the " +
+			"node is slow, which workgraph_job will explain. " +
+			"Use for 'file this plan', 'create these beads', 'add a task', " +
+			"'re-plan', 'make X depend on Y'.",
+		Annotations: &sdk.ToolAnnotations{
+			// Not destructive and not read-only: it writes, and re-writing is
+			// safe by construction because the ref is an upsert key.
+			Title: "File a plan (free)", ReadOnlyHint: false, DestructiveHint: ptr(false),
+			IdempotentHint: true,
+		},
+	}
+
 	toolDispatch = &sdk.Tool{
 		Name: "workgraph_dispatch",
 		Description: "Run one bead. SPENDS MONEY: an agent runs against it. " +
@@ -301,6 +356,7 @@ var (
 func Tools() []*sdk.Tool {
 	return []*sdk.Tool{
 		toolInbox, toolAsk, toolWorkList, toolBead, toolJob, toolProjectList,
+		toolFileBeads,
 		toolProjectCreate, toolRepositoriesAttach,
 		toolFileWork, toolDispatch,
 	}
@@ -365,6 +421,25 @@ func NewServer(o Options) *sdk.Server {
 	// running them. The description says SPENDS MONEY in words as well, because
 	// the annotation is a hint a client may ignore and the description is what
 	// the model reads.
+
+	sdk.AddTool(s, toolFileBeads, func(ctx context.Context, _ *sdk.CallToolRequest, a fileBeadsArgs) (*sdk.CallToolResult, any, error) {
+		if strings.TrimSpace(a.Project) == "" {
+			return errorResult("a project is required: beads filed without one are " +
+				"invisible on every page a person looks at"), nil, nil
+		}
+		if len(a.Beads) == 0 {
+			return errorResult("a plan needs at least one bead"), nil, nil
+		}
+		body := map[string]any{"project": a.Project, "beads": a.Beads}
+		if c := strings.TrimSpace(a.Cell); c != "" {
+			body["cell"] = c
+		}
+		if rg := strings.TrimSpace(a.Rig); rg != "" {
+			body["rig"] = rg
+		}
+		return plain(ctx, c, shell, obs, "workgraph_beads_file", http.MethodPost,
+			"/v1/work/beads", body)
+	})
 
 	sdk.AddTool(s, toolFileWork, func(ctx context.Context, _ *sdk.CallToolRequest, a fileWorkArgs) (*sdk.CallToolResult, any, error) {
 		brief := strings.TrimSpace(a.Brief)

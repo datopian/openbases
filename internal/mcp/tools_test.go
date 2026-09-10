@@ -59,8 +59,19 @@ import (
 //
 // It earns its slot by being read-only, cheap, and answering in one sentence
 // the question that otherwise costs a re-filed brief.
+// Eleven on 2026-09-10, and this one is TRANSITIONAL rather than earned.
+//
+// workgraph_beads_file replaces workgraph_file_work: filing a plan made
+// outside the platform replaces starting an agent to invent one. For the
+// length of that transition both exist, because removing the old one first
+// would leave no way to create beads at all until the new one is proven on
+// staging.
+//
+// The removal is the next change and takes the count back to ten. If this
+// comment is still here without workgraph_file_work beside it, the
+// transition was abandoned half way and the eleventh slot is unpaid for.
 func TestToolSetStaysSmall(t *testing.T) {
-	if len(Tools()) > 10 {
+	if len(Tools()) > 11 {
 		t.Fatalf("%d tools. The list is the prompt: past a handful, a model chooses worse "+
 			"rather than doing more. Add to the CLI instead.", len(Tools()))
 	}

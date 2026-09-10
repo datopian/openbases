@@ -103,6 +103,10 @@ type Client interface {
 
 // CLIClient drives the pinned `bd` binary.
 type CLIClient struct {
+	// Home is the HOME the binary runs with, when the caller knows it.
+	// Empty leaves the inherited one. See run() for why it matters.
+	Home string
+
 	// Binary is the absolute path to the pinned `bd` executable, verified
 	// against versions.lock before use.
 	Binary string
@@ -322,8 +326,23 @@ func (c *CLIClient) Update(ctx context.Context, ref domain.WorkRef, issue Issue)
 		return err
 	}
 	db := DatabaseRef{ID: ref.BeadsDatabaseID, CellID: ref.ExecutionCellID, Path: c.pathFor(ref.BeadsDatabaseID)}
+	return c.UpdateIn(ctx, db, ref.BeadID, issue)
+}
 
-	args := []string{"update", ref.BeadID}
+// UpdateIn changes a bead in a database, without a full work reference.
+//
+// A WorkRef carries an organisation id, and a caller on the node does not
+// have one: bd is a graph in a directory and knows nothing about
+// organisations. Filing a re-plan hit exactly that -- every revision failed
+// with "missing: [organisation_id]" while every creation succeeded, because
+// Create takes a database and Update took a reference. The organisation is
+// the control plane's concept and belongs on the paths that talk to it.
+func (c *CLIClient) UpdateIn(ctx context.Context, db DatabaseRef, beadID string, issue Issue) error {
+	if strings.TrimSpace(beadID) == "" {
+		return errors.New("an update needs a bead")
+	}
+
+	args := []string{"update", beadID}
 	if issue.Status != "" {
 		args = append(args, "--status", issue.Status)
 	}

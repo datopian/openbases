@@ -119,6 +119,11 @@ type dispatcher struct {
 	api, clientID, clientSecret string
 	cell, cellRoot, rig, runner string
 	gtBinary                    string
+	// The bd binary filing shells out to. A field only so a test can point at
+	// a fake one: filing is a sequence of bd calls in a particular ORDER, and
+	// asserting that order against the real bd would need a real Dolt
+	// database on the machine running the test.
+	bdBinary string
 	// catalogue is the role/model table the runner reads, so the dispatcher can
 	// report what a run will use without reimplementing the lookup.
 	catalogue string
@@ -232,6 +237,26 @@ func (d *dispatcher) pass(ctx context.Context) {
 	// what is in the repository now rather than whatever was there when the rig
 	// was created or last landed.
 	d.refresh(jobRig)
+
+	// A file job writes a plan and stops. No agent, no worktree, no cost.
+	//
+	// Returned before any of the machinery below, deliberately: preparing a
+	// checkout, snapshotting a tree and reporting a model for a job that runs
+	// no model would all be theatre, and the plan branch of each would be one
+	// more thing to keep true.
+	if job.Kind == work.KindFile {
+		out, err := d.fileplan(ctx, *job)
+		if err != nil {
+			d.log.Error("filing a plan", "job", job.ID, "error", err)
+			if out == "" {
+				out = err.Error()
+			}
+		} else {
+			d.log.Info("plan filed", "job", job.ID, "result", out)
+		}
+		d.report(outcomeCtx(ctx), job.ID, work.Result{OK: err == nil, Output: out})
+		return
+	}
 
 	// One checkout per bead, prepared before anything reads the tree.
 	//

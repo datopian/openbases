@@ -1293,6 +1293,105 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, out)
 	})
 
+	// File a plan made outside the platform.
+	//
+	// The replacement for planning here. A person plans in their own tool and
+	// submits the result; no agent runs and nothing is spent. The whole plan
+	// arrives at once because a plan is a graph, and filing it a bead at a
+	// time can half-fail and leave that graph broken with no way to tell
+	// which half landed.
+	//
+	// It travels as a queued job because a bead lives in a Dolt graph on the
+	// execution host and `bd -C` takes a local path -- the control plane
+	// cannot write one. So this enqueues, then WAITS a little for the node to
+	// pick it up, and answers with the beads if they arrive in time.
+	//
+	// The wait exists because the alternative was reported as a bug: a filing
+	// that returns {status: queued} and nothing else leaves the caller
+	// polling for beads to appear, unable to tell "working" from "died". If
+	// the wait runs out the job id is still returned, and workgraph_job says
+	// what became of it.
+	authed.HandleFunc("POST /v1/work/beads", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if id.UserID == "" {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "a user is required"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		var payload struct {
+			work.Plan
+			Cell string `json:"cell"`
+			Rig  string `json:"rig"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&payload); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		// Validated HERE as well as on the node, and that is not redundant:
+		// the caller is a person who can fix their plan, and telling them
+		// every problem now beats a job that fails ten seconds later with the
+		// same message somewhere they have to go and look.
+		if err := payload.Plan.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": err.Error(), "code": "invalid_plan"})
+			return
+		}
+		if strings.TrimSpace(payload.Cell) == "" {
+			payload.Cell = "oss"
+		}
+		brief, err := json.Marshal(payload.Plan)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid plan"})
+			return
+		}
+
+		var jobID string
+		// id.UserID, never a user from the body: system_enqueue_work checks
+		// THAT user's membership of the project.
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT system_enqueue_work('file', $1, $2, NULL, $3, $4, $5)`,
+			payload.Cell, payload.Rig, string(brief), id.UserID,
+			nullableParam(strings.TrimSpace(payload.Project))).Scan(&jobID); err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "no project with the slug") ||
+				strings.Contains(msg, "is not a member of project") {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": "that project is not one you can file work into"})
+				return
+			}
+			log.Error("enqueueing a filing", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+
+		// Wait, briefly. The node polls every ten seconds, and filing itself
+		// is a handful of bd calls, so most plans are done well inside this.
+		status, result := waitForJob(r.Context(), db, jobID, 45*time.Second)
+		out := map[string]any{"job": jobID, "status": status}
+		if status == "done" {
+			// The node reports the ref-to-bead mapping as JSON. Passed
+			// through as structure rather than a string, so the caller can
+			// dispatch what it just filed without parsing prose.
+			var filed map[string]any
+			if err := json.Unmarshal([]byte(result), &filed); err == nil {
+				for k, v := range filed {
+					out[k] = v
+				}
+			} else {
+				out["result"] = result
+			}
+		} else if status == "failed" {
+			out["error"] = result
+		} else {
+			out["note"] = "still running; ask GET /v1/work/jobs/" + jobID +
+				" for what it is doing"
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+
 	// Turn a brief into beads.
 	//
 	// Enqueued rather than run: the node claims it. That is not only an

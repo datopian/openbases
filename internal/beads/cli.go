@@ -84,6 +84,16 @@ func (c *CLIClient) run(ctx context.Context, db DatabaseRef, args ...string) ([]
 	if c.Actor != "" {
 		env = append(env, "BEADS_ACTOR="+c.Actor)
 	}
+	if c.Home != "" {
+		// An explicit home, for a caller that knows where the cell's is.
+		//
+		// The node's is the CELL's home, not the database directory: Dolt
+		// reads its configuration from HOME and segfaults without one, and
+		// the dispatcher has always passed HOME=<cellRoot> when it shells out
+		// to bd. A filing path that used the database directory instead would
+		// be a second, subtly different environment for the same binary.
+		env = append(env, "HOME="+c.Home)
+	}
 	if c.HomeAtDatabasePath && db.Path != "" {
 		// Last wins in exec's environment, so this overrides an inherited
 		// HOME rather than conflicting with it.
