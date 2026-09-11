@@ -464,7 +464,22 @@ func (d *dispatcher) releaseWorkdir(rig, dir, bead string) {
 	}
 	shared := landing.Exec(d.cellRoot+"/town/"+rig+"/refinery/rig", d.cellRoot)
 	if _, err := shared("worktree", "remove", "--force", dir); err != nil {
-		d.log.Warn("removing a worktree", "dir", dir, "error", err)
+		// git refuses a directory holding ignored files, and a portal
+		// checkout holds 719 MB of them the moment anything runs
+		// `npm install`. The status above already established there is no
+		// work here -- nothing modified, nothing untracked-and-unignored --
+		// so what remains is build output, and leaving it means every
+		// killed run costs most of a gigabyte until the disk fills.
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			d.log.Warn("removing a worktree", "dir", dir,
+				"error", err, "then", rmErr)
+			return
+		}
+		if _, pruneErr := shared("worktree", "prune"); pruneErr != nil {
+			d.log.Warn("pruning a removed worktree", "dir", dir, "error", pruneErr)
+		}
+		d.log.Info("worktree released after deleting its build output",
+			"bead", bead, "dir", dir)
 		return
 	}
 	d.log.Info("worktree released", "bead", bead, "dir", dir)
@@ -614,8 +629,13 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 	// backstop rather than a budget now: reaching it is a bug report, not a
 	// normal outcome.
 	progress := func() (string, int) {
-		_, at := newestChange(job.Checkout)
-		return at.String(), buf.len()
+		name, at, seen := newestChange(job.Checkout)
+		// The count is part of the mark, not decoration. A dependency
+		// install writes thousands of files whose mtimes all land in the
+		// same second, and a walk that stops at a cap may not reach the
+		// newest of them; the number of files is what moves unmistakably
+		// while npm is running.
+		return fmt.Sprintf("%s@%s#%d", name, at, seen), buf.len()
 	}
 	lastMark, lastBytes := progress()
 	lastMoved := time.Now()
@@ -765,14 +785,14 @@ func (b *syncBuffer) progress() string {
 //	report every run as busy, which is the failure this replaces in the
 //	opposite direction;
 //
-//	anything on landing.Ephemeral is skipped, because `npm install` touches
-//	tens of thousands of files and walking them each half-minute would cost
-//	more than the run;
+//	build output counts. `npm install` writing into node_modules is a run
+//	doing exactly what it should, and a heartbeat that called that silence
+//	is what stopped sa-sj2 mid-install;
 //
-//	the walk stops after 20,000 entries, so a large repository slows the
+//	the walk stops after 50,000 entries, so a large repository slows the
 //	heartbeat rather than stalling the dispatcher.
 func touched(checkout string) string {
-	name, at := newestChange(checkout)
+	name, at, _ := newestChange(checkout)
 	if at.IsZero() {
 		return ""
 	}
@@ -785,13 +805,63 @@ func touched(checkout string) string {
 // Split out from touched so the dispatcher can COMPARE it between ticks rather
 // than only print it. That comparison is what decides whether a run is working
 // or wedged, which is the thing a deadline should be measuring.
-func newestChange(checkout string) (string, time.Time) {
+// walkCap bounds the progress walk. A var, not a constant, so a test can
+// make truncation happen without creating fifty thousand files -- and
+// truncation is precisely the case the file count exists for.
+// walkCap bounds the file half of the progress walk. A var, not a constant,
+// so a test can make truncation happen without creating fifty thousand files.
+var walkCap = 50000
+
+// newestChange is the most recent change under the checkout, and when.
+//
+// Two different measurements, because the two halves of a checkout behave
+// differently:
+//
+//	the run's own work -- every file, by mtime. It is a handful of files and
+//	each one matters;
+//
+//	a dependency tree -- DIRECTORIES only, by mtime. node_modules is hundreds
+//	of thousands of files, far too many to stat every half-minute, and a
+//	capped file walk is worse than useless there: it stops at the same
+//	horizon every tick, so a two-minute install looks identical from the
+//	outside to a wedged agent. Directories are few and their mtimes move
+//	every time npm creates or removes an entry, which is continuously.
+//
+// Skipping dependency trees entirely is what this replaces. It killed
+// sa-sj2 at exactly ten minutes while portal/node_modules grew to 719 MB
+// and 18,181 files: "ephemeral" says the landing must not COMMIT it, never
+// that writing it is not work.
+func newestChange(checkout string) (string, time.Time, int) {
 	if strings.TrimSpace(checkout) == "" {
-		return "", time.Time{}
+		return "", time.Time{}, 0
 	}
 	var newest time.Time
 	var name string
 	seen := 0
+	// A file beats a directory on a tie, and the checkout root never names
+	// anything.
+	//
+	// Writing a file updates its parent directories too, at the same instant
+	// or a hair earlier -- the entry is created, then the bytes are written.
+	// Without the preference the heartbeat says "wrote ." on Linux while a
+	// perfectly good filename sits one comparison away, which is what CI
+	// caught here.
+	note := func(rel string, t time.Time, isDir bool) {
+		if isDir && rel == "." {
+			// Any change that moves the root's own mtime is an entry
+			// created or removed directly in it, and that entry is walked.
+			return
+		}
+		if t.Before(newest) || (isDir && t.Equal(newest)) {
+			return
+		}
+		newest = t
+		if isDir {
+			name = rel + "/"
+		} else {
+			name = rel
+		}
+	}
 	_ = filepath.WalkDir(checkout, func(path string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -801,25 +871,34 @@ func newestChange(checkout string) (string, time.Time) {
 			return nil
 		}
 		if e.IsDir() {
-			base := filepath.Base(path)
-			if base == ".git" || matchesEphemeral(rel) {
+			if filepath.Base(path) == ".git" {
 				return fs.SkipDir
+			}
+			// A directory's own mtime is the cheap half of this: it moves
+			// when an entry is created or removed inside it, which is what
+			// an install does thousands of times.
+			if info, infoErr := e.Info(); infoErr == nil {
+				seen++
+				note(rel, info.ModTime(), true)
 			}
 			return nil
 		}
-		if seen++; seen > 20000 {
+		// Files inside a dependency tree are not stat'd. There are too many,
+		// and their directories already answered the question.
+		if matchesEphemeral(rel) {
+			return nil
+		}
+		if seen++; seen > walkCap {
 			return filepath.SkipAll
 		}
 		info, err := e.Info()
 		if err != nil {
 			return nil
 		}
-		if info.ModTime().After(newest) {
-			newest, name = info.ModTime(), rel
-		}
+		note(rel, info.ModTime(), false)
 		return nil
 	})
-	return name, newest
+	return name, newest, seen
 }
 
 // matchesEphemeral reports whether a path is inside a directory landing will
