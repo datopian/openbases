@@ -708,6 +708,16 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 	lastMark, lastBytes := progress()
 	lastMoved := time.Now()
 
+	// The transcript is snapshotted WHILE the run is alive.
+	//
+	// wg-runner owns the teardown and removes its state directory before it
+	// exits, so by the time Wait returns there is nothing left to read: the
+	// first version of this read the log after the run and got an empty
+	// string every time, which is how msf8-17x finished with a result that
+	// still explained nothing. A few KB per tick is the price of having the
+	// record at all.
+	transcript := transcriptTail(d.cellRoot, bead, 4<<10)
+
 	for {
 		select {
 		case err := <-done:
@@ -718,9 +728,16 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 			// nothing could not be explained from the job at all, and the
 			// only copy of what the agent did sat in a state directory
 			// nobody thought to look in.
-			return withTranscript(strings.TrimSpace(buf.String()),
-				transcriptTail(d.cellRoot, bead, 4<<10)), err
+			// The live snapshot, or one last look in case a harness leaves
+			// its state behind.
+			if t := transcriptTail(d.cellRoot, bead, 4<<10); t != "" {
+				transcript = t
+			}
+			return withTranscript(strings.TrimSpace(buf.String()), transcript), err
 		case <-tick.C:
+			if t := transcriptTail(d.cellRoot, bead, 4<<10); t != "" {
+				transcript = t
+			}
 			mark, bytes := progress()
 			if mark != lastMark || bytes != lastBytes {
 				lastMark, lastBytes, lastMoved = mark, bytes, time.Now()
