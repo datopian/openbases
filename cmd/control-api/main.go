@@ -393,10 +393,30 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 			return
 		}
 
+		// Which kinds this caller will take, if it says.
+		//
+		// The node runs two loops: work is serialised because agents are
+		// expensive, filing is not. Without this they share one FIFO, and a
+		// plan filed at 10:14 waited forty minutes behind a run that was
+		// installing dependencies -- for a job that takes two seconds and
+		// starts no agent.
+		var kinds any
+		if raw := strings.TrimSpace(r.URL.Query().Get("kind")); raw != "" {
+			var want []string
+			for _, k := range strings.Split(raw, ",") {
+				if k = strings.TrimSpace(k); k != "" {
+					want = append(want, k)
+				}
+			}
+			if len(want) > 0 {
+				kinds = want
+			}
+		}
+
 		var job work.Job
 		var bead, brief, project sql.NullString
 		err := db.QueryRowContext(r.Context(),
-			`SELECT id, kind, bead, brief, rig, project FROM system_claim_work($1)`, cell).
+			`SELECT id, kind, bead, brief, rig, project FROM system_claim_work($1, $2)`, cell, kinds).
 			Scan(&job.ID, &job.Kind, &bead, &brief, &job.Rig, &project)
 		if errors.Is(err, sql.ErrNoRows) {
 			w.WriteHeader(http.StatusNoContent)

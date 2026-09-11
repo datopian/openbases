@@ -101,6 +101,19 @@ func main() {
 		d.pass(ctx)
 		return
 	}
+	// Filing runs in its own loop, and that separation is the point.
+	//
+	// `pass` is synchronous: while an agent runs -- and a portal bead can
+	// take an hour -- no other job is claimed at all. Filing a plan starts
+	// no agent and takes about two seconds, but it shared that queue, so a
+	// plan filed at 10:14 on 2026-09-11 was still queued at 10:54 behind a
+	// run that was installing dependencies. Somebody who had just re-planned
+	// was waiting on beads that could have existed immediately.
+	//
+	// Work stays serialised: agents are expensive and the box is small. This
+	// loop only ever claims `file` jobs, which are database writes.
+	go d.fileLoop(ctx)
+
 	ticker := time.NewTicker(*interval)
 	defer ticker.Stop()
 	d.pass(ctx)
@@ -138,6 +151,44 @@ type dispatcher struct {
 	log  *slog.Logger
 }
 
+// fileLoop claims and executes filing jobs, forever, alongside the work loop.
+//
+// Every five seconds rather than on the work interval: filing is what a
+// person is waiting for with a plan in their hand, and the whole operation is
+// a few bd calls.
+func (d *dispatcher) fileLoop(ctx context.Context) {
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			job, err := d.claim(ctx, work.KindFile)
+			if err != nil {
+				d.log.Error("claiming a filing", "error", err)
+				continue
+			}
+			if job == nil {
+				continue
+			}
+			out, ferr := d.fileplan(ctx, *job)
+			if ferr != nil {
+				d.log.Error("filing a plan", "job", job.ID, "error", ferr)
+				if out == "" {
+					out = ferr.Error()
+				}
+			} else {
+				d.log.Info("plan filed", "job", job.ID, "result", out)
+			}
+			// Reported on a context a shutdown cannot cancel, for the same
+			// reason a run's outcome is: a filing that finished and was
+			// never recorded looks exactly like one that never ran.
+			d.report(outcomeCtx(ctx), job.ID, work.Result{OK: ferr == nil, Output: out})
+		}
+	}
+}
+
 // pass projects the cell's beads upward, then claims and runs at most one job.
 //
 // Projection first, so that a bead an agent created a moment ago is visible
@@ -172,7 +223,7 @@ func (d *dispatcher) pass(ctx context.Context) {
 		d.log.Error("projecting beads", "error", err)
 	}
 
-	job, err := d.claim(ctx)
+	job, err := d.claim(ctx, work.KindWork)
 	if err != nil {
 		d.log.Error("claiming work", "error", err)
 		return
@@ -332,6 +383,9 @@ func (d *dispatcher) pass(ctx context.Context) {
 		// uncommitted work is kept and logged, because that work never
 		// reached the repository and deleting it would destroy the thing
 		// per-bead checkouts exist to protect.
+		// Cache what the run installed before the worktree goes, so the
+		// next bead on this rig starts warm.
+		d.saveDependencies(jobRig, runDir)
 		d.releaseWorkdir(jobRig, runDir, job.Bead)
 	}
 
@@ -435,6 +489,13 @@ func (d *dispatcher) prepareWorkdir(job work.Job, rig string) string {
 		return ""
 	}
 	d.log.Info("worktree", "bead", job.Bead, "dir", dir, "base", base)
+	// Dependencies before the agent starts, not by the agent.
+	//
+	// A fresh worktree has no node_modules, so a Node project's first act is
+	// a 700 MB install -- which is where entire runs went on 2026-09-11.
+	// Hardlinked from the rig's cache, it costs seconds and no disk.
+	d.warmDependencies(rig, dir)
+
 	return dir
 }
 
@@ -1250,8 +1311,16 @@ func (d *dispatcher) lastComment(ctx context.Context, rig, bead string) (text, a
 	return text, at, by, nil
 }
 
-func (d *dispatcher) claim(ctx context.Context) (*work.Job, error) {
-	body, err := d.call(ctx, http.MethodPost, "/v1/node/work/claim?cell="+d.cell, nil)
+func (d *dispatcher) claim(ctx context.Context, kinds ...work.Kind) (*work.Job, error) {
+	path := "/v1/node/work/claim?cell=" + d.cell
+	if len(kinds) > 0 {
+		names := make([]string, 0, len(kinds))
+		for _, k := range kinds {
+			names = append(names, string(k))
+		}
+		path += "&kind=" + strings.Join(names, ",")
+	}
+	body, err := d.call(ctx, http.MethodPost, path, nil)
 	if err != nil {
 		return nil, err
 	}
