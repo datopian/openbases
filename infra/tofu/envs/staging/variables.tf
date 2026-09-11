@@ -53,10 +53,24 @@ variable "execution_server_type" {
   description = <<-EOT
     Hetzner type for the staging execution node.
 
-    Deliberately far smaller than production. Staging proves isolation — user
-    separation, home permissions, cgroup limits, blocked metadata — and none of
-    those assertions are memory-bound. Production sizes for 5-8 concurrent
-    build-heavy agents (plan section 11.1); staging does not run them.
+    Staging proves isolation — user separation, home permissions, cgroup
+    limits, blocked metadata — and none of those assertions are memory-bound.
+    It also, since the msf engagement, runs real client work: agents that
+    install a Node project and build it.
+
+    cx23 (2 cores, 4 GB, no swap) could not carry that. On 2026-09-11 the node
+    stopped answering entirely under one `npm ci`: no ssh, ansible reported
+    UNREACHABLE mid-deploy so the new binaries never installed, the dispatcher
+    stopped heart-beating, and a job stayed marked running with nobody behind
+    it. Not an OOM kill with a named victim -- the box simply went away.
+    Before that, every portal bead spent its whole run installing and none
+    reached the work: 11, 38 and 98 minutes, all killed.
+
+    cx33 (4 cores, 8 GB) is enough for one agent plus a Next build without
+    swapping. Production still sizes for 5-8 concurrent build-heavy agents
+    (plan section 11.1). The sentence this replaces said staging "does not run
+    them", and that stopped being true the day a client engagement landed
+    here.
   EOT
   type        = string
   default     = "cx23"

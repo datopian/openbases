@@ -25,7 +25,7 @@ hcloud_location = "fsn1"
 
 # 2 vCPU / 4 GB, EUR 5.49/mo. Enough to prove cell isolation; production uses
 # cx53 (16 vCPU / 32 GB) because it actually runs concurrent agent builds.
-execution_server_type = "cx23"
+execution_server_type = "cx33"
 
 # SSH reached through the tunnel, for Ansible. This opens no inbound port: the
 # connector runs on the host and dials out, so localhost:22 is reachable from
