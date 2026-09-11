@@ -358,12 +358,19 @@ func TestALiveRunIsVisibleWhateverTheHarnessBuffers(t *testing.T) {
 		t.Errorf("touched reported git's own bookkeeping: %q", got)
 	}
 
-	// And so is a dependency tree, which `npm install` fills with tens of
-	// thousands of files that are not the run's work and would cost more to
-	// walk than the run costs to make.
+	// A dependency tree is NOT skipped, and this assertion used to say the
+	// opposite.
+	//
+	// It cost a whole run to learn. sa-sj2 was stopped at exactly ten
+	// minutes for writing nothing, while it had written 719 MB and 18,181
+	// files into portal/node_modules -- every one of them invisible to a
+	// watcher that skipped the directory. "Ephemeral" means the landing
+	// must not COMMIT it. It never meant that writing it is not work.
 	write("node_modules/next/index.js")
-	if got := touched(dir); strings.Contains(got, "node_modules") {
-		t.Errorf("touched reported installed dependencies: %q", got)
+	if got := touched(dir); !strings.Contains(got, "node_modules") {
+		t.Errorf("touched hid a dependency install: %q -- a run installing "+
+			"dependencies is a run that is working, and a heartbeat that "+
+			"calls it silence gets it killed", got)
 	}
 
 	// Nothing to report is reported as nothing, rather than as a reassuring
@@ -860,5 +867,138 @@ func TestEachBeadRunsInItsOwnCheckout(t *testing.T) {
 	// A plan job has no code to change and gets no worktree.
 	if got := d.prepareWorkdir(work.Job{ID: "j3", Kind: "plan", Rig: "r"}, "r"); got != "" {
 		t.Errorf("a plan job was given a worktree at %q", got)
+	}
+}
+
+// A run that is installing dependencies is not a stalled run.
+//
+// This is sa-sj2, reproduced. The bead's run was stopped at exactly ten
+// minutes for "nothing written (no output, no file changed)" while
+// portal/node_modules grew to 719 MB and 18,181 files -- an `npm install`
+// that had to finish before any of the bead's own work could start. The
+// watcher skipped ephemeral directories, so every one of those writes was
+// invisible, and the guard that exists to stop wedged agents killed a
+// working one instead.
+//
+// The distinction the old code lost: "ephemeral" is a statement about what
+// the LANDING may commit. It says nothing about whether writing it is work.
+func TestARunInstallingDependenciesIsNotStalled(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	cellRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cellRoot, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cellRoot, ".claude", "settings.json"),
+		[]byte(`{"env":{"ANTHROPIC_CUSTOM_HEADERS":"cf-aig-authorization: Bearer tok"}}`),
+		0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	checkout := filepath.Join(cellRoot, "town", "sandbox", "refinery", "rig")
+	if err := os.MkdirAll(filepath.Join(checkout, "portal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Writes ONLY into node_modules, the way npm does, and says nothing on
+	// stdout -- npm's own output goes to the runner's log, not to ours.
+	runner := filepath.Join(t.TempDir(), "runner.sh")
+	script := "#!/bin/sh\n" +
+		"mkdir -p " + checkout + "/portal/node_modules/next\n" +
+		"i=0\n" +
+		"while [ $i -lt 20 ]; do\n" +
+		"  echo dep > " + checkout + "/portal/node_modules/next/file-$i.js\n" +
+		"  i=$((i+1)); sleep 0.3\n" +
+		"done\n" +
+		"exit 0\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &dispatcher{
+		api: srv.URL, cell: "oss", rig: "sandbox", cellRoot: cellRoot,
+		runner: runner, http: srv.Client(),
+		deadline: time.Hour,
+		stall:    2 * time.Second, // shorter than the install takes
+		tick:     200 * time.Millisecond,
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	out, err := d.run(context.Background(),
+		work.Job{ID: "j1", Bead: "sa-sj2", Kind: "work", Cell: "oss", Rig: "sandbox"}, "")
+	if err != nil {
+		t.Fatalf("a run installing dependencies was stopped: %v\n%s", err, out)
+	}
+}
+
+// An install is visible through its directories, not its files.
+//
+// node_modules is far too large to stat file by file every half-minute, and
+// a capped file walk stops at the same horizon on every tick -- so a long
+// install looks exactly like a wedged agent. Directory mtimes move whenever
+// npm creates an entry, which is what makes a two-minute install legible.
+func TestAnInstallIsVisibleThroughItsDirectories(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Now().Add(-2 * time.Hour)
+
+	// The run's own tree, all stamped old: nothing here is going to move.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(dir, "README.md"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	deps := filepath.Join(dir, "node_modules")
+	if err := os.MkdirAll(filepath.Join(deps, "next"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{deps, filepath.Join(deps, "next"), dir} {
+		if err := os.Chtimes(d, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, before, _ := newestChange(dir)
+
+	// npm unpacks another package: a new directory inside node_modules.
+	if err := os.MkdirAll(filepath.Join(deps, "react"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, after, _ := newestChange(dir)
+
+	if !after.After(before) {
+		t.Errorf("an install was invisible: newest went %s -> %s. A run "+
+			"unpacking dependencies is working, and a watcher that cannot "+
+			"see it stops the run at the stall limit", before, after)
+	}
+}
+
+// Files inside a dependency tree are not stat'd, because there are hundreds
+// of thousands of them and this runs every tick. The directory above them
+// already answered the question.
+func TestDependencyFilesAreNotWalkedOneByOne(t *testing.T) {
+	dir := t.TempDir()
+	deps := filepath.Join(dir, "node_modules", "next")
+	if err := os.MkdirAll(deps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 50 {
+		if err := os.WriteFile(filepath.Join(deps, fmt.Sprintf("f-%02d.js", i)),
+			[]byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, seen := newestChange(dir)
+	// The checkout itself, node_modules, next: three directories, and no
+	// files. Fifty would mean every dependency file is being stat'd.
+	if seen > 10 {
+		t.Errorf("the walk stat'd %d entries for a tree of 3 directories: "+
+			"dependency files are being walked one by one", seen)
 	}
 }
