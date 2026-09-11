@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/datopian/openbases/internal/work"
 )
@@ -275,5 +278,76 @@ func TestAnInvalidPlanWritesNothing(t *testing.T) {
 	}
 	if got := calls(t, state); len(got) != 0 {
 		t.Errorf("a refused plan still ran bd: %v", got)
+	}
+}
+
+// Filing is claimed by its own loop, so an agent cannot starve it.
+//
+// `pass` is synchronous, so during an hour-long run nothing else is claimed
+// at all. On 2026-09-11 a plan filed at 10:14 was still queued at 10:54,
+// behind a run installing dependencies -- while the filing itself is a few
+// database writes. The work loop now asks for `work` and nothing else, so a
+// filing is never behind it in the same queue.
+func TestTheWorkLoopAsksOnlyForWork(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/work/claim") {
+			asked = append(asked, r.URL.Query().Get("kind"))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[]`)
+	}))
+	defer srv.Close()
+
+	d := &dispatcher{
+		api: srv.URL, cell: "oss", rig: "sandbox", cellRoot: t.TempDir(),
+		http: srv.Client(), log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	d.pass(context.Background())
+
+	if len(asked) == 0 {
+		t.Fatal("the work loop claimed nothing at all")
+	}
+	if asked[0] != "work" {
+		t.Errorf("the work loop asked for kind %q; asking for any kind puts "+
+			"filing behind hour-long agent runs in one FIFO", asked[0])
+	}
+}
+
+// And the filing loop asks only for filings, so it never picks up a work job
+// and runs an agent outside the serialised loop.
+func TestTheFilingLoopAsksOnlyForFilings(t *testing.T) {
+	claims := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/work/claim") {
+			select {
+			case claims <- r.URL.Query().Get("kind"):
+			default:
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	d := &dispatcher{
+		api: srv.URL, cell: "oss", rig: "sandbox", cellRoot: t.TempDir(),
+		http: srv.Client(), log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	go d.fileLoop(ctx)
+
+	select {
+	case got := <-claims:
+		if got != "file" {
+			t.Errorf("the filing loop asked for kind %q, so it can claim a work "+
+				"job and start an agent outside the serialised loop", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("the filing loop never claimed anything")
 	}
 }
