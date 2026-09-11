@@ -838,9 +838,28 @@ func newestChange(checkout string) (string, time.Time, int) {
 	var newest time.Time
 	var name string
 	seen := 0
-	note := func(rel string, t time.Time) {
-		if t.After(newest) {
-			newest, name = t, rel
+	// A file beats a directory on a tie, and the checkout root never names
+	// anything.
+	//
+	// Writing a file updates its parent directories too, at the same instant
+	// or a hair earlier -- the entry is created, then the bytes are written.
+	// Without the preference the heartbeat says "wrote ." on Linux while a
+	// perfectly good filename sits one comparison away, which is what CI
+	// caught here.
+	note := func(rel string, t time.Time, isDir bool) {
+		if isDir && rel == "." {
+			// Any change that moves the root's own mtime is an entry
+			// created or removed directly in it, and that entry is walked.
+			return
+		}
+		if t.Before(newest) || (isDir && t.Equal(newest)) {
+			return
+		}
+		newest = t
+		if isDir {
+			name = rel + "/"
+		} else {
+			name = rel
 		}
 	}
 	_ = filepath.WalkDir(checkout, func(path string, e fs.DirEntry, err error) error {
@@ -860,7 +879,7 @@ func newestChange(checkout string) (string, time.Time, int) {
 			// an install does thousands of times.
 			if info, infoErr := e.Info(); infoErr == nil {
 				seen++
-				note(rel, info.ModTime())
+				note(rel, info.ModTime(), true)
 			}
 			return nil
 		}
@@ -876,7 +895,7 @@ func newestChange(checkout string) (string, time.Time, int) {
 		if err != nil {
 			return nil
 		}
-		note(rel, info.ModTime())
+		note(rel, info.ModTime(), false)
 		return nil
 	})
 	return name, newest, seen

@@ -1002,3 +1002,78 @@ func TestDependencyFilesAreNotWalkedOneByOne(t *testing.T) {
 			"dependency files are being walked one by one", seen)
 	}
 }
+
+// The heartbeat names a file, not the directory that contains it.
+//
+// Writing a file also updates its parent directories, at the same instant or
+// a hair earlier: the entry is created, then the bytes are written. Without a
+// tie-break the newest thing in the tree is the checkout root, and the
+// heartbeat reads "wrote . 0s ago" -- true, and worth nothing to whoever is
+// watching a run they are waiting on. CI on Linux caught exactly this; macOS
+// happened to order the two the other way.
+func TestTheHeartbeatNamesTheFileNotItsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	deep := filepath.Join(dir, "portal", "pages")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "index.tsx"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Every directory on the path stamped with the SAME mtime as the file,
+	// which is the tie that has to break towards the file.
+	fi, err := os.Stat(filepath.Join(deep, "index.tsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := fi.ModTime()
+	for _, d := range []string{dir, filepath.Join(dir, "portal"), deep} {
+		if err := os.Chtimes(d, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// And a directory that the walk reaches AFTER the file, with the same
+	// mtime. Without a tie-break this one wins purely by being later in
+	// lexical order, which is how the rule gets to look correct in a test
+	// that only ever walks parents first.
+	later := filepath.Join(dir, "portal", "zzz-cache")
+	if err := os.MkdirAll(later, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(later, at, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(dir, "portal"), at, at); err != nil {
+		t.Fatal(err)
+	}
+
+	name, _, _ := newestChange(dir)
+	if name != filepath.Join("portal", "pages", "index.tsx") {
+		t.Errorf("newestChange named %q; a directory won a tie against the "+
+			"file written inside it", name)
+	}
+}
+
+// The checkout root never names anything.
+//
+// Its mtime moves whenever an entry is created directly inside it, so it is
+// newest as often as not -- and "wrote ." tells whoever is watching a run
+// precisely nothing. The entry that moved it is walked anyway.
+func TestTheCheckoutRootIsNotAName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The root strictly newer than everything in it, which is what happens
+	// when a file is deleted rather than written.
+	future := time.Now().Add(time.Minute)
+	if err := os.Chtimes(dir, future, future); err != nil {
+		t.Fatal(err)
+	}
+	name, _, _ := newestChange(dir)
+	if name == "." || name == "./" || name == "" {
+		t.Errorf("newestChange named the checkout root (%q): a heartbeat "+
+			"saying \"wrote .\" tells nobody anything", name)
+	}
+}
