@@ -691,12 +691,19 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 	// normal outcome.
 	progress := func() (string, int) {
 		name, at, seen := newestChange(job.Checkout)
+		// The agent's own log counts, and it is the difference between
+		// stopping a wedged run and stopping a working one. An agent that
+		// spends ten minutes reading the repository and waiting on a
+		// ninety-second model call writes no file and says nothing on
+		// stdout -- but it writes its log the whole time.
+		logPath, logSize, logAt := agentLog(d.cellRoot, bead)
+		_ = logPath
 		// The count is part of the mark, not decoration. A dependency
 		// install writes thousands of files whose mtimes all land in the
 		// same second, and a walk that stops at a cap may not reach the
 		// newest of them; the number of files is what moves unmistakably
 		// while npm is running.
-		return fmt.Sprintf("%s@%s#%d", name, at, seen), buf.len()
+		return fmt.Sprintf("%s@%s#%d|%s@%d", name, at, seen, logAt, logSize), buf.len()
 	}
 	lastMark, lastBytes := progress()
 	lastMoved := time.Now()
@@ -704,7 +711,15 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 	for {
 		select {
 		case err := <-done:
-			return strings.TrimSpace(buf.String()), err
+			// The agent's log goes with the outcome, always -- not only on
+			// failure. opencode writes about 190 bytes to stdout for a
+			// whole run, so without this the record of a run is its exit
+			// status and nothing else: three days of runs that produced
+			// nothing could not be explained from the job at all, and the
+			// only copy of what the agent did sat in a state directory
+			// nobody thought to look in.
+			return withTranscript(strings.TrimSpace(buf.String()),
+				transcriptTail(d.cellRoot, bead, 4<<10)), err
 		case <-tick.C:
 			mark, bytes := progress()
 			if mark != lastMark || bytes != lastBytes {
@@ -721,8 +736,8 @@ func (d *dispatcher) run(ctx context.Context, job work.Job, extra string) (strin
 					"job", job.ID, "bead", job.Bead,
 					"idle", idle.Round(time.Second), "stall", d.stall)
 				d.heartbeat(ctx, job.ID, fmt.Sprintf(
-					"stopped: nothing written for %s (no output, no file changed)",
-					idle.Round(time.Second)))
+					"stopped: nothing written for %s (no output, no file "+
+						"changed, no agent log)", idle.Round(time.Second)))
 				cancelRun()
 
 				// The stall is the reason, always -- wrapped around whatever
