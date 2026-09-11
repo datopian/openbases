@@ -71,24 +71,36 @@
         group: root
         mode: "0600"
 
+    # Asked once, rather than inferred from an error message.
+    #
+    # The first version ran mkswap unconditionally and tolerated a stderr
+    # containing "already". mkswap's actual refusal is
+    #
+    #   mkswap: error: /swapfile is mounted; will not make swapspace
+    #
+    # which contains no such word, so every deploy after the first failed on
+    # this task -- and because it fails early in the base role, the whole
+    # deploy stopped: the run that was carrying the transcript fix installed
+    # nothing. Matching on the text of an error is guessing; asking whether
+    # the swap is already on is not.
+    - name: Ask whether the swapfile is already in use
+      ansible.builtin.command:
+        cmd: swapon --noheadings --show=NAME
+      register: active_swap
+      changed_when: false
+      failed_when: false
+
     - name: Format the swapfile
       ansible.builtin.command:
         cmd: mkswap /swapfile
-      register: mkswap_result
-      changed_when: "'Setting up swapspace' in mkswap_result.stdout"
-      failed_when:
-        - mkswap_result.rc != 0
-        - "'already' not in mkswap_result.stderr"
+      when: "'/swapfile' not in active_swap.stdout"
+      changed_when: true
 
     - name: Turn the swapfile on
       ansible.builtin.command:
         cmd: swapon /swapfile
-      register: swapon_result
-      changed_when: swapon_result.rc == 0
-      failed_when:
-        - swapon_result.rc != 0
-        # Already on is the steady state, not a failure.
-        - "'already' not in swapon_result.stderr"
+      when: "'/swapfile' not in active_swap.stdout"
+      changed_when: true
 
     - name: Keep the swapfile across reboots
       ansible.builtin.lineinfile:
