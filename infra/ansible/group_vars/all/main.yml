@@ -8,6 +8,14 @@ admin_users: []
 # unannounced reboot of the execution node kills running agent work.
 unattended_upgrades_automatic_reboot: false
 
+# Swap, in MB. 0 disables it.
+#
+# 4096 on a 4 GB execution node: enough to absorb an `npm ci` peak or a
+# `next build` alongside an agent, which is what stopped the node answering
+# at all on 2026-09-11. It is a safety net, not sizing -- a box that needs
+# swap to finish its ordinary work is a box that wants more memory.
+swap_size_mb: 4096
+
 # Journald retention. Enough to investigate an incident without filling the disk.
 journald_max_use: 2G
 journald_max_retention: 30day
