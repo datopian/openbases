@@ -725,6 +725,37 @@ def check_no_unit_derives_a_username_from_an_instance_name() -> None:
                 f"`| replace('-', '_')`.")
 
 
+def check_a_security_upgrade_does_not_restart_work_in_progress() -> None:
+    """A security upgrade must not bounce a service that is running work.
+
+    Automatic-Reboot being off is only half of it. After any apt run,
+    needrestart restarts every service whose libraries changed, and on
+    2026-09-11 at 06:48 UTC that killed an agent 1h38m into a run: apt-daily
+    fired, wg-dispatcher-oss was restarted, and the run died with "signal:
+    terminated" having done nothing wrong.
+
+    The base role ships an override excluding wg-* units from automatic
+    restart. This asserts it stays, because deleting it is silent until the
+    next upgrade window -- the worst moment to discover it.
+    """
+    base = ROOT / "infra" / "ansible" / "roles" / "base" / "tasks" / "main.yml"
+    if not base.exists():
+        problems.append(f"{base} is missing")
+        return
+    text = base.read_text()
+    if "needrestart/conf.d" not in text:
+        problems.append(
+            "the base role ships no needrestart override, so a security upgrade "
+            "restarts wg-* services and kills whatever agent work is running"
+        )
+        return
+    if "qr(^wg-)" not in text or "=> 0" not in text:
+        problems.append(
+            "the needrestart override does not exclude wg-* units from automatic "
+            "restart, which is the whole point of the file"
+        )
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -744,6 +775,7 @@ def main() -> int:
         check_a_job_deadline_stays_under_the_cell_ceiling,
         check_no_unit_derives_a_username_from_an_instance_name,
         check_every_ansible_secret_is_exported_by_the_deploy,
+        check_a_security_upgrade_does_not_restart_work_in_progress,
     ):
         check()
 

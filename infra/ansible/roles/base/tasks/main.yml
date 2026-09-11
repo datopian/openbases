@@ -41,6 +41,111 @@
       Unattended-Upgrade::Remove-Unused-Dependencies "true";
   notify: Restart unattended-upgrades
 
+# Swap, because the alternative is the node disappearing.
+#
+# The execution node is a cx23: 2 cores, 4 GB, no swap. On it at once: the
+# dispatcher (1.3 GB peak, measured), an opencode agent (520 MB, measured),
+# three witnesses, a Dolt server per bead graph, cloudflared -- and then an
+# `npm ci` that writes 719 MB and peaks over a gigabyte.
+#
+# On 2026-09-11 the result was not an OOM kill, which would at least have
+# named a victim. The box simply stopped answering: sshd could not finish a
+# banner exchange, ansible called it UNREACHABLE, the dispatcher stopped
+# heart-beating mid-run, and the only evidence was a job frozen at a
+# twenty-minute-old note.
+#
+# Swap does not make a 4 GB box into a big one and it is not a substitute for
+# sizing it correctly. It makes the difference between slow and gone.
+- name: Provide swap so a memory spike is slow rather than fatal
+  when: swap_size_mb | int > 0
+  block:
+    - name: Create the swapfile
+      ansible.builtin.command:
+        cmd: "fallocate -l {{ swap_size_mb }}M /swapfile"
+        creates: /swapfile
+
+    - name: Only root may read the swapfile
+      ansible.builtin.file:
+        path: /swapfile
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Format the swapfile
+      ansible.builtin.command:
+        cmd: mkswap /swapfile
+      register: mkswap_result
+      changed_when: "'Setting up swapspace' in mkswap_result.stdout"
+      failed_when:
+        - mkswap_result.rc != 0
+        - "'already' not in mkswap_result.stderr"
+
+    - name: Turn the swapfile on
+      ansible.builtin.command:
+        cmd: swapon /swapfile
+      register: swapon_result
+      changed_when: swapon_result.rc == 0
+      failed_when:
+        - swapon_result.rc != 0
+        # Already on is the steady state, not a failure.
+        - "'already' not in swapon_result.stderr"
+
+    - name: Keep the swapfile across reboots
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "/swapfile none swap sw 0 0"
+        state: present
+
+    # Low, not zero: swap is the safety net for a spike, not a place to run
+    # from. Zero would refuse to use it until the kernel is already in
+    # trouble, which is the situation this exists to avoid.
+    # Written as a file and applied with sysctl rather than through
+    # ansible.posix.sysctl: that collection is not a declared dependency of
+    # this playbook, and a play that fails on a missing collection is a
+    # deploy that installs nothing.
+    - name: Prefer RAM until it is genuinely short
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-workgraph-swap.conf
+        mode: "0644"
+        content: |
+          # Managed by Ansible. Low, not zero: swap is the safety net for a
+          # spike, not a place to run from.
+          vm.swappiness = 10
+      register: swappiness
+
+    - name: Apply the swappiness setting now
+      ansible.builtin.command:
+        cmd: sysctl --system
+      when: swappiness.changed
+      changed_when: true
+
+# A security upgrade must not kill an agent mid-run.
+#
+# Automatic-Reboot is already off, but that is only half of it: after apt
+# installs anything, needrestart bounces every service whose libraries
+# changed. On 2026-09-11 at 06:48 UTC apt-daily-upgrade ran, needrestart
+# restarted wg-dispatcher-oss, and a run that had been working for 1h38m died
+# with "signal: terminated" -- the fourth run that day to end for a reason
+# that had nothing to do with the work.
+#
+# wg-* units are excluded from automatic restart, and nothing else is: a
+# security update still bounces sshd, and postgres, and everything that is
+# not ours. What it costs is that a wg-* service keeps running against the
+# libraries it started with until the next deploy restarts it, which is
+# frequent. What it buys is that an hour of agent work is not thrown away by
+# a timer.
+- name: Keep security upgrades from restarting work in progress
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/50-workgraph.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible. 0 = never restart automatically.
+      $nrconf{override_rc} = {
+          qr(^wg-) => 0,
+      };
+  # No handler: this changes what a LATER apt run does, and restarting
+  # anything here would be the exact harm it exists to prevent.
+
 - name: Enable unattended-upgrades
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/20auto-upgrades
