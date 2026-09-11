@@ -84,6 +84,23 @@ export HCLOUD_TOKEN="$(read_key hcloud_token)"
 export HCLOUD_PROJECT="$(read_key hcloud_project)"
 export HCLOUD_LOCATION="$(read_key hcloud_location)"
 export CLOUDFLARE_API_TOKEN="$(read_key cloudflare_api_token)"
+
+# Unattended SSH, so a deploy does not depend on somebody's browser.
+#
+# cloudflared reads these two and uses the Access service token instead of a
+# cached per-hostname token minted by `cloudflared access login`. ansible.cfg
+# has said so since the ProxyCommand was written; nothing set them, so every
+# run has quietly used an operator's browser session -- which lives an hour,
+# and whose org token expires outright.
+#
+# On 2026-09-11 it expired mid-task. ssh to both nodes began timing out during
+# the banner exchange, a deploy reported the execution node UNREACHABLE and
+# installed nothing there while still printing failed=0, and the dispatcher
+# fixes that deploy was carrying sat undeployed for an hour. The token and the
+# non-identity policy that accepts it already existed in tofu; only the
+# credential was unreachable.
+export TUNNEL_SERVICE_TOKEN_ID="$(read_key automation_client_id)"
+export TUNNEL_SERVICE_TOKEN_SECRET="$(read_key automation_client_secret)"
 export CLOUDFLARE_ACCOUNT_ID="$(read_key cloudflare_account_id)"
 export CLOUDFLARE_ZONE_ID="$(read_key cloudflare_zone_id)"
 export CLOUDFLARE_ZONE_NAME="$(read_key cloudflare_zone_name)"
