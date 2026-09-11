@@ -135,3 +135,119 @@ func TestNoTranscriptAddsNothing(t *testing.T) {
 		t.Errorf("a missing state directory produced %q", got)
 	}
 }
+
+// The transcript survives what the database keeps.
+//
+// system_finish_work stores left(result, 4000) -- the FIRST 4000 characters --
+// so appending the transcript put it exactly where the cut lands. msf8-17x
+// finished with a result of precisely 4000 bytes of harness stdout and no
+// transcript at all: the run was explained nowhere, which is the whole reason
+// this exists.
+func TestTheTranscriptSurvivesTheResultLimit(t *testing.T) {
+	chatty := strings.Repeat("harness stdout line\n", 600) // ~12 KB
+	log := strings.Repeat("agent log line\n", 600)         // ~9 KB
+	log += "THE LAST THING THE AGENT DID\n"
+
+	got := withTranscript(chatty, log)
+
+	if len(got) > 4000 {
+		t.Errorf("the result is %d characters; the database keeps 4000 and "+
+			"drops the rest silently", len(got))
+	}
+	if !strings.Contains(got, "agent transcript") {
+		t.Error("the transcript did not survive")
+	}
+	if !strings.Contains(got, "THE LAST THING THE AGENT DID") {
+		t.Error("the END of the transcript did not survive, which is the part " +
+			"that says how the run finished")
+	}
+	if !strings.Contains(got, "harness stdout line") {
+		t.Error("the harness output was dropped entirely")
+	}
+	if !strings.Contains(got, "omitted") {
+		t.Error("the result does not say that anything was dropped")
+	}
+}
+
+// A short run keeps both halves whole.
+func TestAShortRunIsNotClipped(t *testing.T) {
+	got := withTranscript("all done", "read a file\nwrote a file")
+	for _, want := range []string{"all done", "read a file", "wrote a file"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q was lost from a result well under the limit: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "omitted") {
+		t.Errorf("a short result claims something was dropped: %q", got)
+	}
+}
+
+// The transcript survives the harness tearing its own state down.
+//
+// wg-runner removes <cellRoot>/runs/.<bead>.state before it exits, so by the
+// time Wait returns there is nothing left to read. Reading the log only after
+// the run therefore captured nothing, every time -- which is how msf8-17x
+// finished a twenty-minute run whose record explained nothing at all.
+func TestTheTranscriptSurvivesTheHarnessTearingDownItsState(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	cellRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cellRoot, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cellRoot, ".claude", "settings.json"),
+		[]byte(`{"env":{"ANTHROPIC_CUSTOM_HEADERS":"cf-aig-authorization: Bearer tok"}}`),
+		0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+	if err := os.MkdirAll(filepath.Join(cellRoot, "town", "sandbox", "refinery", "rig"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	state := transcriptDir(cellRoot, "sa-tear")
+	logDir := filepath.Join(state, "opencode", "log")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Writes its log, then removes its whole state directory on the way out,
+	// exactly as the real runner's teardown does.
+	runner := filepath.Join(t.TempDir(), "runner.sh")
+	script := "#!/bin/sh\n" +
+		"i=0\n" +
+		"while [ $i -lt 6 ]; do\n" +
+		"  echo \"level=INFO message=working step=$i\" >> " + filepath.Join(logDir, "opencode.log") + "\n" +
+		"  i=$((i+1)); sleep 0.4\n" +
+		"done\n" +
+		"echo 'level=INFO message=THE-LAST-STEP' >> " + filepath.Join(logDir, "opencode.log") + "\n" +
+		"rm -rf " + state + "\n" +
+		"exit 0\n"
+	if err := os.WriteFile(runner, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &dispatcher{
+		api: srv.URL, cell: "oss", rig: "sandbox", cellRoot: cellRoot,
+		runner: runner, http: srv.Client(),
+		deadline: time.Hour, stall: time.Minute,
+		tick: 200 * time.Millisecond,
+		log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	out, err := d.run(context.Background(),
+		work.Job{ID: "j1", Bead: "sa-tear", Kind: "work", Cell: "oss", Rig: "sandbox"}, "")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, statErr := os.Stat(state); statErr == nil {
+		t.Fatal("the test did not exercise teardown: the state directory is still there")
+	}
+	if !strings.Contains(out, "message=working") {
+		t.Errorf("the transcript did not survive teardown: %q", out)
+	}
+}
