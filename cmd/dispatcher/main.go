@@ -332,6 +332,9 @@ func (d *dispatcher) pass(ctx context.Context) {
 		// uncommitted work is kept and logged, because that work never
 		// reached the repository and deleting it would destroy the thing
 		// per-bead checkouts exist to protect.
+		// Cache what the run installed before the worktree goes, so the
+		// next bead on this rig starts warm.
+		d.saveDependencies(jobRig, runDir)
 		d.releaseWorkdir(jobRig, runDir, job.Bead)
 	}
 
@@ -435,6 +438,13 @@ func (d *dispatcher) prepareWorkdir(job work.Job, rig string) string {
 		return ""
 	}
 	d.log.Info("worktree", "bead", job.Bead, "dir", dir, "base", base)
+	// Dependencies before the agent starts, not by the agent.
+	//
+	// A fresh worktree has no node_modules, so a Node project's first act is
+	// a 700 MB install -- which is where entire runs went on 2026-09-11.
+	// Hardlinked from the rig's cache, it costs seconds and no disk.
+	d.warmDependencies(rig, dir)
+
 	return dir
 }
 

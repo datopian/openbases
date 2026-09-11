@@ -150,7 +150,23 @@ func (j Job) Instructions() string {
 				"is done and not before. If you cannot complete it, leave it open and say why "+
 				"in a comment.%s\n\n"+
 				"You have a shell. Use it: run the build, run the tests, run the linter, "+
-				"install what the project needs, read the code with git log and git diff. "+
+				"read the code with git log and git diff. "+
+				// Said because it decides whether the run gets to the work at all.
+				//
+				// On 2026-09-11 every bead that touched this portal spent its
+				// whole run installing: 11 minutes, 38 minutes, 98 minutes, one
+				// of them still unpacking typescript 35 minutes in. The beads
+				// that finished in five minutes were the ones that never ran npm.
+				// Dependencies are now hardlinked into the checkout before the
+				// agent starts, and `npm ci` DELETES node_modules before
+				// reinstalling it -- so an agent that reaches for it out of habit
+				// throws away the thing that was put there to save its run.
+				"Dependencies are already installed: if a project here has a "+
+				"node_modules, it was hardlinked in before you started and matches "+
+				"the lockfile. Do NOT run `npm ci` -- it deletes node_modules and "+
+				"reinstalls from scratch, which on this machine has eaten entire "+
+				"runs and left the bead untouched. Build and test directly (`npm run build`, `npm test`). Only if you actually add or change a dependency, run "+
+				"`npm install <pkg>`, which is incremental. "+
 				"Work IN PLACE, at the paths the files belong at: that checkout IS the "+
 				"repository, so a portal that should live at portal/ goes at portal/ and "+
 				"not in a copy of the repository somewhere else. Do not clone it, do not "+
