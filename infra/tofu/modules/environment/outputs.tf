@@ -105,3 +105,27 @@ output "api_hostname" {
   description = "The token-authenticated API hostname, or empty when none is configured (wg-p4h.1)."
   value       = var.api_hostname
 }
+
+# The automation service token, so an unattended run can actually use it.
+#
+# The token and the non-identity policy that accepts it have existed since
+# WP-E3, attached to both SSH applications -- and nothing could reach the
+# credential, because it was never an output. So every ansible run, including
+# every deploy, went through an operator's cached browser token instead.
+#
+# That token lives an hour and its org token expires outright. On 2026-09-11
+# it lapsed mid-task: ssh to both nodes started timing out during the banner
+# exchange, a deploy reported UNREACHABLE for the execution node and installed
+# nothing there while still printing failed=0, and the only fix was a human
+# running `cloudflared access login` in a browser. An unattended path that
+# depends on a browser session is not unattended.
+output "automation_client_id" {
+  description = "Access service token id for unattended SSH (TUNNEL_SERVICE_TOKEN_ID)."
+  value       = cloudflare_zero_trust_access_service_token.automation.client_id
+}
+
+output "automation_client_secret" {
+  description = "Access service token secret for unattended SSH (TUNNEL_SERVICE_TOKEN_SECRET)."
+  value       = cloudflare_zero_trust_access_service_token.automation.client_secret
+  sensitive   = true
+}

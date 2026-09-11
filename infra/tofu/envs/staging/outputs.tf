@@ -58,3 +58,14 @@ output "probe_client_secret" {
 output "cell_work_queue_aud" {
   value = module.environment.cell_work_queue_aud
 }
+
+output "automation_client_id" {
+  description = "Access service token id for unattended SSH; goes in the encrypted secrets as automation_client_id."
+  value       = module.environment.automation_client_id
+}
+
+output "automation_client_secret" {
+  description = "Access service token secret for unattended SSH; goes in the encrypted secrets as automation_client_secret."
+  value       = module.environment.automation_client_secret
+  sensitive   = true
+}
