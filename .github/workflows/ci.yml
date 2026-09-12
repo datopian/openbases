@@ -25,7 +25,7 @@ on:
 # machines or to stop needing them for pull requests. This is the second.
 #
 # The workflows that stay self-hosted are the ones no fork can trigger:
-# staging-deploy and main-push-guard are push-only, external-probe and
+# main-push-guard is push-only, external-probe and
 # toolchain-upgrade are scheduled. They also need to reach the nodes.
 #
 # arm64 is kept deliberately. Everything here publishes an arm64 build -- the
