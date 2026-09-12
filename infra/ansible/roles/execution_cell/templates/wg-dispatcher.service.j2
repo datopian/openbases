@@ -56,6 +56,27 @@ RestrictSUIDSGID=true
 LockPersonality=true
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+# Deny the rest, do not KILL on it -- because an agent's browser is a tool it
+# must have, and a browser trips this filter.
+#
+# The cell ships a real headless browser (wg-browse, chrome-headless-shell) so
+# an agent can look at a page it built rather than reason about the source. But
+# every agent is a child of this dispatcher and inherits this filter, and
+# Chromium's allocator calls pkey_alloc in a static initializer, before any
+# flag is read. @system-service does not list it, and the default action is to
+# SIGSYS-KILL: the browser died with "Bad system call (core dumped)" on every
+# launch. msf8-ctw then spent its run building an LD_PRELOAD interposer and
+# sweeping the syscall table trying to get around it -- an agent attacking its
+# own sandbox to do the job it was given, which is the strongest possible
+# signal the tool was missing.
+#
+# EPERM makes a denied syscall RETURN AN ERROR instead of killing the process,
+# so Chromium falls back and runs. It widens nothing: the same calls are still
+# denied. The dispatcher itself never makes them, so its own behaviour is
+# unchanged -- this only changes what happens to code that both calls a denied
+# syscall AND can handle the failure, which is exactly a browser. It is what
+# container runtimes do by default (deny-with-error, not kill).
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

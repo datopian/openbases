@@ -756,6 +756,35 @@ def check_a_security_upgrade_does_not_restart_work_in_progress() -> None:
         )
 
 
+def check_the_dispatcher_does_not_sigkill_a_browser() -> None:
+    """An agent's browser must not be SIGSYS-killed by the syscall filter.
+
+    The cell ships a real headless browser (wg-browse) so an agent can look at
+    a page it built. But every agent runs under the dispatcher unit, whose
+    SystemCallFilter=@system-service does not list pkey_alloc -- which
+    Chromium's allocator calls in a static initializer -- and whose default
+    action is to KILL. The browser died with "Bad system call" on every
+    launch, and msf8-ctw spent its run building an LD_PRELOAD interposer to get
+    around it. SystemCallErrorNumber=EPERM makes a denied syscall return an
+    error instead of killing, so the browser falls back and runs.
+    """
+    unit = (
+        ROOT
+        / "infra/ansible/roles/execution_cell/templates/wg-dispatcher.service.j2"
+    )
+    if not unit.exists():
+        problems.append(f"{unit} is missing")
+        return
+    text = unit.read_text()
+    if "SystemCallFilter" in text and "SystemCallErrorNumber" not in text:
+        problems.append(
+            "the dispatcher unit filters syscalls but does not set "
+            "SystemCallErrorNumber, so a denied syscall KILLS the process -- "
+            "which is how the agents' browser (pkey_alloc in Chromium's "
+            "allocator) dies on launch. Set SystemCallErrorNumber=EPERM."
+        )
+
+
 def main() -> int:
     for check in (
         check_no_inbound_rules,
@@ -776,6 +805,7 @@ def main() -> int:
         check_no_unit_derives_a_username_from_an_instance_name,
         check_every_ansible_secret_is_exported_by_the_deploy,
         check_a_security_upgrade_does_not_restart_work_in_progress,
+        check_the_dispatcher_does_not_sigkill_a_browser,
     ):
         check()
 

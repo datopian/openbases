@@ -167,6 +167,22 @@ func (j Job) Instructions() string {
 				"reinstalls from scratch, which on this machine has eaten entire "+
 				"runs and left the bead untouched. Build and test directly (`npm run build`, `npm test`). Only if you actually add or change a dependency, run "+
 				"`npm install <pkg>`, which is incremental. "+
+				// A browser, because web work cannot be verified by reasoning
+				// about source. msf8-17x diagnosed a broken map from jsdom
+				// alone and reached the wrong conclusion -- it decided the map
+				// was never created, when really it was framed on a 20-metre
+				// box -- because it had no way to actually look. And msf8-ctw,
+				// handed a real browser it did not know how to reach, tried to
+				// smuggle one past the sandbox instead. Both were missing the
+				// same sentence.
+				"You can look at a page with a real browser: `wg-browse shot "+
+				"<url> <out.png>` saves a screenshot, `wg-browse text <url>` "+
+				"prints the rendered DOM after scripts run, and `wg-browse "+
+				"console <url>` prints console messages and failed requests. "+
+				"Use it to CHECK web work -- start the dev server or serve the "+
+				"build, then look. Do not install your own browser or try to "+
+				"launch chromium directly; wg-browse is the one that works "+
+				"here, and it reaches localhost. "+
 				"Work IN PLACE, at the paths the files belong at: that checkout IS the "+
 				"repository, so a portal that should live at portal/ goes at portal/ and "+
 				"not in a copy of the repository somewhere else. Do not clone it, do not "+
