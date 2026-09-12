@@ -1,10 +1,12 @@
 # Runbook: deploying to staging
 
-**Deploys are manual.** `staging-deploy` cannot run while the repository is
-public — it needs a self-hosted runner, and the org runner group refuses public
-repositories. Moving it to GitHub's hosted fleet would mean putting the age
-private key there, which is a worse trade than typing a command. See the header
-of `.github/workflows/staging-deploy.yml`.
+**Deploys are manual.** There is no CI deploy: it would need the age private
+key in GitHub Actions to decrypt the secrets, and putting it there is a worse
+trade than typing a command. There used to be a `staging-deploy` workflow stub
+gated on an unset variable; every merge SKIPPED it, and a skipped job shows a
+green tick, so main looked deployed when nothing had shipped (wg-ge1). It was
+deleted rather than left to lie. If a real CI deploy is ever built, it runs the
+command below on a runner that can reach the nodes and holds the age key.
 
 ## The command
 
@@ -50,6 +52,18 @@ If you see the refusal instead, run `make build-linux` and start again.
 # One host.
 ... --limit workgraph-staging-execution
 ```
+
+```bash
+# Migrations only — schema change with no code change.
+../../scripts/with_secrets.sh staging \
+  ansible-playbook -i inventory/staging.yml site.yml --tags migrate
+```
+Use `--tags migrate`, NOT `--start-at-task "Install the migration tool"`. The
+control-api binary is installed BEFORE the migration tool, so starting at the
+migration task applies the migrations and leaves the API running the previous
+code -- silently: migrations land, `failed=0`, and only `/version` says the
+code is stale (wg-ge1). `--tags migrate` runs the three migration tasks and
+nothing else, on purpose.
 
 `--tags binaries` covers the binaries and the units that carry them. It does
 **not** cover apt packages, credential files or the dispatcher unit template —

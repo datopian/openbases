@@ -60,7 +60,7 @@
     owner: root
     group: root
   when: migrate_local_binary | length > 0
-  tags: [binaries, code]
+  tags: [binaries, code, migrate]
 
 # Shipped but never run by the playbook, deliberately. wg-init creates a
 # deployment's first organisation and administrator, which is a decision with a
@@ -197,13 +197,13 @@
   # actually moved.
   changed_when: "'msg=applied' in migrate_run.stdout"
   when: migrate_local_binary | length > 0
-  tags: [binaries, code]
+  tags: [binaries, code, migrate]
 
 - name: Report what the migrations did
   ansible.builtin.debug:
     msg: "{{ migrate_run.stdout_lines | default([]) | select('search', 'applied|up to date|migrations found') | list }}"
   when: migrate_local_binary | length > 0
-  tags: [binaries, code]
+  tags: [binaries, code, migrate]
 
 - name: Install the systemd unit
   ansible.builtin.template:

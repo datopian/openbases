@@ -42,7 +42,7 @@ name: external-probe
 # GitHub-hosted runner is a different provider entirely, which closes exactly
 # that gap.
 #
-# staging-deploy stays self-hosted and stays blocked: it needs the age key and
+# a CI deploy would need the age key and
 # SSH to the nodes, and moving it here would mean putting the key that
 # decrypts every secret into GitHub. Deploys are run by hand through
 # scripts/with_secrets.sh, which is what has been happening anyway.
