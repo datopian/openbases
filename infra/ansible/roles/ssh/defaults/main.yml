@@ -1,0 +1,5 @@
+---
+# The public half of the CI deploy key (WP-I1). Public, so it is committed;
+# the private half is the GitHub Actions secret WG_CI_SSH_KEY. Empty disables
+# the task, so a node with no CI deploy simply does not get the key.
+ci_deploy_ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHFNP2NJB96CxCIGKVh6V6D8ppN0oEHJtha5bO5kvlqF wg-ci-deploy"

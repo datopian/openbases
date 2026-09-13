@@ -32,3 +32,28 @@
       ClientAliveInterval 300
       ClientAliveCountMax 2
   notify: Restart sshd
+
+# The CI deploy key.
+#
+# The nodes authorise one key at provision -- the operator's, from Hetzner
+# (admin_ssh_key_ids). CI has no laptop and no such key, so the first CI
+# deploy authenticated through the tunnel and Access, then failed at the SSH
+# layer with "Permission denied (publickey)". This adds a dedicated deploy key
+# so CI can run the same playbook an operator can.
+#
+# Appended, never replacing: the operator's injected key must survive, so this
+# manages exactly its own line and leaves everything else in authorized_keys
+# alone. A separate key rather than reusing the operator's means CI can be
+# revoked -- delete the line, redeploy -- without touching anyone's laptop
+# access. The public half is committed (it is public); the private half lives
+# only in the CI secret WG_CI_SSH_KEY.
+- name: Authorise the CI deploy key for root
+  ansible.builtin.lineinfile:
+    path: /root/.ssh/authorized_keys
+    line: "{{ ci_deploy_ssh_public_key }}"
+    state: present
+    create: true
+    owner: root
+    group: root
+    mode: "0600"
+  when: ci_deploy_ssh_public_key | default('') | length > 0

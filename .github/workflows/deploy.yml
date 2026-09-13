@@ -40,6 +40,7 @@ jobs:
     env:
       WG_CI_AGE_KEY: ${{ secrets.WG_CI_AGE_KEY }}
       WG_SECRETS_STAGING_ENC: ${{ secrets.WG_SECRETS_STAGING_ENC }}
+      WG_CI_SSH_KEY: ${{ secrets.WG_CI_SSH_KEY }}
     steps:
       - name: Refuse a deploy that cannot authenticate
         run: |
@@ -49,6 +50,7 @@ jobs:
           missing=
           [ -z "${WG_CI_AGE_KEY:-}" ] && missing="$missing WG_CI_AGE_KEY"
           [ -z "${WG_SECRETS_STAGING_ENC:-}" ] && missing="$missing WG_SECRETS_STAGING_ENC"
+          [ -z "${WG_CI_SSH_KEY:-}" ] && missing="$missing WG_CI_SSH_KEY"
           if [ -n "$missing" ]; then
             echo "::error::deploy secrets are not set:$missing"
             echo "Set them (operator, once):"
@@ -99,6 +101,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/wg-secrets"
           printf '%s' "$WG_CI_AGE_KEY" > "$RUNNER_TEMP/ci-age.key"
           printf '%s' "$WG_SECRETS_STAGING_ENC" > "$RUNNER_TEMP/wg-secrets/staging.enc.yaml"
+          printf '%s\n' "$WG_CI_SSH_KEY" > "$RUNNER_TEMP/ci-ssh.key"
+          chmod 600 "$RUNNER_TEMP/ci-ssh.key"
           # Fail now if the key does not match the bundle, rather than midway
           # through ansible with a half-applied deploy.
           SOPS_AGE_KEY_FILE="$RUNNER_TEMP/ci-age.key" \
@@ -109,6 +113,7 @@ jobs:
         env:
           WG_SECRETS_DIR: ${{ runner.temp }}/wg-secrets
           SOPS_AGE_KEY_FILE: ${{ runner.temp }}/ci-age.key
+          ANSIBLE_PRIVATE_KEY_FILE: ${{ runner.temp }}/ci-ssh.key
         run: |
           set -euo pipefail
           cd infra/ansible
