@@ -24,7 +24,7 @@ import (
 
 // The remote MCP server (wg-p4h.11).
 //
-// /mcp serves the same six tools as `wg mcp`, over Streamable HTTP, to the
+// /mcp serves the same tools as `wg mcp` (internal/mcp.Tools()), over Streamable HTTP, to the
 // clients that cannot run a local process: Claude Cowork's sandbox, claude.ai
 // in a browser, and the phone apps.
 //
