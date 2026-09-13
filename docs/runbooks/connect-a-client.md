@@ -69,6 +69,7 @@ client and missing in the other.
 | `workgraph_ask` | the chief of staff's fixed question set |
 | `workgraph_work_list` | what is in flight and what it cost |
 | `workgraph_bead` | one bead: outcome, the agent's own words, model, cost, pull request |
+| `workgraph_job` | a queued job's progress, by the id a file or dispatch returned |
 | `workgraph_project_list` | projects this person can see |
 | `workgraph_project_create` | a new project, with owners |
 | `workgraph_repositories_attach` | make repositories dispatchable |
