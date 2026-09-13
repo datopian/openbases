@@ -1,0 +1,13 @@
+# Pinned SSH host keys for the nodes, reached at their Cloudflare hostnames.
+#
+# host_key_checking is on (ansible.cfg), and a fresh CI runner has no cached
+# keys, so the first CI deploy failed with "Host key verification failed".
+# Rather than turn checking off, the keys are pinned here and verified against
+# -- by CI and by every laptop, so verification no longer depends on whoever
+# happened to accept the key first.
+#
+# These are PUBLIC keys; committing them is safe and is the point. If a node is
+# reprovisioned its host key changes and the deploy fails loudly here until
+# this file is updated (fetch /etc/ssh/ssh_host_ed25519_key.pub from the node).
+ssh-staging.openbases.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIcVIXO7Wzd+sIdcrIUTI0huAq3rRZirc7Umuztmyh8U
+ssh-exec-staging.openbases.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWqJpxd18JhrYb6I/XlriG+M1OG2ZdkFFecZn84DSW5
