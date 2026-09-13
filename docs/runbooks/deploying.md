@@ -1,12 +1,25 @@
 # Runbook: deploying to staging
 
-**Deploys are manual.** There is no CI deploy: it would need the age private
-key in GitHub Actions to decrypt the secrets, and putting it there is a worse
-trade than typing a command. There used to be a `staging-deploy` workflow stub
-gated on an unset variable; every merge SKIPPED it, and a skipped job shows a
-green tick, so main looked deployed when nothing had shipped (wg-ge1). It was
-deleted rather than left to lie. If a real CI deploy is ever built, it runs the
-command below on a runner that can reach the nodes and holds the age key.
+**Merging to main deploys automatically** (`.github/workflows/deploy.yml`).
+The workflow builds the web UI and the node binaries, decrypts the secrets
+with a CI-only age key, and runs the same ansible playbook this runbook
+describes, reaching the node over cloudflared exactly as a laptop does. It
+serialises (one deploy at a time) and fails loudly if its secrets are unset --
+no false green, which is the wg-ge1 lesson.
+
+The command below is the **manual fallback**: use it to deploy from a laptop
+without waiting for CI, to deploy a single host or tag, or when CI is down.
+
+CI holds two GitHub Actions secrets, set once by an operator:
+
+```bash
+gh secret set WG_CI_AGE_KEY < <the CI age key file>
+gh secret set WG_SECRETS_STAGING_ENC < ~/.config/datopian-workgraph/secrets/staging.enc.yaml
+```
+
+`WG_CI_AGE_KEY` is a CI-ONLY age key -- a second SOPS recipient on the bundle,
+not the operator's master key -- so CI can be re-keyed by dropping that
+recipient (`sops rotate` on the bundle) without disturbing the operator's key.
 
 ## The command
 

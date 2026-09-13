@@ -1,0 +1,116 @@
+# Deploy to the running environment on every merge to main.
+#
+# This is what wg-ge1 said was missing: the old staging-deploy was a stub that
+# skipped and showed a false green, so main looked deployed when nothing had
+# shipped. This actually deploys, and fails loudly when it cannot.
+#
+# The environment is public-facing and treated as production (the box was sized
+# up to cx43 and promoted in place), but it is still reached at the staging
+# names and through the staging tofu/ansible env -- so this deploys `staging`.
+#
+# How it reaches a node with no inbound port: cloudflared, exactly as an
+# operator's laptop does. ansible.cfg carries the ProxyCommand; cloudflared
+# reads TUNNEL_SERVICE_TOKEN_ID / _SECRET from the environment, and
+# with_secrets.sh exports both from the decrypted bundle. The bundle is
+# decrypted with a CI-ONLY age key (a second SOPS recipient), never the
+# operator's master key -- so a compromise of CI leaks the staging secrets it
+# was going to use anyway, not the key to everything, and CI can be re-keyed by
+# dropping that one recipient.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time; a second merge queues behind the first rather than
+  # racing it onto the same node.
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: build and deploy to the node
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      WG_CI_AGE_KEY: ${{ secrets.WG_CI_AGE_KEY }}
+      WG_SECRETS_STAGING_ENC: ${{ secrets.WG_SECRETS_STAGING_ENC }}
+    steps:
+      - name: Refuse a deploy that cannot authenticate
+        run: |
+          set -uo pipefail
+          # Loud, not skipped. A deploy that quietly does nothing because a
+          # secret is missing is the exact false-green wg-ge1 was about.
+          missing=
+          [ -z "${WG_CI_AGE_KEY:-}" ] && missing="$missing WG_CI_AGE_KEY"
+          [ -z "${WG_SECRETS_STAGING_ENC:-}" ] && missing="$missing WG_SECRETS_STAGING_ENC"
+          if [ -n "$missing" ]; then
+            echo "::error::deploy secrets are not set:$missing"
+            echo "Set them (operator, once):"
+            echo "  gh secret set WG_CI_AGE_KEY < <ci-age-key-file>"
+            echo "  gh secret set WG_SECRETS_STAGING_ENC < ~/.config/datopian-workgraph/secrets/staging.enc.yaml"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install sops, age, ansible and cloudflared
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          # sops and cloudflared are not in apt; pin both to a known release.
+          SOPS_VER=v3.13.3
+          curl -fsSL -o /tmp/sops "https://github.com/getsops/sops/releases/download/${SOPS_VER}/sops-${SOPS_VER}.linux.amd64"
+          sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+          curl -fsSL -o /tmp/cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+          sudo install -m 0755 /tmp/cloudflared /usr/local/bin/cloudflared
+          pipx install --quiet ansible-core || python3 -m pip install --user ansible-core
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build the web UI and the node binaries
+        run: |
+          set -euo pipefail
+          # web-build first: the UI is embedded in the binary and dist/ is not
+          # committed, so a build without it ships an empty interface.
+          (cd apps/web && npm ci)
+          make web-build
+          make build-linux
+
+      - name: Materialise the CI key and the encrypted secrets
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/wg-secrets"
+          printf '%s' "$WG_CI_AGE_KEY" > "$RUNNER_TEMP/ci-age.key"
+          printf '%s' "$WG_SECRETS_STAGING_ENC" > "$RUNNER_TEMP/wg-secrets/staging.enc.yaml"
+          # Fail now if the key does not match the bundle, rather than midway
+          # through ansible with a half-applied deploy.
+          SOPS_AGE_KEY_FILE="$RUNNER_TEMP/ci-age.key" \
+            sops -d "$RUNNER_TEMP/wg-secrets/staging.enc.yaml" >/dev/null
+          echo "the CI key decrypts the bundle"
+
+      - name: Deploy
+        env:
+          WG_SECRETS_DIR: ${{ runner.temp }}/wg-secrets
+          SOPS_AGE_KEY_FILE: ${{ runner.temp }}/ci-age.key
+        run: |
+          set -euo pipefail
+          cd infra/ansible
+          ../../scripts/with_secrets.sh staging \
+            ansible-playbook -i inventory/staging.yml site.yml
