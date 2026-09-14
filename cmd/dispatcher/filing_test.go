@@ -403,3 +403,78 @@ func TestABeadTargetedByIDIsUpdatedNotCreated(t *testing.T) {
 		t.Errorf("the answer should map the ref to msf8-gru with created=false: %s", out)
 	}
 }
+
+// A fake gt that materialises a rig directory, so ensureRig can be exercised
+// without a real clone. gt is invoked as `gt rig add <rig> <cloneURL> --prefix
+// <p>` with cwd set to the town.
+func fakeGT(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "gt")
+	script := `#!/bin/sh
+# args: rig add <name> <cloneURL> --prefix <prefix>
+name="$3"
+mkdir -p "$name/refinery/rig" || exit 1
+printf '{"type":"rig"}' > "$name/config.json"
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// A filing whose rig is not on the cell yet provisions it on demand, instead of
+// failing with a raw `bd -C ... no such file`. This is the entryscape wedge:
+// attach makes the rig a routing target before the cell has cloned it, and the
+// first filing must be able to create it.
+func TestAFilingProvisionsAMissingRig(t *testing.T) {
+	// A registry endpoint for registerRig to post to; its answer does not matter.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cellRoot := t.TempDir()
+	if err := os.MkdirAll(cellRoot+"/town", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := &dispatcher{
+		cell: "oss", rig: "sandbox", cellRoot: cellRoot,
+		gtBinary: fakeGT(t),
+		api:      srv.URL, clientID: "x", clientSecret: "x", http: srv.Client(),
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	job := &work.Job{
+		ID: "j1", Kind: work.KindFile, Cell: "oss", Rig: "entryscape",
+		CloneURL: "https://github.com/datopian/entryscape", Prefix: "ent1",
+	}
+	if _, err := os.Stat(cellRoot + "/town/entryscape"); err == nil {
+		t.Fatal("precondition: the rig must not exist yet")
+	}
+	if err := d.ensureRig(context.Background(), job); err != nil {
+		t.Fatalf("a filing should provision its missing rig, got: %v", err)
+	}
+	if st, err := os.Stat(cellRoot + "/town/entryscape"); err != nil || !st.IsDir() {
+		t.Fatalf("the rig's town directory was not created: %v", err)
+	}
+}
+
+// A filing for a rig with nothing to clone fails with an actionable message, not
+// a raw bd stat error leaking an internal path.
+func TestAFilingForAnUnprovisionableRigIsActionable(t *testing.T) {
+	cellRoot := t.TempDir()
+	_ = os.MkdirAll(cellRoot+"/town", 0o755)
+	d := &dispatcher{
+		cell: "oss", rig: "sandbox", cellRoot: cellRoot, gtBinary: fakeGT(t),
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	job := &work.Job{ID: "j1", Kind: work.KindFile, Cell: "oss", Rig: "ghost"}
+	err := d.ensureRig(context.Background(), job)
+	if err == nil {
+		t.Fatal("a rig with no clone URL should be refused")
+	}
+	if strings.Contains(err.Error(), "bd -C") || strings.Contains(err.Error(), "no such file or directory") {
+		t.Errorf("the error leaks an internal bd path instead of explaining the problem: %v", err)
+	}
+}
