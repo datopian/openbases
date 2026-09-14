@@ -1171,3 +1171,68 @@ func TestABrowserPathIsAlwaysInTheEnvironment(t *testing.T) {
 		}
 	}
 }
+
+// A google-ai-studio model is configured as a NATIVE Gemini provider pointed at
+// the loopback proxy, not the OpenAI /compat block. This is what lets Gemini 3's
+// thought_signature round-trip, and it keeps the gateway token out of the config
+// file (the proxy injects it).
+func geminiSpec() Spec {
+	s := spec()
+	s.Runtime = RuntimeOpenCode
+	s.Model = "google-ai-studio/gemini-3.8-flash"
+	s.GatewayBaseURL = "https://gateway.ai.cloudflare.com/v1/acct/workgraph-staging-oss"
+	s.GeminiProxyURL = "http://127.0.0.1:41234"
+	return s
+}
+
+func TestAGoogleModelUsesTheNativeProviderThroughTheProxy(t *testing.T) {
+	p, err := New(geminiSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := p.Settings
+	if !strings.Contains(cfg, `"@ai-sdk/google"`) {
+		t.Error("google model did not use the native @ai-sdk/google provider")
+	}
+	if !strings.Contains(cfg, `"http://127.0.0.1:41234/v1beta"`) {
+		t.Errorf("provider baseURL is not the proxy's /v1beta endpoint:\n%s", cfg)
+	}
+	if !strings.Contains(cfg, "cf-aig-metadata") {
+		t.Error("attribution metadata is missing from the google provider block")
+	}
+	// The whole point of the proxy: the gateway token must NOT be in the config
+	// file for a google model. It is injected by the proxy instead.
+	if strings.Contains(cfg, "Bearer tok") || strings.Contains(cfg, "cf-aig-authorization") {
+		t.Errorf("the gateway token leaked into the google provider config:\n%s", cfg)
+	}
+	argv := strings.Join(p.Argv, " ")
+	if !strings.Contains(argv, "-m wg-gemini/gemini-3.8-flash") {
+		t.Errorf("model ref is not the native-provider spelling: %q", argv)
+	}
+}
+
+func TestAGoogleModelRefusesWithoutTheProxyURL(t *testing.T) {
+	s := geminiSpec()
+	s.GeminiProxyURL = ""
+	if _, err := New(s); err == nil {
+		t.Fatal("a google model with no proxy URL should be refused")
+	}
+}
+
+// The compat path is unchanged: a workers-ai model still uses @ai-sdk/openai-
+// compatible with the token in the config, and does NOT touch the proxy.
+func TestAWorkersAIModelStillUsesCompatWithTheToken(t *testing.T) {
+	p, err := New(openCodeSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.Settings, `"@ai-sdk/openai-compatible"`) {
+		t.Error("workers-ai model no longer uses the compat provider")
+	}
+	if !strings.Contains(p.Settings, "cf-aig-authorization") {
+		t.Error("compat provider lost its gateway token")
+	}
+	if strings.Contains(p.Settings, "@ai-sdk/google") {
+		t.Error("workers-ai model wrongly configured the google provider")
+	}
+}

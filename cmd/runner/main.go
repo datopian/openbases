@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/datopian/openbases/internal/config"
+	"github.com/datopian/openbases/internal/geminiproxy"
 	"github.com/datopian/openbases/internal/runner"
 	"github.com/datopian/openbases/internal/version"
 )
@@ -102,11 +103,33 @@ func main() {
 		os.Exit(2)
 	}
 
+	// The auth-normalizing proxy for Gemini through the gateway's google-ai-studio
+	// route (internal/geminiproxy). Started here, before the plan is built,
+	// because the plan's opencode config must point at its loopback URL. Only a
+	// google-ai-studio model uses it; it is harmless idle for every other model,
+	// and closed when this process exits. Started only when the cell has a
+	// gateway base (the opencode path); a claude run reads its endpoint elsewhere
+	// and needs none. A start failure is not fatal: New refuses a google model
+	// with an empty proxy URL, and no other model is affected.
+	gwBase := gatewayBaseURL(*cellRoot)
+	var geminiProxyURL string
+	if gwBase != "" {
+		gp, perr := geminiproxy.Start(gwBase, config.AIGatewayToken(), log)
+		if perr != nil {
+			log.Warn("could not start the gemini proxy; google-ai-studio models will be refused",
+				"error", perr)
+		} else {
+			defer gp.Close()
+			geminiProxyURL = gp.BaseURL()
+		}
+	}
+
 	plan, err := runner.New(runner.Spec{
 		Bead: *bead, Cell: *cell, Rig: *rig, Role: *role,
 		CellRoot: *cellRoot, Instructions: *instr,
 		GatewayToken:   config.AIGatewayToken(),
-		GatewayBaseURL: gatewayBaseURL(*cellRoot),
+		GatewayBaseURL: gwBase,
+		GeminiProxyURL: geminiProxyURL,
 		Runtime:        runner.Runtime(*runtimeF),
 		Catalogue:      catalogue,
 		Deadline:       *deadline, Model: *model, Effort: *effort,

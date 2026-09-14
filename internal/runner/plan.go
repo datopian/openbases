@@ -55,6 +55,13 @@ type Spec struct {
 	// the cell rather than configured separately, on the same reasoning as the
 	// token: a run must not reach a different gateway than the cell's own agents.
 	GatewayBaseURL string
+	// GeminiProxyURL is the loopback base of the auth-normalizing proxy that
+	// fronts the gateway's google-ai-studio route (see internal/geminiproxy).
+	// Required only when the resolved model is a google-ai-studio model, because
+	// the AI SDK Google provider cannot send the gateway token itself without
+	// also sending a Google key the gateway would reject. The runner starts the
+	// proxy and passes its URL here; other runtimes and providers ignore it.
+	GeminiProxyURL string
 	// Catalogue overrides the built-in role and model tables. Nil uses them
 	// (wg-3tp).
 	Catalogue *Catalogue
@@ -661,14 +668,15 @@ func planOpenCode(p *Plan, s Spec, tools []string) error {
 			"because without them OpenCode requests 32000 output tokens and the model refuses", p.Model)
 	}
 
-	cfg, err := renderOpenCodeConfig(base, s.GatewayToken, p.Model, limits, p.Metadata, tools, s.CellRoot)
+	cfg, modelRef, err := renderOpenCodeConfig(base, s.GatewayToken, p.Model, s.GeminiProxyURL, limits, p.Metadata, tools, s.CellRoot)
 	if err != nil {
 		return err
 	}
 	p.Settings = cfg
-	// The provider id is ours, so the model reaching the CLI is
-	// <our-provider>/<gateway-provider>/<model>.
-	p.Argv = []string{"opencode", "run", "-m", openCodeProvider + "/" + p.Model, s.Instructions}
+	// The provider id is ours; modelRef is <our-provider>/<model> in the exact
+	// spelling the config block above declared (which differs between the compat
+	// and the native-Gemini providers).
+	p.Argv = []string{"opencode", "run", "-m", modelRef, s.Instructions}
 	// Not --auto. Every permission below is an explicit allow or deny, so
 	// nothing is left to ask; --auto would additionally approve anything a
 	// future OpenCode version adds that we have not thought about.
@@ -697,15 +705,15 @@ const openCodeProvider = "wg-gateway"
 // upwards. OpenCode evaluates patterns with the LAST match winning, so the
 // catch-all comes first and the specific allows after it — the opposite order
 // reads the same and denies everything.
-func renderOpenCodeConfig(base, token, model string, limits ModelLimits,
-	metadata map[string]string, tools []string, cellRoot string) (string, error) {
+func renderOpenCodeConfig(base, token, model, geminiProxyURL string, limits ModelLimits,
+	metadata map[string]string, tools []string, cellRoot string) (config string, modelRef string, err error) {
 
 	if len(metadata) > 5 {
-		return "", fmt.Errorf("%d metadata keys exceeds the gateway's limit of 5", len(metadata))
+		return "", "", fmt.Errorf("%d metadata keys exceeds the gateway's limit of 5", len(metadata))
 	}
 	encoded, err := json.Marshal(metadata)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// Translated from the same role allowlist the claude runtime uses, so the
@@ -740,13 +748,59 @@ func renderOpenCodeConfig(base, token, model string, limits ModelLimits,
 		perm["edit"] = "deny"
 	}
 
-	doc := map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"provider": map[string]any{
+	// The provider block differs by gateway provider. Everything else -- the
+	// permission boundary, autoupdate, share -- is common.
+	gwProvider, bareModel, err := splitModel(model)
+	if err != nil {
+		return "", "", err
+	}
+
+	var provider map[string]any
+	switch gwProvider {
+	case "google-ai-studio":
+		// Gemini natively (@ai-sdk/google), through the loopback proxy that
+		// fronts the gateway's google-ai-studio route (internal/geminiproxy).
+		// The native surface round-trips Gemini 3's thought_signature, which the
+		// gateway's OpenAI /compat surface drops -- and Gemini 3 tool use fails
+		// without it. The gateway token is NOT written here: the proxy injects
+		// cf-aig-authorization, so the config file carries no secret for this
+		// provider.
+		if strings.TrimSpace(geminiProxyURL) == "" {
+			return "", "", fmt.Errorf("a %s model needs the gemini proxy URL "+
+				"(the runner starts it and passes GeminiProxyURL)", gwProvider)
+		}
+		const providerID = "wg-gemini"
+		provider = map[string]any{
+			providerID: map[string]any{
+				"npm":  "@ai-sdk/google",
+				"name": "Workgraph gateway (Gemini)",
+				"options": map[string]any{
+					"baseURL": strings.TrimSuffix(geminiProxyURL, "/") + "/v1beta",
+					// The AI SDK Google provider refuses to start without an
+					// apiKey and always sends it as x-goog-api-key. The proxy
+					// strips it and authenticates to the gateway itself, so this
+					// value is a required placeholder and never leaves the node.
+					"apiKey": "unused-the-proxy-authenticates",
+					"headers": map[string]string{
+						"cf-aig-metadata": string(encoded),
+					},
+				},
+				"models": map[string]any{
+					bareModel: map[string]any{
+						"name":  bareModel,
+						"limit": map[string]int{"context": limits.Context, "output": limits.Output},
+					},
+				},
+			},
+		}
+		modelRef = providerID + "/" + bareModel
+	default:
+		// The OpenAI-compatible adapter, against the gateway's /compat endpoint.
+		// That is where dynamic routes live too, so the same block reaches them
+		// later without changing shape. The full <gateway-provider>/<model> is
+		// the model id here.
+		provider = map[string]any{
 			openCodeProvider: map[string]any{
-				// The OpenAI-compatible adapter, against the gateway's /compat
-				// endpoint. That is where dynamic routes live too, so the same
-				// block reaches them later without changing shape.
 				"npm":  "@ai-sdk/openai-compatible",
 				"name": "Workgraph gateway",
 				"options": map[string]any{
@@ -763,7 +817,13 @@ func renderOpenCodeConfig(base, token, model string, limits ModelLimits,
 					},
 				},
 			},
-		},
+		}
+		modelRef = openCodeProvider + "/" + model
+	}
+
+	doc := map[string]any{
+		"$schema":    "https://opencode.ai/config.json",
+		"provider":   provider,
 		"permission": perm,
 		// Off, because an agent that updates itself mid-run is a different
 		// binary than the one versions.lock pinned.
@@ -774,9 +834,9 @@ func renderOpenCodeConfig(base, token, model string, limits ModelLimits,
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return string(out) + "\n", nil
+	return string(out) + "\n", modelRef, nil
 }
 
 // deniedCommands are refused to every role, in both runtimes, whatever the
