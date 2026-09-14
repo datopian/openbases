@@ -172,6 +172,22 @@ func (d *dispatcher) fileLoop(ctx context.Context) {
 			if job == nil {
 				continue
 			}
+			// Provision the rig's Beads graph if the cell does not have it yet.
+			// Attaching a repository makes its rig the routing target for the
+			// project's filings immediately, before the cell has cloned it, so
+			// the first filing after an attach lands on a rig with no town
+			// directory. Filing needs only the graph, and gt creates it as part
+			// of the rig, so this is the same on-demand provisioning the work
+			// path does (ensureRig) -- without it, filing failed with a raw
+			// `bd -C ... no such file` and stayed wedged until a full deploy.
+			if err := d.ensureRig(ctx, job); err != nil {
+				d.log.Error("provisioning the rig for a filing",
+					"job", job.ID, "rig", job.Rig, "error", err)
+				d.report(outcomeCtx(ctx), job.ID, work.Result{OK: false,
+					Output: fmt.Sprintf("rig %q is not provisioned on cell %q and could "+
+						"not be created for this filing: %v", job.Rig, d.cell, err)})
+				continue
+			}
 			out, ferr := d.fileplan(ctx, *job)
 			if ferr != nil {
 				d.log.Error("filing a plan", "job", job.ID, "error", ferr)

@@ -485,6 +485,29 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 						ensureNotEmpty(r.Context(), gh, log, job.Project, repository.String)
 					}
 				}
+			} else {
+				// A file job carries no bead but still names the rig it must
+				// write beads into, and that rig's Beads graph may not exist on
+				// the node yet: attaching a repository makes the rig a routing
+				// target immediately, before the cell has provisioned it, so the
+				// first filing after an attach arrives for a rig with no town
+				// directory. The node provisions it on demand -- exactly as it
+				// does for a bead job -- but only if it is told what to clone.
+				// Looked up by rig here rather than by bead, because there is no
+				// bead. Without this, filing a plan for a freshly attached
+				// project failed with a raw `bd -C ... no such file` and could
+				// not be recovered without a full deploy (the wedge in the
+				// entryscape bug report).
+				var clone, prefix sql.NullString
+				if err := db.QueryRowContext(r.Context(),
+					`SELECT clone_url, prefix FROM system_rigs_wanted($1) WHERE rig = $2`,
+					cell, job.Rig).Scan(&clone, &prefix); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					log.Warn("reading a rig's clone URL for a filing", "cell", cell,
+						"rig", job.Rig, "error", err)
+				} else {
+					job.CloneURL = clone.String
+					job.Prefix = prefix.String
+				}
 			}
 		}
 
