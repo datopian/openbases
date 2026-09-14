@@ -81,6 +81,14 @@
       - --quiet
       - --pipe
       - --wait
+      # --collect so a failed run's transient unit is garbage-collected instead
+      # of lingering. Without it, any dry-run that exits non-zero (a transiently
+      # unreachable database, a full disk) leaves wg-monitor-verify in `failed`,
+      # and the NEXT deploy's systemd-run with the same fixed unit name dies with
+      # "Unit wg-monitor-verify.service was already loaded" -- a green check
+      # poisoning every deploy after it until someone runs `systemctl
+      # reset-failed`. Observed 2026-09-14 blocking a deploy.
+      - --collect
       - --unit=wg-monitor-verify
       - --property=Type=oneshot
       - --property=User={{ monitor_user }}
