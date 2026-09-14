@@ -61,6 +61,7 @@ type fileBeadsArgs struct {
 // next to the tool that shows them.
 type planBeadArgs struct {
 	Ref         string   `json:"ref" jsonschema:"your name for this bead, stable across re-plans; it is the upsert key"`
+	ID          string   `json:"id,omitempty" jsonschema:"the id of an EXISTING bead to revise or close (e.g. msf8-gru). Set this to close or update a bead you know only by id: without it, the upsert matches on ref and a filing that used the id as its ref would create a new bead instead. Omit to create or upsert by ref"`
 	Title       string   `json:"title" jsonschema:"one line saying what to do"`
 	Description string   `json:"description,omitempty" jsonschema:"the context an agent needs"`
 	Acceptance  string   `json:"acceptance,omitempty" jsonschema:"what finishing means, checkable; without it an agent invents its own criteria and closes against those"`
@@ -309,10 +310,13 @@ var (
 			"and `depends_on` names other refs in the same plan or existing bead ids. " +
 			"Re-filing the same plan REVISES those beads rather than duplicating them, " +
 			"so re-plan as often as you like; a field you leave out is left alone, not " +
-			"cleared. Answers with each ref and the bead it became, or a job id if the " +
+			"cleared. To CLOSE or revise an existing bead you know only by its id " +
+			"(e.g. msf8-gru), give that bead an `id` and set `status` to closed -- " +
+			"without an `id` the filing matches on ref and would create a new bead. " +
+			"Answers with each ref and the bead it became, or a job id if the " +
 			"node is slow, which workgraph_job will explain. " +
 			"Use for 'file this plan', 'create these beads', 'add a task', " +
-			"'re-plan', 'make X depend on Y'.",
+			"'re-plan', 'make X depend on Y', 'close bead <id>'.",
 		Annotations: &sdk.ToolAnnotations{
 			// Not destructive and not read-only: it writes, and re-writing is
 			// safe by construction because the ref is an upsert key.

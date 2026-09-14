@@ -79,3 +79,28 @@ func TestAFileJobNeedsAPlan(t *testing.T) {
 		t.Errorf("a file job with a plan was refused: %v", err)
 	}
 }
+
+// A bead targeted by id may omit a title: it revises or closes, and there is
+// nothing to title. A bead with no id still needs one.
+func TestABeadTargetedByIDNeedsNoTitle(t *testing.T) {
+	if err := (Plan{Project: "msf", Beads: []PlanBead{
+		{Ref: "close-gru", ID: "msf8-gru", Status: "closed"},
+	}}).Validate(); err != nil {
+		t.Errorf("closing by id should not require a title: %v", err)
+	}
+	if err := (Plan{Project: "msf", Beads: []PlanBead{
+		{Ref: "make-thing"},
+	}}).Validate(); err == nil {
+		t.Error("a create with no id and no title should be refused")
+	}
+}
+
+// An id that is not shaped like a bead id is a typo, and a typo here silently
+// touches nothing, so it is refused up front.
+func TestAMisshapenIDIsRefused(t *testing.T) {
+	if err := (Plan{Project: "msf", Beads: []PlanBead{
+		{Ref: "x", ID: "not a bead id", Title: "t"},
+	}}).Validate(); err == nil {
+		t.Error("a malformed id should be refused")
+	}
+}
