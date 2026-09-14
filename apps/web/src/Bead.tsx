@@ -152,12 +152,30 @@ export function Bead({ id, onBack }: { id: string; onBack: () => void }) {
   useEffect(() => {
     setD(null);
     setError(null);
-    api
-      .bead(id)
-      .then(setD)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : String(e)),
-      );
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // Poll while a run is in flight so the bead page shows what the agent is
+    // doing now without a manual refresh, and stop once it settles -- a
+    // finished run does not change, so polling it forever is waste.
+    const tick = () => {
+      api
+        .bead(id)
+        .then((next) => {
+          if (cancelled) return;
+          setD(next);
+          const live = next.run?.status === "running" || next.run?.status === "claimed";
+          if (live) timer = setTimeout(tick, 8000);
+        })
+        .catch((e: unknown) => {
+          if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        });
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [id]);
 
   const back = (
@@ -306,6 +324,30 @@ export function Bead({ id, onBack }: { id: string; onBack: () => void }) {
             </>
           ) : null}
           {d.outcome === "running" ? " — in flight now" : ""}
+        </p>
+      )}
+
+      {/* The live line while the run is in flight. result (the log tail below)
+          is empty until the run finishes, so this is the only window into what
+          the agent is doing right now -- and it refreshes on its own. */}
+      {d.run?.heartbeat && (d.run.status === "running" || d.run.status === "claimed") && (
+        <p
+          style={{
+            margin: "0 0 0.6rem",
+            padding: "0.5rem 0.7rem",
+            background: "#f2f7ff",
+            border: "1px solid #cfe0f5",
+            borderRadius: 6,
+            fontSize: "0.85rem",
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>Live:</span>{" "}
+          <span style={css.mono}>{d.run.heartbeat}</span>
+          {d.run.heartbeat_at ? (
+            <span style={{ ...css.muted, fontSize: "0.78rem" }}>
+              {" "}· last seen {new Date(d.run.heartbeat_at).toLocaleTimeString()}
+            </span>
+          ) : null}
         </p>
       )}
       {d.run && !d.run.harness && !d.run.model && (
