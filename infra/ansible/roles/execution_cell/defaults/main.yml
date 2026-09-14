@@ -66,35 +66,35 @@ dispatcher_interval: 10s
 # and the one that comes back in usage_records.
 # The runtime and model the work roles get by default.
 #
-# OpenCode on GLM 5.3 Flash since 2026-09-07, replacing Claude Code on
-# Sonnet 5. ADR-0024 built the runtime abstraction and deliberately left the
-# default alone; scripts/model_bakeoff.sh is what moved it, and the numbers are
-# the whole argument:
+# OpenCode on Gemini 3.8 Flash since 2026-09-14, replacing GLM 5.3 Flash.
+# GLM was the default from 2026-09-07 (its bake-off argument is in git history);
+# the move to Gemini is a capability call after GLM looped and no-op'd on real
+# beads (e.g. the msf Africa-map bead, $3.26 twice with nothing landed).
 #
-#   screen 1 context     glm-5.3-flash 1310720   sonnet-5 200000    both pass
-#   screen 2 tool use    both edited the file
-#   screen 3 real work   both fixed the boundary  (scored on the EDIT, not prose)
+# The runtime abstraction (ADR-0024) makes this a data change: runtime stays
+# opencode, only the model string moves.
 #
-#   bakeoff-tools  sonnet-5 6 calls $0.1738   glm 4 calls $0.0015
-#   bakeoff-work   sonnet-5 7 calls $0.0994   glm 6 calls $0.0022
+# Reached through the SAME Cloudflare AI Gateway, so nothing about credentials
+# or attribution changes. google-ai-studio is enabled on the gateway and on
+# UNIFIED BILLING (gateway wholesale=true, byok_only=false, workers_ai_billing_
+# mode=unified) -- so Gemini draws the same prepaid Cloudflare balance GLM did,
+# one bill, no BYOK Google key on the nodes. Verified 2026-09-14 that
+# google-ai-studio/gemini-3.8-flash routes 200 through workgraph-staging-oss/
+# compat with only the gateway token.
 #
-# $0.2732 against $0.0037 for the same passing result, and every GLM call
-# arrived in usage_records carrying role, cell and bead -- which is ADR-0024's
-# actual acceptance criterion, because a run that reaches a model untagged is
-# worse than one that fails.
+# Names are <gateway-provider>/<model>: the provider segment (google-ai-studio)
+# is what the gateway routes on, and it comes back in usage_records so spend
+# stays tagged with role, cell and bead.
 #
-# What this is NOT evidence of: that GLM matches Sonnet on hard work. The
-# screens are an off-by-one and a file edit. It is evidence that it can do the
-# work at all, attributably, at a fiftieth of the price -- which is enough to
-# make it the default when any run can override it with `-runtime claude
-# -model anthropic/claude-sonnet-5` and a bead that needs more can say so.
+# Any run can still override with `-runtime claude -model
+# anthropic/claude-sonnet-5`, and a bead that needs more can say so.
 wg_model_runtimes:
   polecat: opencode
   crew: opencode
 
 wg_model_roles:
-  polecat: workers-ai/@cf/zai-org/glm-5.3-flash
-  crew: workers-ai/@cf/zai-org/glm-5.3-flash
+  polecat: google-ai-studio/gemini-3.8-flash
+  crew: google-ai-studio/gemini-3.8-flash
 
 wg_model_effort:
   polecat: medium
@@ -111,6 +111,7 @@ wg_model_limits:
   workers-ai/@cf/moonshotai/kimi-k2.6: {context: 262144, output: 8192}
   workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731: {context: 1310720, output: 8192}
   workers-ai/@cf/zai-org/glm-5.3-flash: {context: 1310720, output: 8192}
+  google-ai-studio/gemini-3.8-flash: {context: 1000000, output: 8192}
   workers-ai/@cf/google/gemma-4-26b-a4b-it: {context: 256000, output: 8192}
 # How long one job may take before the dispatcher kills it.
 #
