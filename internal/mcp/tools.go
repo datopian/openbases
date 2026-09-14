@@ -62,7 +62,7 @@ type fileBeadsArgs struct {
 type planBeadArgs struct {
 	Ref         string   `json:"ref" jsonschema:"your name for this bead, stable across re-plans; it is the upsert key"`
 	ID          string   `json:"id,omitempty" jsonschema:"the id of an EXISTING bead to revise or close (e.g. msf8-gru). Set this to close or update a bead you know only by id: without it, the upsert matches on ref and a filing that used the id as its ref would create a new bead instead. Omit to create or upsert by ref"`
-	Title       string   `json:"title" jsonschema:"one line saying what to do"`
+	Title       string   `json:"title,omitempty" jsonschema:"one line saying what to do; required to create a bead, optional when closing or revising one by id"`
 	Description string   `json:"description,omitempty" jsonschema:"the context an agent needs"`
 	Acceptance  string   `json:"acceptance,omitempty" jsonschema:"what finishing means, checkable; without it an agent invents its own criteria and closes against those"`
 	Design      string   `json:"design,omitempty" jsonschema:"how it should be done, if you have an opinion"`
