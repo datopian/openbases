@@ -509,6 +509,19 @@ func New(s Spec) (Plan, error) {
 		p.Env["BEADS_DIR"] = filepath.Join(p.BeadsDir, ".beads")
 	}
 
+	// A browser is a default tool, not a per-bead grant, so its location is in
+	// the environment rather than something an agent must discover.
+	//
+	// wg-browse is the sanctioned path and already knows where the browser is.
+	// These point every OTHER launcher -- puppeteer, a raw chromium, anything
+	// honouring CHROME_PATH -- at the same pinned binary, so nothing downloads
+	// its own or hunts the cache. msf8-6cq spent several steps finding a
+	// browser before it could look at a page; a fixed path removes that.
+	const chrome = "/usr/local/bin/chrome-headless-shell"
+	p.Env["CHROME_PATH"] = chrome
+	p.Env["PUPPETEER_EXECUTABLE_PATH"] = chrome
+	p.Env["PUPPETEER_SKIP_DOWNLOAD"] = "true"
+
 	// What the agent is asked to do, plus -- when the two differ -- where its
 	// bead actually lives.
 	//

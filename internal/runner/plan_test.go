@@ -1154,3 +1154,20 @@ func mustJSONString(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// A browser is a default tool: its location is in the environment so no agent
+// has to hunt for it. msf8-6cq spent several steps discovering a browser
+// before it could look at a page; CHROME_PATH removes that.
+func TestABrowserPathIsAlwaysInTheEnvironment(t *testing.T) {
+	p, err := New(spec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const chrome = "/usr/local/bin/chrome-headless-shell"
+	for _, key := range []string{"CHROME_PATH", "PUPPETEER_EXECUTABLE_PATH"} {
+		if p.Env[key] != chrome {
+			t.Errorf("%s = %q, want %q -- an agent should never have to find "+
+				"the browser itself", key, p.Env[key], chrome)
+		}
+	}
+}
