@@ -175,14 +175,18 @@ func (j Job) Instructions() string {
 				// handed a real browser it did not know how to reach, tried to
 				// smuggle one past the sandbox instead. Both were missing the
 				// same sentence.
-				"You can look at a page with a real browser: `wg-browse shot "+
-				"<url> <out.png>` saves a screenshot, `wg-browse text <url>` "+
-				"prints the rendered DOM after scripts run, and `wg-browse "+
-				"console <url>` prints console messages and failed requests. "+
-				"Use it to CHECK web work -- start the dev server or serve the "+
-				"build, then look. Do not install your own browser or try to "+
-				"launch chromium directly; wg-browse is the one that works "+
-				"here, and it reaches localhost. "+
+				"A browser is always available -- it is a default tool here, not "+
+				"something to set up. For ANY check of web work, use wg-browse: "+
+				"`wg-browse shot <url> <out.png>` saves a screenshot, `wg-browse "+
+				"text <url>` prints the rendered DOM after scripts run, and "+
+				"`wg-browse console <url>` prints console messages and failed "+
+				"requests. It is instant, needs no install, and reaches "+
+				"localhost -- so serve the build or start the dev server, then "+
+				"look. Do NOT install your own browser, download chromium, or "+
+				"hunt for a binary: the browser is installed and CHROME_PATH "+
+				"points at it. Only stand up a full e2e runner (playwright) if "+
+				"the bead explicitly asks for a test suite; for a quick look, "+
+				"wg-browse is faster and cheaper. "+
 				"Work IN PLACE, at the paths the files belong at: that checkout IS the "+
 				"repository, so a portal that should live at portal/ goes at portal/ and "+
 				"not in a copy of the repository somewhere else. Do not clone it, do not "+
