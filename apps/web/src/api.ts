@@ -232,6 +232,11 @@ export interface BeadDetail {
     claimed: string | null;
     finished: string | null;
     log_tail: string | null;
+    /** The live line the node sends on every heartbeat while a run is
+     * in flight, and when it last said so. Null once finished or for a
+     * node that predates it. */
+    heartbeat: string | null;
+    heartbeat_at: string | null;
   } | null;
   comment: { text: string; at: string | null; by: string | null } | null;
   /**
