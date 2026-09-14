@@ -351,3 +351,55 @@ func TestTheFilingLoopAsksOnlyForFilings(t *testing.T) {
 		t.Fatal("the filing loop never claimed anything")
 	}
 }
+
+// A bead given an id is updated by that id, and nothing is created.
+//
+// This is the close-by-id path: the caller knows a bead only by its platform
+// id (a tool returned it, or someone else filed it) and there is no ref to
+// upsert on. Filing the id AS the ref used to mint a new bead -- that is how
+// msf8-gru ended up with the msf8-v0b and msf8-oq9 duplicates. With id set,
+// the filing must run `bd update <id>` and no `bd create` at all.
+func TestABeadTargetedByIDIsUpdatedNotCreated(t *testing.T) {
+	d, state := filingDispatcher(t)
+	out, err := d.fileplan(context.Background(), planJob(t, work.Plan{
+		Project: "msf",
+		Beads: []work.PlanBead{{
+			Ref: "close-gru", ID: "msf8-gru", Status: "closed",
+			Description: "shipped in PR #25",
+		}},
+	}))
+	if err != nil {
+		t.Fatalf("closing by id failed: %v", err)
+	}
+
+	var creates, updates int
+	var updatedGru bool
+	for _, c := range calls(t, state) {
+		if strings.Contains(c, " create ") {
+			creates++
+		}
+		if strings.Contains(c, " update ") {
+			updates++
+			if strings.Contains(c, "update msf8-gru") && strings.Contains(c, "--status closed") {
+				updatedGru = true
+			}
+		}
+	}
+	if creates != 0 {
+		t.Errorf("a bead targeted by id created something: %d creates", creates)
+	}
+	if updates != 1 || !updatedGru {
+		t.Errorf("expected exactly one `update msf8-gru --status closed`; calls: %v",
+			calls(t, state))
+	}
+
+	var got struct {
+		Filed []work.Filed `json:"filed"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("result is not readable json: %v (%s)", err, out)
+	}
+	if len(got.Filed) != 1 || got.Filed[0].Bead != "msf8-gru" || got.Filed[0].Created {
+		t.Errorf("the answer should map the ref to msf8-gru with created=false: %s", out)
+	}
+}

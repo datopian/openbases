@@ -32,7 +32,18 @@ type Plan struct {
 // between re-plans; everything else may change and the bead will be revised in
 // place.
 type PlanBead struct {
-	Ref         string `json:"ref"`
+	Ref string `json:"ref"`
+	// ID targets an EXISTING bead by its platform id (for example msf8-gru),
+	// to revise or close it. Omit to create, or to upsert by ref.
+	//
+	// This is the escape hatch for the one thing Ref cannot do. Ref is an
+	// upsert key scoped to (project, ref): a caller who knows only a bead's id
+	// -- because a tool returned it, or another person filed it -- has no ref
+	// to match, and a filing that named the id as its ref would MINT A NEW
+	// BEAD rather than touch the one it meant. Closing msf8-gru that way
+	// created msf8-v0b and msf8-oq9 instead. With ID set, the filing updates
+	// exactly that bead and creates nothing.
+	ID          string `json:"id,omitempty"`
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
 	// Acceptance is what finishing means. Carried because an agent given a
@@ -97,8 +108,15 @@ func (p Plan) Validate() error {
 		}
 		seen[ref] = true
 
-		if strings.TrimSpace(b.Title) == "" {
+		id := strings.TrimSpace(b.ID)
+		// A create needs a title; a bead targeted by id may just be closed or
+		// have one field revised, so a title is not required there.
+		if id == "" && strings.TrimSpace(b.Title) == "" {
 			problems = append(problems, fmt.Sprintf("%q has no title", ref))
+		}
+		if id != "" && !looksLikeBeadID(id) {
+			problems = append(problems, fmt.Sprintf(
+				"%q has id %q, which does not look like a bead id", ref, id))
 		}
 		if b.Priority < 0 || b.Priority > 4 {
 			problems = append(problems, fmt.Sprintf(

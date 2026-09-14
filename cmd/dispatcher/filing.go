@@ -66,6 +66,25 @@ func (d *dispatcher) fileplan(ctx context.Context, job work.Job) (string, error)
 			ExternalRef: key,
 		}
 
+		// Targeting an existing bead by id: revise or close exactly it, and
+		// create nothing. This is the path a caller uses to close a bead it
+		// knows only by id -- the one thing an upsert-by-ref cannot express,
+		// because the id is not the ref and matching on it would mint a new
+		// bead (that is how msf8-gru got the msf8-v0b/msf8-oq9 duplicates).
+		if id := strings.TrimSpace(b.ID); id != "" {
+			// The project label is NOT forced here. A create earns the label
+			// that puts it on the project page; a targeted update should touch
+			// only what the caller named, and a bead reached by id already
+			// lives wherever it lives.
+			issue.Labels = b.Labels
+			if err := client.UpdateIn(ctx, db, id, issue); err != nil {
+				return "", fmt.Errorf("revising %s (%s): %w", b.Ref, id, err)
+			}
+			filed[b.Ref] = id
+			out = append(out, work.Filed{Ref: b.Ref, Bead: id})
+			continue
+		}
+
 		existing, found, err := client.ByExternalRef(ctx, db, key)
 		if err != nil {
 			return "", fmt.Errorf("looking for %s: %w", key, err)
