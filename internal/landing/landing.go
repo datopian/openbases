@@ -687,7 +687,16 @@ func Land(git Git, s Spec) (*Result, error) {
 	work, skip := Interesting(changes)
 	skip = append(skip, kept...)
 	if len(work) == 0 {
-		return nil, nil
+		// The working tree is clean -- but the agent may have committed its own
+		// work. `git commit` is not on the deny list (only `git push` and `gh`
+		// are), so a run that finishes by committing leaves its work as commits
+		// on the bead's branch, ahead of base, with nothing for `git status` to
+		// show. Those commits still have to be pushed and turned into a pull
+		// request; otherwise the job is reported "nothing to land" and closed
+		// unlanded while real work sits on the node (ent4-lwk). Push them as
+		// they are, making no new commit. A branch that carries nothing new is
+		// the ordinary "no code change was needed" case and returns nil.
+		return landCommitted(git, s, base, branch, skip)
 	}
 
 	// Excluded before anything is staged, so `git add -A` cannot pick the
@@ -877,6 +886,77 @@ func Land(git Git, s Spec) (*Result, error) {
 		Files:   landed,
 		Skipped: paths(skip),
 	}, nil
+}
+
+// landCommitted pushes commits the agent made itself, when the working tree is
+// clean but the bead's branch is ahead of base.
+//
+// It makes NO new commit: the work is already committed by the run, and the
+// only things missing are the push and the pull request. The branch was created
+// by the runner (`git worktree add -B bead/<id> ... origin/<base>`) and the run
+// commits onto it, so base..branch is exactly the agent's work.
+//
+// Returns nil when the branch carries nothing new, or only plumbing/scratch --
+// the ordinary "no code change was needed" case, which must stay quiet.
+func landCommitted(git Git, s Spec, base, branch string, skip []Change) (*Result, error) {
+	// Does the branch exist and hold commits base does not? A missing ref or a
+	// zero count is "nothing to land".
+	if _, err := git("rev-parse", "--verify", "--quiet", branch); err != nil {
+		return nil, nil
+	}
+	count, err := git("rev-list", "--count", base+".."+branch)
+	if err != nil {
+		return nil, nil
+	}
+	if c := strings.TrimSpace(count); c == "" || c == "0" {
+		return nil, nil
+	}
+
+	// The files those commits changed, filtered the way uncommitted work is, so
+	// the report matches and a branch of pure plumbing does not open a PR.
+	names, err := git("diff", "--name-only", base+".."+branch)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, path := range strings.Fields(names) {
+		if isPlumbing(path) || isScratch(path) {
+			continue
+		}
+		files = append(files, path)
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
+	slices.Sort(files)
+	files = slices.Compact(files)
+
+	tip, err := git("rev-parse", branch)
+	if err != nil {
+		return nil, err
+	}
+
+	// Push it as it is. --force-with-lease for the same reason the commit path
+	// uses it: a re-dispatch resets the branch, so the remote may hold a commit
+	// this push does not descend from, and with-lease refuses only if someone
+	// ELSE moved it.
+	if _, err := git("push", "--force-with-lease", "--set-upstream", "origin", branch); err != nil {
+		return nil, fmt.Errorf("pushing %s: %w", branch, err)
+	}
+
+	res := &Result{
+		Branch:  branch,
+		Commit:  strings.TrimSpace(tip),
+		Files:   files,
+		Skipped: paths(skip),
+	}
+	// Back to base so the next bead in this rig does not branch from this one.
+	// A failure here is reported, not fatal: the work already reached the
+	// remote.
+	if _, err := git("checkout", base); err != nil {
+		res.Warning = fmt.Sprintf("the working tree is still on %s: %v", branch, err)
+	}
+	return res, nil
 }
 
 // paths is the Change paths, in order.
