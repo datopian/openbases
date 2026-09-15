@@ -85,35 +85,16 @@ export function DependencyGraph({ work }: { work: ProjectWorkItem[] }) {
   const lit = (from: string, to: string) =>
     hover !== null && (hover === from || hover === to);
 
-  const ready = plan.nodes.filter((n) => n.readiness === "ready");
-  const attention = plan.nodes.filter((n) => n.readiness === "attention");
+  // Bead -> outcome, so a node can show whether it is running or queued. Those
+  // are not readiness states (a running bead is still "ready"/"blocked" by
+  // dependency), but they are the movement a reader most wants to see.
+  const outcomeOf = useMemo(
+    () => new Map(work.map((w) => [w.bead, w.outcome])),
+    [work],
+  );
 
   return (
     <div>
-      <p style={{ color: "#666", fontSize: "0.9rem", marginTop: 0 }}>
-        Left to right: the first column can start now, and each column waits on
-        the one before it.
-        {ready.length > 0 && (
-          <>
-            {" "}
-            <strong>{ready.length}</strong> bead{ready.length === 1 ? "" : "s"}{" "}
-            can start now.
-          </>
-        )}
-        {attention.length > 0 && (
-          // Said in the summary as well as drawn, because the point of the
-          // colour is to be noticed and a reader who scrolled past it should
-          // still be told.
-          <>
-            {" "}
-            <strong style={{ color: "#8a1c1c" }}>
-              {attention.length} ran already and delivered nothing
-            </strong>
-            ; dispatching {attention.length === 1 ? "it" : "them"} again will
-            probably do the same until the reason is fixed.
-          </>
-        )}
-      </p>
 
       {plan.brokeCycle.length > 0 && (
         // Loud, because nothing in a cycle can ever start and the picture
@@ -199,6 +180,7 @@ export function DependencyGraph({ work }: { work: ProjectWorkItem[] }) {
             <Node
               key={n.bead}
               node={n}
+              outcome={outcomeOf.get(n.bead)}
               dim={hover !== null && hover !== n.bead && !touches(plan.nodes, hover, n.bead)}
               onEnter={() => setHover(n.bead)}
               onLeave={() => setHover(null)}
@@ -230,6 +212,32 @@ export function DependencyGraph({ work }: { work: ProjectWorkItem[] }) {
             {look[k].label}
           </span>
         ))}
+        {/* Running and queued are not readiness states; named here so the
+            animation and the badge in the graph have a key in the legend. */}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+          <span
+            style={{
+              width: "0.7rem",
+              height: "0.7rem",
+              borderRadius: "999px",
+              border: "2px solid #0b5cad",
+              boxShadow: "0 0 0 2px #cfe0f5",
+            }}
+          />
+          running now
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+          <span
+            style={{
+              width: "0.7rem",
+              height: "0.7rem",
+              borderRadius: "3px",
+              border: "1.5px dashed #0b5cad",
+              background: "#eef3fb",
+            }}
+          />
+          queued
+        </span>
       </div>
 
       {plan.isolated.length > 0 && (
@@ -254,16 +262,20 @@ function touches(nodes: Placed[], a: string, b: string): boolean {
 
 function Node({
   node,
+  outcome,
   dim,
   onEnter,
   onLeave,
 }: {
   node: Placed;
+  outcome?: string;
   dim: boolean;
   onEnter: () => void;
   onLeave: () => void;
 }) {
   const c = look[node.readiness];
+  const running = outcome === "running";
+  const queued = outcome === "queued";
   return (
     <g
       transform={`translate(${x(node.layer)}, ${y(node.row)})`}
@@ -276,6 +288,7 @@ function Node({
         {node.bead}
         {node.title ? ` — ${node.title}` : ""}
         {`\n${c.label}`}
+        {running ? "\nrunning now" : queued ? "\nqueued" : ""}
         {node.blockedBy.length > 0 ? `\nwaiting on ${node.blockedBy.join(", ")}` : ""}
       </title>
       <rect
@@ -287,6 +300,47 @@ function Node({
         strokeWidth={1.5}
         strokeDasharray={node.readiness === "external" ? "4 3" : undefined}
       />
+      {running && (
+        <rect
+          x={-3}
+          y={-3}
+          width={NODE_W + 6}
+          height={NODE_H + 6}
+          rx={11}
+          fill="none"
+          stroke="#0b5cad"
+          strokeWidth={2.5}
+        >
+          <animate
+            attributeName="stroke-opacity"
+            values="1;0.15;1"
+            dur="1.4s"
+            repeatCount="indefinite"
+          />
+        </rect>
+      )}
+      {queued && (
+        <g transform={`translate(${NODE_W - 60}, 6)`}>
+          <rect
+            width={54}
+            height={16}
+            rx={8}
+            fill="#eef3fb"
+            stroke="#0b5cad"
+            strokeDasharray="3 2"
+          />
+          <text
+            x={27}
+            y={11.5}
+            textAnchor="middle"
+            fontSize={9.5}
+            fill="#0b5cad"
+            fontWeight={700}
+          >
+            queued
+          </text>
+        </g>
+      )}
       {/* The id is a link, so the graph is a way into a bead rather than a
           picture beside one. Rendered through foreignObject because an SVG
           <a> cannot carry the app's own styling and hash routing reliably. */}

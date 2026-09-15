@@ -145,6 +145,62 @@ function money(cents: string | number | null | undefined): string {
   return n < 100 ? `${n.toFixed(2)}¢` : `$${(n / 100).toFixed(2)}`;
 }
 
+/** The readable half of a gateway model id: "google-ai-studio/gemini-3.8-flash"
+ *  and "workers-ai/@cf/zai-org/glm-5.3-flash" both reduce to the model name a
+ *  person recognises. The full id stays in a title for anyone who needs it. */
+function prettyModel(model: string): string {
+  const parts = model.split("/");
+  return parts[parts.length - 1] || model;
+}
+
+/** The agent runtime that ran the bead, as a badge -- linked to its product
+ *  page when we know one, so a reader can click through to learn what it is. */
+function HarnessBadge({ harness }: { harness: string }) {
+  const href =
+    harness === "opencode"
+      ? "https://opencode.ai/"
+      : harness === "claude"
+        ? "https://www.anthropic.com/claude-code"
+        : null;
+  const badge = (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "0.25rem",
+        padding: "0.12rem 0.55rem",
+        borderRadius: "999px",
+        background: "#eef3fb",
+        border: "1px solid #cfe0f5",
+        color: "#0b5cad",
+        fontSize: "0.78rem",
+        fontWeight: 700,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {harness}
+      {href && (
+        <span aria-hidden="true" style={{ opacity: 0.65 }}>
+          ↗
+        </span>
+      )}
+    </span>
+  );
+  return href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      style={{ textDecoration: "none" }}
+      title={`Learn about ${harness}`}
+    >
+      {badge}
+    </a>
+  ) : (
+    badge
+  );
+}
+
 export function Bead({ id, onBack }: { id: string; onBack: () => void }) {
   const [d, setD] = useState<BeadDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -222,7 +278,22 @@ export function Bead({ id, onBack }: { id: string; onBack: () => void }) {
 
   return (
     <>
-      {back}
+      <div style={{ display: "flex", gap: "1rem", alignItems: "baseline", flexWrap: "wrap" }}>
+        {back}
+        {d.project && (
+          <a
+            href={`#/projects/${encodeURIComponent(d.project)}`}
+            style={{
+              color: "#0b5cad",
+              textDecoration: "none",
+              fontWeight: 600,
+              fontSize: "0.85rem",
+            }}
+          >
+            {d.project} project →
+          </a>
+        )}
+      </div>
       <h1 style={{ marginBottom: "0.15rem", fontSize: "1.35rem" }}>
         {d.title || <span style={css.muted}>untitled</span>}
       </h1>
@@ -315,15 +386,40 @@ export function Bead({ id, onBack }: { id: string; onBack: () => void }) {
           from the hourly cost import, so for a run in flight it is empty while
           this line is already correct. */}
       {(d.run?.harness || d.run?.model) && (
-        <p style={{ margin: "0 0 0.6rem" }}>
-          <code>{d.run.harness ?? "unknown harness"}</code>
-          {d.run.model ? (
-            <>
-              {" running "}
-              <code>{d.run.model}</code>
-            </>
+        <p
+          style={{
+            margin: "0 0 0.6rem",
+            display: "flex",
+            gap: "0.5rem",
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          {d.run?.harness && <HarnessBadge harness={d.run.harness} />}
+          {d.run?.model && (
+            <span style={{ display: "inline-flex", alignItems: "baseline", gap: "0.35rem" }}>
+              <span
+                style={{
+                  fontSize: "0.68rem",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  color: "#8a8a8a",
+                  fontWeight: 600,
+                }}
+              >
+                model
+              </span>
+              <strong
+                title={d.run.model}
+                style={{ font: "600 0.95rem ui-monospace, monospace", color: "#1a1a1a" }}
+              >
+                {prettyModel(d.run.model)}
+              </strong>
+            </span>
+          )}
+          {d.outcome === "running" ? (
+            <span style={{ color: "#0b5cad", fontSize: "0.8rem" }}>— in flight now</span>
           ) : null}
-          {d.outcome === "running" ? " — in flight now" : ""}
         </p>
       )}
 

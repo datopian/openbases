@@ -256,11 +256,6 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
             {detail.backup_owner ? ` (backup ${detail.backup_owner})` : ""}
           </p>
 
-          <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Status</h2>
-          {asList(detail.signals).map((s) => (
-            <SignalCard key={s.name} signal={s} />
-          ))}
-
           <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Work</h2>
           <ProjectWork work={asList(detail.work)} slug={detail.slug} />
 
@@ -269,6 +264,14 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
           </h2>
           <Repositories repos={asList(detail.repositories)} />
           <ManageRepositories slug={detail.slug} />
+
+          {/* Status last: the signals are lower-value than the work graph for
+              the question a reader opens a project to ask, so the page leads
+              with Work and Status is a scroll away for anyone who wants it. */}
+          <h2 style={{ fontSize: "1rem", marginTop: "1.75rem" }}>Status</h2>
+          {asList(detail.signals).map((s) => (
+            <SignalCard key={s.name} signal={s} />
+          ))}
         </>
       )}
     </>
@@ -330,7 +333,9 @@ function Portfolio({ onOpen }: { onOpen: (slug: string) => void }) {
   if (error)
     return <p style={{ color: "#a33" }}>Could not load projects: {error}</p>;
   if (!projects) return <p style={css.muted}>Loading…</p>;
-  const all = asList(projects);
+  // Closed projects are hidden from the home page: they are noise for the
+  // common "what are we working on" read. They remain reachable by direct URL.
+  const all = asList(projects).filter((p) => p.status !== "closed");
   // Portfolios present in what came back, rather than a hardcoded list: a new
   // portfolio should appear here without a release, and one with no projects
   // should not offer a filter that yields an empty table.
@@ -477,24 +482,15 @@ export function ProjectWork({
     );
   }
   const open = rows.filter((w) => w.status !== "closed").length;
+  // Closed beads are hidden from the TABLE (they are done and add rows without
+  // adding a decision); the graph above still shows them for context.
+  const shown = rows.filter((w) => w.status !== "closed");
+  const closed = rows.length - shown.length;
   return (
     <>
       <p style={{ ...css.muted, fontSize: "0.8rem", marginTop: 0 }}>
         {rows.length} bead{rows.length === 1 ? "" : "s"}, {open} still open
-        {(() => {
-          // The freshest projection in the list. One fact about the view,
-          // rather than the same timestamp repeated on every row -- and it is
-          // the number that tells a reader whether to trust any of this.
-          const newest = rows
-            .map((r) => r.last_seen)
-            .filter((t): t is string => !!t)
-            .sort()
-            .at(-1);
-          if (!newest) return " — never projected";
-          return isStale(newest)
-            ? ` — last projected ${age(newest)}, so this may be out of date`
-            : ` — projected ${age(newest)}`;
-        })()}
+        {closed > 0 ? ` · ${closed} closed hidden below` : ""}
       </p>
       {/*
         The graph first, then the table.
@@ -530,7 +526,7 @@ export function ProjectWork({
           </tr>
         </thead>
         <tbody>
-          {rows.map((w) => (
+          {shown.map((w) => (
             <tr key={w.bead}>
               <td
                 style={{
