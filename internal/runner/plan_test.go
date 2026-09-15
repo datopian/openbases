@@ -1236,3 +1236,33 @@ func TestAWorkersAIModelStillUsesCompatWithTheToken(t *testing.T) {
 		t.Error("workers-ai model wrongly configured the google provider")
 	}
 }
+
+// An opencode plan carries a resume invocation, so a run that stops early can be
+// continued; the claude runtime has none (auto-continue is opencode-only).
+func TestOpenCodePlanCanBeContinued(t *testing.T) {
+	p, err := New(openCodeSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.ContinueArgv) == 0 {
+		t.Fatal("opencode plan has no ContinueArgv; a stopped run cannot be resumed")
+	}
+	joined := strings.Join(p.ContinueArgv, " ")
+	if !strings.Contains(joined, "--continue") || !strings.Contains(joined, "opencode") {
+		t.Errorf("ContinueArgv does not resume an opencode session: %q", joined)
+	}
+	// It must NOT carry the original instructions -- the session already has
+	// them; the caller appends only a short continue message.
+	if strings.Contains(joined, "close this bead") {
+		t.Errorf("ContinueArgv re-sends the original instructions: %q", joined)
+	}
+
+	c := spec() // claude runtime (the default)
+	cp, err := New(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cp.ContinueArgv) != 0 {
+		t.Errorf("claude plan should have no ContinueArgv, got %v", cp.ContinueArgv)
+	}
+}

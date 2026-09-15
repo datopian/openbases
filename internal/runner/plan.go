@@ -86,10 +86,18 @@ type Spec struct {
 
 // Plan is what to do, with nothing left to decide.
 type Plan struct {
+	// Bead is the bead this run is for, carried so the runner can check whether
+	// the agent closed it (the signal that it finished).
+	Bead         string
 	RunDir       string
 	SettingsPath string
 	Settings     string
 	Argv         []string
+	// ContinueArgv resumes the runtime's existing session with a new turn,
+	// used to auto-continue a run that stopped before the bead was done. The
+	// caller appends the continue message. Empty when the runtime has no
+	// resume (only opencode sets it).
+	ContinueArgv []string
 	Deadline     time.Duration
 	Metadata     map[string]string
 	// Model and Effort are stated rather than left to be read back out of Argv
@@ -340,6 +348,7 @@ func New(s Spec) (Plan, error) {
 	if !beadName.MatchString(s.Bead) {
 		return p, fmt.Errorf("bead %q is not a usable identifier", s.Bead)
 	}
+	p.Bead = strings.TrimSpace(s.Bead)
 	if strings.TrimSpace(s.Cell) == "" {
 		return p, fmt.Errorf("a run needs a cell")
 	}
@@ -677,6 +686,10 @@ func planOpenCode(p *Plan, s Spec, tools []string) error {
 	// spelling the config block above declared (which differs between the compat
 	// and the native-Gemini providers).
 	p.Argv = []string{"opencode", "run", "-m", modelRef, s.Instructions}
+	// The same model and config, resuming the session (XDG_DATA_HOME persists
+	// it) with a fresh turn instead of the original instructions. cmd/runner
+	// appends the continue message.
+	p.ContinueArgv = []string{"opencode", "run", "-m", modelRef, "--continue"}
 	// Not --auto. Every permission below is an explicit allow or deny, so
 	// nothing is left to ask; --auto would additionally approve anything a
 	// future OpenCode version adds that we have not thought about.
