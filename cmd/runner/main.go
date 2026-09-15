@@ -192,6 +192,40 @@ type result struct {
 	Error    string        `json:"error,omitempty"`
 }
 
+// continueMessage resumes an agent that stopped before finishing. Short on
+// purpose: the original instructions are still in the session, so this only says
+// to keep going and to stop the right way.
+const continueMessage = "You stopped, but the bead is still open and the work is " +
+	"not finished. Continue now -- take the next concrete action (edit a file or run " +
+	"a command), do not just describe what to do. When the change is made and checked, " +
+	"close the bead; if you are genuinely blocked, say why in a comment and stop."
+
+// beadClosed reports whether the bead has been closed in its graph, which is how
+// the run knows the agent finished. Any uncertainty -- no beads dir, bd missing,
+// output that will not parse -- returns true, so an unverifiable state STOPS the
+// continue loop rather than spending more of the budget on a guess.
+func beadClosed(plan runner.Plan) bool {
+	beadsDir := plan.Env["BEADS_DIR"]
+	if beadsDir == "" || strings.TrimSpace(plan.Bead) == "" {
+		return true
+	}
+	cmd := exec.Command("bd", "show", plan.Bead, "--json")
+	// os.Environ carries HOME (the cell), which bd needs -- it shells out to
+	// Dolt, which segfaults without one. BEADS_DIR names the graph.
+	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return true
+	}
+	var beads []struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(out, &beads); err != nil || len(beads) == 0 {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(beads[0].Status), "closed")
+}
+
 func execute(log *slog.Logger, plan runner.Plan, keep bool) result {
 	res := result{Bead: filepath.Base(plan.RunDir), Status: "failed"}
 	started := time.Now()
@@ -281,50 +315,62 @@ func execute(log *slog.Logger, plan runner.Plan, keep bool) result {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cmd := exec.CommandContext(ctx, plan.Argv[0], plan.Argv[1:]...)
-	cmd.Dir = plan.RunDir
-	// HOME stays the CELL, and the run directory is the working directory.
-	//
-	// The first version pointed HOME at the run directory, reasoning that
-	// nothing the agent wrote should outlive the run. It also moved the agent
-	// away from its credentials, and the run died with "Not logged in · Please
-	// run /login". Auth and the cell-wide settings live in the cell's home;
-	// per-run settings live in the working directory and take precedence there.
-	// Both are needed, and they are not the same place.
-	// PWD is set to match, and OLDPWD dropped.
-	//
-	// cmd.Dir changes the child's working directory but not its idea of one:
-	// PWD is an ordinary variable that a shell maintains, so a runner started
-	// from a script hands the agent a PWD pointing wherever that script was.
-	// OpenCode believes it over getcwd(), and against an unreadable /root it
-	// exits immediately with "Session not found" — a message about neither
-	// directories nor permissions, which is why wg-azd took eight ruled-out
-	// hypotheses to find.
-	//
-	// It only appeared under a script. Run by hand through `sudo -u ... env`,
-	// sudo strips PWD, the agent falls back to getcwd(), and everything works —
-	// so every manual reproduction passed and the bake-off failed.
-	//
-	// An inherited PWD that disagrees with cmd.Dir is a lie to the child
-	// whatever it does with it, so this is right regardless of OpenCode.
-	cmd.Env = append(environWithout("PWD", "OLDPWD"), "PWD="+plan.RunDir)
-	// The gateway credential and the bead's attribution travel in the
-	// environment, not in the settings file the agent reads (see runner.Plan).
-	for k, v := range plan.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	// Kill the process GROUP on timeout. claude spawns children, and killing
-	// only the parent leaves them holding the model connection — the exact
-	// shape of the leak that made an idle town cost $10 an hour.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
+	// One agent invocation. Factored out so the run can be RESUMED: opencode
+	// ends a turn that takes no action, so an agent that stops to think exits
+	// with the bead unfinished (ent4-tek). The loop below continues the session
+	// rather than leaving it dead.
+	runOnce := func(argv []string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+		cmd.Dir = plan.RunDir
+		// HOME stays the cell (auth and cell-wide settings live there); the run
+		// directory is the working directory. PWD is set to match and OLDPWD
+		// dropped, because OpenCode believes an inherited PWD over getcwd(), and
+		// a PWD that disagrees with cmd.Dir makes it exit "Session not found".
+		cmd.Env = append(environWithout("PWD", "OLDPWD"), "PWD="+plan.RunDir)
+		// The gateway credential and the bead's attribution travel in the
+		// environment, not in the settings file the agent reads.
+		for k, v := range plan.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
 		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		// Kill the process GROUP on timeout: the agent spawns children, and
+		// killing only the parent leaves them holding the model connection --
+		// the leak that made an idle town cost $10 an hour.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return nil
+			}
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return cmd.CombinedOutput()
 	}
 
-	out, err := cmd.CombinedOutput()
+	out, err := runOnce(plan.Argv)
+
+	// Auto-continue. A run that exits cleanly with the bead still open stopped
+	// before it finished -- most often because the model produced a turn with
+	// no tool call and opencode ended the session (ent4-tek stopped after three
+	// minutes of analysis, nothing written). Resume the session with a nudge,
+	// up to a few times, bounded by the same deadline the whole run is under.
+	// Skipped for a failed or killed run (err != nil), a runtime with no resume
+	// (ContinueArgv empty, e.g. claude), or once the agent has closed the bead.
+	const maxContinue = 3
+	for attempt := 1; attempt <= maxContinue; attempt++ {
+		if err != nil || ctx.Err() != nil || len(plan.ContinueArgv) == 0 {
+			break
+		}
+		if beadClosed(plan) {
+			break
+		}
+		log.Info("run stopped with the bead still open; resuming the session",
+			"bead", res.Bead, "attempt", attempt)
+		argv := append(append([]string{}, plan.ContinueArgv...), continueMessage)
+		var more []byte
+		more, err = runOnce(argv)
+		out = append(out, '\n')
+		out = append(out, more...)
+	}
+
 	res.Duration = time.Since(started)
 	res.Output = string(out)
 

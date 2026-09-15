@@ -149,6 +149,18 @@ func (j Job) Instructions() string {
 			"Work the bead %s. Read it first, do what it asks, and close it when the work "+
 				"is done and not before. If you cannot complete it, leave it open and say why "+
 				"in a comment.%s\n\n"+
+				// The premature-stop guard. A run ends when a turn takes no action, so
+				// an agent that thinks out loud without editing or running anything
+				// stops mid-task -- ent4-tek exited after 3 minutes having only
+				// analysed the mapping, bead still open, nothing written. Said plainly
+				// so the model keeps acting until the work is actually done.
+				"Keep going until the work is done: do not stop after only planning, "+
+				"reading, or describing what you intend to do. Every turn must DO "+
+				"something -- read a file, make an edit, or run a command -- not just "+
+				"reason in prose; a turn that takes no action ends your run before the "+
+				"bead is finished. When you have a plan, act on it in the same turn. "+
+				"Stop only when the change is made and checked and you have closed the "+
+				"bead, or when you are genuinely blocked and have said why in a comment.\n\n"+
 				"You have a shell. Use it: run the build, run the tests, run the linter, "+
 				"read the code with git log and git diff. "+
 				// Said because it decides whether the run gets to the work at all.
