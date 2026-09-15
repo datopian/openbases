@@ -1327,3 +1327,76 @@ func TestAnInventedScratchDirectoryDoesNotReachThePullRequest(t *testing.T) {
 		t.Errorf("the real work was not committed:\n%s", out)
 	}
 }
+
+// A run that COMMITTED its own work still lands.
+//
+// `git commit` is not on the deny list, so an agent can (and Gemini did, on
+// ent4-lwk) finish by committing. The working tree is then clean and
+// `git status` shows nothing, but the commits are on the bead's branch ahead of
+// base. Landing must push them and open a pull request rather than reporting
+// "nothing to land" and stranding the work on the node.
+func TestCommittedWorkStillLands(t *testing.T) {
+	dir, git := repo(t)
+
+	// Simulate the runner + agent: the runner puts the run on the bead's
+	// branch, the agent edits and commits, and leaves the tree clean.
+	if _, err := git("checkout", "-B", "bead/ent-lwk"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "src/provider.ts", "export const provider = 1;\n")
+	if _, err := git("add", "--", "src/provider.ts"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("commit", "-m", "conform the provider"); err != nil {
+		t.Fatal(err)
+	}
+	want, err := git("rev-parse", "bead/ent-lwk")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Land(git, Spec{Bead: "ent-lwk", Title: "Conform the provider", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("nothing landed, but the agent had committed real work")
+	}
+	if !slices.Equal(got.Files, []string{"src/provider.ts"}) {
+		t.Errorf("landed %v, want src/provider.ts", got.Files)
+	}
+	// No new commit was made: the agent's commit is what lands.
+	if got.Commit != strings.TrimSpace(want) {
+		t.Errorf("landed commit %q, want the agent's own commit %q", got.Commit, strings.TrimSpace(want))
+	}
+	// The branch reached the remote, which is the whole point.
+	if _, err := git("rev-parse", "--verify", "origin/bead/ent-lwk"); err != nil {
+		t.Errorf("the bead's branch was not pushed to origin: %v", err)
+	}
+	// And the tree is back on base for the next bead.
+	if !onBranch(git, "main") {
+		t.Error("the working tree was left on the bead branch, not base")
+	}
+}
+
+// A branch whose only commits are plumbing/scratch opens no pull request.
+func TestCommittedPlumbingDoesNotLand(t *testing.T) {
+	dir, git := repo(t)
+	if _, err := git("checkout", "-B", "bead/ent-plumb"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, ".beads/redirect", "../../.beads\n")
+	if _, err := git("add", "--all"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git("commit", "-m", "plumbing only"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Land(git, Spec{Bead: "ent-plumb", Base: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Errorf("a branch of only plumbing should land nothing, got %+v", got)
+	}
+}
