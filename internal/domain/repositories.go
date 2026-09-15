@@ -277,6 +277,80 @@ func (s *Store) SetRepositoryCheck(ctx context.Context, userID, slug, owner, nam
 	})
 }
 
+// SetProjectOwners changes a project's primary and backup owner, by email.
+//
+// Ownership is runtime data, not schema: it must not be baked into a migration
+// (the repository is public and an owner's email is a business record the
+// disclosure guard refuses), so this is the endpoint that changes it. The
+// project row is writable under RLS by anyone who can read the project; the
+// route gates this to project.manage, which is the control that matters.
+//
+// Both owners in one UPDATE: the backup_owner_differs CHECK refuses a moment
+// where primary and backup are the same person, so a two-statement version
+// would fail on the first. Memberships follow the owners, because
+// project_memberships is what authorisation reads and it must agree with the
+// accountability record (0049_pilot_operators made this same pairing).
+func (s *Store) SetProjectOwners(ctx context.Context, userID, slug, primaryEmail, backupEmail string) error {
+	primaryEmail = strings.TrimSpace(primaryEmail)
+	backupEmail = strings.TrimSpace(backupEmail)
+	if primaryEmail == "" || backupEmail == "" {
+		return fmt.Errorf("%w: a primary and a backup owner email are both required", ErrInvalid)
+	}
+	if strings.EqualFold(primaryEmail, backupEmail) {
+		return fmt.Errorf("%w: the backup owner must be a different person from the primary owner", ErrInvalid)
+	}
+	return authz.WithUser(ctx, s.db, userID, func(tx *sql.Tx) error {
+		id, err := projectIDBySlug(ctx, tx, slug)
+		if err != nil {
+			return err
+		}
+		primaryID, err := userIDByEmail(ctx, tx, primaryEmail)
+		if err != nil {
+			return err
+		}
+		backupID, err := userIDByEmail(ctx, tx, backupEmail)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE projects
+			   SET primary_owner_id = $2::uuid,
+			       backup_owner_id  = $3::uuid,
+			       updated_at = now()
+			 WHERE id = $1::uuid`, id, primaryID, backupID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM project_memberships
+			 WHERE project_id = $1::uuid
+			   AND role_name IN ('project_lead', 'backup_operator')`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO project_memberships (project_id, user_id, role_name)
+			VALUES ($1::uuid, $2::uuid, 'project_lead'),
+			       ($1::uuid, $3::uuid, 'backup_operator')
+			ON CONFLICT DO NOTHING`, id, primaryID, backupID); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// userIDByEmail resolves a user by primary email, case-insensitively (there is
+// a unique index on lower(primary_email)). A miss is ErrInvalid, not ErrNotFound:
+// the project was found, the email was the bad input.
+func userIDByEmail(ctx context.Context, tx *sql.Tx, email string) (string, error) {
+	var id string
+	err := tx.QueryRowContext(ctx,
+		`SELECT id::text FROM users WHERE lower(primary_email) = lower($1)`,
+		strings.TrimSpace(email)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: no user with the email %q", ErrInvalid, email)
+	}
+	return id, err
+}
+
 // projectIDBySlug resolves a project the caller may see.
 func projectIDBySlug(ctx context.Context, tx *sql.Tx, slug string) (string, error) {
 	var id string

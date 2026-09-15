@@ -7,7 +7,7 @@ import { Bead, BeadLink, beadFromHash } from "./Bead";
 import { DependencyGraph } from "./DependencyGraph";
 import { dependencyNote } from "./Dependencies";
 import { Platform } from "./Platform";
-import { CreateProject, ManageRepositories } from "./ProjectAdmin";
+import { CreateProject, ManageOwners, ManageRepositories } from "./ProjectAdmin";
 import {
   age,
   api,
@@ -264,6 +264,18 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
           </h2>
           <Repositories repos={asList(detail.repositories)} />
           <ManageRepositories slug={detail.slug} />
+
+          <ManageOwners
+            slug={detail.slug}
+            primary={detail.primary_owner}
+            backup={detail.backup_owner}
+            onSaved={() => {
+              api
+                .projectDetail(slug)
+                .then(setDetail)
+                .catch(() => {});
+            }}
+          />
 
           {/* Status last: the signals are lower-value than the work graph for
               the question a reader opens a project to ask, so the page leads

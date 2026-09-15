@@ -196,6 +196,39 @@ func registerProjectWrites(
 				}
 				writeJSON(w, http.StatusOK, map[string]any{"status": "detached"})
 			}))
+
+	// Change a project's owners. Ownership is runtime data (see
+	// Store.SetProjectOwners): it cannot be a migration, because the repository
+	// is public and an owner's email is a business record the disclosure guard
+	// refuses. project.manage gates it; the store does the rest.
+	authed.HandleFunc("PATCH /v1/projects/{slug}",
+		withIdempotency(idem, log, "PATCH /v1/projects/{slug}",
+			func(w http.ResponseWriter, r *http.Request, wc writeContext) {
+				var body struct {
+					PrimaryOwner string `json:"primary_owner"`
+					BackupOwner  string `json:"backup_owner"`
+				}
+				if err := json.Unmarshal(wc.body, &body); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+					return
+				}
+				err := store.SetProjectOwners(r.Context(), wc.id.UserID,
+					r.PathValue("slug"), body.PrimaryOwner, body.BackupOwner)
+				if err != nil {
+					if status, b := projectErrStatus(err); status != 0 {
+						writeJSON(w, status, b)
+						return
+					}
+					log.Error("setting project owners", "error", err)
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"status":        "updated",
+					"primary_owner": body.PrimaryOwner,
+					"backup_owner":  body.BackupOwner,
+				})
+			}))
 }
 
 // beadLabels renders a bead's labels as a PostgreSQL text[] literal.

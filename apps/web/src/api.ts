@@ -443,6 +443,25 @@ async function del<T>(path: string): Promise<T> {
   return parsed as T;
 }
 
+/** PATCH that turns a refusal body into a readable error. */
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
+  const parsed: unknown = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      parsed && typeof parsed === "object" && "error" in parsed
+        ? String((parsed as { error: unknown }).error)
+        : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return parsed as T;
+}
+
 export const api = {
   version: () => get<VersionInfo>("/version"),
   me: () => get<Identity>("/v1/me"),
@@ -562,6 +581,12 @@ export const api = {
     del<{ status: string }>(
       `/v1/projects/${encodeURIComponent(slug)}/repositories/` +
         `${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+    ),
+
+  setOwners: (slug: string, primaryOwner: string, backupOwner: string) =>
+    patch<{ status: string; primary_owner: string; backup_owner: string }>(
+      `/v1/projects/${encodeURIComponent(slug)}`,
+      { primary_owner: primaryOwner, backup_owner: backupOwner },
     ),
 };
 
