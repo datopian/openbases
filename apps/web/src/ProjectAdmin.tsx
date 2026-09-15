@@ -368,3 +368,85 @@ export function ManageRepositories({ slug }: { slug: string }) {
     </div>
   );
 }
+
+/**
+ * Change a project's owners.
+ *
+ * Ownership is runtime data, not schema (an owner's email is a business record
+ * the public repo's disclosure guard refuses in a migration), so this is where
+ * it changes -- PATCH /v1/projects/{slug}, gated by project.manage. The fields
+ * take emails because that is what the API resolves; the current owners are
+ * shown as names for context.
+ */
+export function ManageOwners({
+  slug,
+  primary,
+  backup,
+  onSaved,
+}: {
+  slug: string;
+  primary?: string;
+  backup?: string;
+  onSaved?: (primary: string, backup: string) => void;
+}) {
+  const [p, setP] = useState("");
+  const [b, setB] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const r = await api.setOwners(slug, p.trim(), b.trim());
+      setSaved(true);
+      onSaved?.(r.primary_owner, r.backup_owner);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={css.card}>
+      <h3 style={{ fontSize: "0.9rem", marginTop: 0 }}>Owners</h3>
+      <p style={{ ...css.muted, fontSize: "0.8rem", marginTop: 0 }}>
+        Current: {primary ?? "—"}
+        {backup ? ` (backup ${backup})` : ""}. Set new owners by email; the
+        backup must be a different person from the primary.
+      </p>
+      <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap" }}>
+        <Field
+          label="Primary owner email"
+          value={p}
+          onChange={setP}
+          placeholder="primary@example.com"
+          required
+        />
+        <Field
+          label="Backup owner email"
+          value={b}
+          onChange={setB}
+          placeholder="backup@example.com"
+          required
+        />
+      </div>
+      <button
+        style={css.button}
+        onClick={save}
+        disabled={busy || !p.trim() || !b.trim()}
+      >
+        {busy ? "Saving…" : "Save owners"}
+      </button>
+      {error && <p style={css.error}>{error}</p>}
+      {saved && (
+        <p style={{ ...css.muted, fontSize: "0.8rem", marginBottom: 0 }}>
+          Owners updated.
+        </p>
+      )}
+    </div>
+  );
+}

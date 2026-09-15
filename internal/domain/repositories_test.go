@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -71,5 +72,27 @@ func TestOneBadNameRefusesTheBatchBeforeTouchingTheDatabase(t *testing.T) {
 		[]string{"datopian/good", "not-a-repo"})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("want ErrInvalid before any database work, got %v", err)
+	}
+}
+
+// Owner validation happens before the database is touched: a nil db would panic
+// if it did not, which is the assertion (same shape as the attach tests).
+func TestSetOwnersRefusesMissingEmailsBeforeTheDatabase(t *testing.T) {
+	s := &Store{}
+	if err := s.SetProjectOwners(context.Background(), "u", "portaljs", "", "b@x.com"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("empty primary should be ErrInvalid, got %v", err)
+	}
+	if err := s.SetProjectOwners(context.Background(), "u", "portaljs", "a@x.com", ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("empty backup should be ErrInvalid, got %v", err)
+	}
+}
+
+// The backup must be a different person, checked here so the message is clear
+// rather than surfacing as the backup_owner_differs CHECK from the database.
+func TestSetOwnersRefusesTheSamePersonForBoth(t *testing.T) {
+	s := &Store{}
+	if err := s.SetProjectOwners(context.Background(), "u", "portaljs",
+		"Same.Person@Example.com", "same.person@example.com"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("same person (case-insensitive) should be ErrInvalid, got %v", err)
 	}
 }

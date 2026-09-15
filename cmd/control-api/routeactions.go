@@ -62,6 +62,10 @@ var routeActions = map[string]routeAction{
 	// and not a read.
 	"POST /v1/projects": {Action: authz.ProjectManage},
 
+	// Changing a project's owners. Same authority as creating it and attaching
+	// its repositories: a management decision about who is accountable.
+	"PATCH /v1/projects/{slug}": {Action: authz.ProjectManage},
+
 	// Platform state (wg-7bh). OrganisationRead is the token scope; the
 	// company-management gate lives in system_platform_state, because the
 	// answer is about the platform rather than about any one project and
