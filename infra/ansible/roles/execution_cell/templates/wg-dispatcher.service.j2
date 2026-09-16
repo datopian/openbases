@@ -38,7 +38,8 @@ ExecStart={{ dispatcher_binary }} \
   -rig {{ dispatcher_rig }} \
   -interval {{ dispatcher_interval }} \
   -deadline {{ dispatcher_deadline }} \
-  -stall {{ dispatcher_stall }}
+  -stall {{ dispatcher_stall }} \
+  -max-concurrent {{ dispatcher_max_concurrent }}
 
 # Restart, because this is the thing that makes work happen. A dispatcher that
 # died quietly would look exactly like a queue nobody is adding to.

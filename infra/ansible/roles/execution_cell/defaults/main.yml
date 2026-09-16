@@ -53,6 +53,12 @@ dispatcher_rig: sandbox
 # request — but a minute of latency between pressing a button and seeing
 # anything happen makes a demo look broken.
 dispatcher_interval: 10s
+# How many work beads run at once in a cell. Ready, unblocked beads -- across
+# different projects especially -- run in parallel up to this. 3 by the operator's
+# choice; the one execution box has to have the CPU/RAM/disk for that many fresh
+# worktrees + builds, so lower it if runs start contending. 1 restores the old
+# strictly-serial behaviour.
+dispatcher_max_concurrent: 3
 
 # The role and model tables wg-runner reads (wg-3tp), deployed as
 # /etc/workgraph/models.json. These were map literals in Go, so moving a role
