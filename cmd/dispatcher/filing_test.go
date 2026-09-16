@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -478,3 +480,53 @@ func TestAFilingForAnUnprovisionableRigIsActionable(t *testing.T) {
 		t.Errorf("the error leaks an internal bd path instead of explaining the problem: %v", err)
 	}
 }
+
+// Ready work runs up to maxConcurrent at once, and no more.
+//
+// With three slots and work always available, a pass claims exactly three and
+// then stops -- the fourth claim finds every slot busy. This is what lets
+// unblocked beads (especially across projects) run in parallel instead of one
+// at a time, while the ceiling bounds cost and load.
+func TestReadyWorkRunsUpToMaxConcurrent(t *testing.T) {
+	var mu sync.Mutex
+	claims := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/work/claim") {
+			mu.Lock()
+			claims++
+			n := claims
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"j`+itoa(n)+`","kind":"work","cell":"oss","bead":"sa-x","rig":"sandbox"}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	hold := make(chan struct{})
+	var started sync.WaitGroup
+	started.Add(3)
+	d := &dispatcher{
+		api: srv.URL, cell: "oss", rig: "sandbox", cellRoot: t.TempDir(),
+		http: srv.Client(), log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		maxConcurrent: 3,
+	}
+	d.runFn = func(_ context.Context, _ *work.Job) {
+		started.Done()
+		<-hold // hold the slot so the pass cannot free it and claim more
+	}
+
+	d.pass(context.Background())
+
+	mu.Lock()
+	got := claims
+	mu.Unlock()
+	if got != 3 {
+		t.Errorf("claimed %d work jobs with a ceiling of 3; parallelism is not bounded to maxConcurrent", got)
+	}
+	close(hold)
+	d.wg.Wait()
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }

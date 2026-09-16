@@ -11,9 +11,10 @@
 // work itself. A process already talking to the control plane every few seconds
 // is the cheapest thing to fill it with.
 //
-// One job at a time, deliberately. Concurrency is bounded by the budget's
-// max_concurrent_agents (wg-726), and a dispatcher that ran two jobs at once
-// would have to reimplement that bound rather than inherit it.
+// Up to -max-concurrent work beads at a time (default 1). Ready, unblocked
+// beads -- especially across different projects -- run in parallel up to that
+// ceiling; a slot semaphore enforces it exactly. The runner's --max-agents
+// guard (wg-726) is available as an additional per-cell cap when set.
 package main
 
 import (
@@ -68,7 +69,9 @@ func main() {
 			"absolute ceiling on one job; a backstop against a loop, not a budget")
 		stall = flag.Duration("stall", 10*time.Minute,
 			"stop a run that has written nothing -- no output, no file changed -- for this long")
-		once = flag.Bool("once", false, "do a single pass and exit")
+		once          = flag.Bool("once", false, "do a single pass and exit")
+		maxConcurrent = flag.Int("max-concurrent", 1,
+			"how many work beads to run at once in this cell (ready, unblocked beads run in parallel up to this)")
 	)
 	flag.Parse()
 
@@ -91,6 +94,11 @@ func main() {
 		deadline:  *deadline, stall: *stall, log: log,
 		http: &http.Client{Timeout: 60 * time.Second},
 	}
+	if *maxConcurrent < 1 {
+		*maxConcurrent = 1
+	}
+	d.maxConcurrent = *maxConcurrent
+	d.slots = make(chan struct{}, d.maxConcurrent)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -110,8 +118,9 @@ func main() {
 	// run that was installing dependencies. Somebody who had just re-planned
 	// was waiting on beads that could have existed immediately.
 	//
-	// Work stays serialised: agents are expensive and the box is small. This
-	// loop only ever claims `file` jobs, which are database writes.
+	// Filing still has its own loop (it must never wait behind an agent). Work
+	// now runs up to -max-concurrent at once; this file loop only ever claims
+	// `file` jobs, which are database writes.
 	go d.fileLoop(ctx)
 
 	ticker := time.NewTicker(*interval)
@@ -120,6 +129,11 @@ func main() {
 	for {
 		select {
 		case <-ctx.Done():
+			// Wait for in-flight runs to finish reporting. Cancellation makes
+			// each run return promptly (its process group is killed), and the
+			// outcome is reported on a context a shutdown cannot cancel, so this
+			// is bounded and preserves "the outcome outlives the shutdown".
+			d.wg.Wait()
 			log.Info("stopped cleanly")
 			return
 		case <-ticker.C:
@@ -149,6 +163,15 @@ type dispatcher struct {
 	tick time.Duration
 	http *http.Client
 	log  *slog.Logger
+	// maxConcurrent is how many work beads run at once; slots is the semaphore
+	// that enforces it (one token per running agent). wg tracks in-flight runs
+	// so a shutdown can wait for their outcomes to be reported.
+	maxConcurrent int
+	slots         chan struct{}
+	wg            sync.WaitGroup
+	// runFn executes one claimed job. A field only so a test can replace it;
+	// nil means runClaimed, the real thing.
+	runFn func(context.Context, *work.Job)
 }
 
 // fileLoop claims and executes filing jobs, forever, alongside the work loop.
@@ -212,6 +235,18 @@ func (d *dispatcher) fileLoop(ctx context.Context) {
 // freshly planned bead appeared in the interface only after the NEXT pass, which
 // reads as the planner having done nothing.
 func (d *dispatcher) pass(ctx context.Context) {
+	// Self-initialise the slot semaphore, so a dispatcher built without going
+	// through main (a test, `-once`) still runs. A nil channel is never ready,
+	// which would make the claim loop below take its default and do nothing.
+	if d.slots == nil {
+		n := d.maxConcurrent
+		if n < 1 {
+			n = 1
+		}
+		d.maxConcurrent = n
+		d.slots = make(chan struct{}, n)
+	}
+
 	// What this rig holds, so the control plane can route a dispatch to a rig
 	// that can do the work or refuse it (wg-ugb).
 	//
@@ -239,14 +274,49 @@ func (d *dispatcher) pass(ctx context.Context) {
 		d.log.Error("projecting beads", "error", err)
 	}
 
-	job, err := d.claim(ctx, work.KindWork)
-	if err != nil {
-		d.log.Error("claiming work", "error", err)
-		return
+	// Fill every free agent slot with ready work, launching each run
+	// concurrently up to maxConcurrent. A slot freed by a finished run is
+	// refilled on the next pass. claim() is atomic on the control plane
+	// (system_claim_work uses FOR UPDATE SKIP LOCKED), so concurrent and
+	// repeated claims each get a distinct job or nothing -- two runs can never
+	// pick up the same bead.
+	for {
+		select {
+		case d.slots <- struct{}{}:
+		default:
+			return // every slot is busy; the next pass tries again
+		}
+		job, err := d.claim(ctx, work.KindWork)
+		if err != nil {
+			d.log.Error("claiming work", "error", err)
+			<-d.slots
+			return
+		}
+		if job == nil {
+			<-d.slots
+			return // nothing ready to run
+		}
+		run := d.runFn
+		if run == nil {
+			run = d.runClaimed
+		}
+		d.wg.Add(1)
+		go func(job work.Job) {
+			defer d.wg.Done()
+			defer func() { <-d.slots }()
+			run(ctx, &job)
+		}(*job)
 	}
-	if job == nil {
-		return
-	}
+}
+
+// runClaimed takes one claimed job all the way to a reported outcome: it makes
+// the rig if needed, runs the agent, checks, lands, and reports. Safe to run
+// concurrently with other runClaimed calls -- each work job has its own per-bead
+// worktree (prepareWorkdir), so the working trees never collide. The shared rig
+// repository (branch push) and the Beads graph (labels, close, comment) are the
+// one place concurrent runs still meet; that contention is tracked for a check
+// (see the sa- bead) and is why claims are atomic above.
+func (d *dispatcher) runClaimed(ctx context.Context, job *work.Job) {
 	if err := job.Validate(); err != nil {
 		d.log.Error("refusing an unrunnable job", "job", job.ID, "error", err)
 		d.report(outcomeCtx(ctx), job.ID, work.Result{OK: false, Output: err.Error()})
