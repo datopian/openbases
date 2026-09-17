@@ -82,7 +82,10 @@ admin_ssh_cidrs = []
 # moving headroom between domains — is wg-o7t, and it needs a trustworthy spend
 # figure first: the API exposes no spend endpoint, and the per-request cost in
 # the logs is visibly wrong on small requests.
-ai_monthly_budget = 100
+# Raised 100 -> 300 to match a Cloudflare prepaid-credit top-up (the ceiling must
+# not exceed the credit behind it). At the shares below, oss = $210, internal
+# $60, client $30, over the 30-day sliding window.
+ai_monthly_budget = 300
 
 # How the pool is divided between security domains. Must sum to 1.
 #
