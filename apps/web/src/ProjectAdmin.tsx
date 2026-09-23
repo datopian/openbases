@@ -450,3 +450,67 @@ export function ManageOwners({
     </div>
   );
 }
+
+/**
+ * Assign a project to an execution cell.
+ *
+ * A repository only becomes a provisioned rig once its project's execution cell
+ * is set (system_rigs_wanted joins on it), so a project with a repo but no cell
+ * has its repo silently ignored -- "the repo isn't being picked up". This sets
+ * it. Cell slug (e.g. "oss") in; project.manage gates it.
+ */
+export function ManageCell({
+  slug,
+  onSaved,
+}: {
+  slug: string;
+  onSaved?: (cell: string) => void;
+}) {
+  const [cell, setCell] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const r = await api.setCell(slug, cell.trim());
+      setSaved(true);
+      onSaved?.(r.cell);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={css.card}>
+      <h3 style={{ fontSize: "0.9rem", marginTop: 0 }}>Execution cell</h3>
+      <p style={{ ...css.muted, fontSize: "0.8rem", marginTop: 0 }}>
+        The cell that runs this project. A repository is only provisioned into a
+        rig once the project is assigned to a cell.
+      </p>
+      <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap" }}>
+        <Field
+          label="Cell slug"
+          value={cell}
+          onChange={setCell}
+          placeholder="oss"
+          required
+        />
+      </div>
+      <button style={css.button} onClick={save} disabled={busy || !cell.trim()}>
+        {busy ? "Saving…" : "Set cell"}
+      </button>
+      {error && <p style={css.error}>{error}</p>}
+      {saved && (
+        <p style={{ ...css.muted, fontSize: "0.8rem", marginBottom: 0 }}>
+          Cell set. The node provisions the rig on its next pass.
+        </p>
+      )}
+    </div>
+  );
+}

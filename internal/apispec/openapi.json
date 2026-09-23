@@ -2070,9 +2070,9 @@
         ]
       },
       "patch": {
-        "summary": "Set a project's owners",
+        "summary": "Update a project's owners or execution cell",
         "operationId": "patch_v1_projects_slug",
-        "description": "Change who is accountable for a project: its primary owner and a backup, both by email. The backup must be a different person -- the schema refuses full-cycle ownership by one person. Ownership is runtime data, not schema, so this is where it changes; both owners are made project members. Requires project.manage.",
+        "description": "Partial update of a project (project.manage). Change owners (primary_owner + backup_owner, by email; the backup must be a different person; both are made members) and/or the execution cell (cell slug; a repository only becomes a provisioned rig once its project is assigned to a cell). These are runtime data, not schema, so this is where they change.",
         "parameters": [
           {
             "name": "slug",
@@ -2099,15 +2099,19 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["primary_owner", "backup_owner"],
+                "description": "A partial update: provide primary_owner and backup_owner to change owners, and/or cell to change the execution cell. A field left out is left alone; at least one must be given.",
                 "properties": {
                   "primary_owner": {
                     "type": "string",
-                    "description": "Email of the primary (accountable) owner."
+                    "description": "Email of the primary (accountable) owner. Requires backup_owner too."
                   },
                   "backup_owner": {
                     "type": "string",
                     "description": "Email of the backup owner; must be a different person from the primary."
+                  },
+                  "cell": {
+                    "type": "string",
+                    "description": "Slug of the execution cell that should run this project (e.g. oss). A repository only becomes a provisioned rig when its project is assigned to a cell."
                   }
                 }
               }
