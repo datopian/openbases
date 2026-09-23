@@ -7,7 +7,7 @@ import { Bead, BeadLink, beadFromHash } from "./Bead";
 import { DependencyGraph } from "./DependencyGraph";
 import { dependencyNote } from "./Dependencies";
 import { Platform } from "./Platform";
-import { CreateProject, ManageOwners, ManageRepositories } from "./ProjectAdmin";
+import { CreateProject, ManageCell, ManageOwners, ManageRepositories } from "./ProjectAdmin";
 import {
   age,
   api,
@@ -269,6 +269,16 @@ function ProjectPage({ slug, onBack }: { slug: string; onBack: () => void }) {
             slug={detail.slug}
             primary={detail.primary_owner}
             backup={detail.backup_owner}
+            onSaved={() => {
+              api
+                .projectDetail(slug)
+                .then(setDetail)
+                .catch(() => {});
+            }}
+          />
+
+          <ManageCell
+            slug={detail.slug}
             onSaved={() => {
               api
                 .projectDetail(slug)

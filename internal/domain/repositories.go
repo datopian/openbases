@@ -351,6 +351,43 @@ func userIDByEmail(ctx context.Context, tx *sql.Tx, email string) (string, error
 	return id, err
 }
 
+// SetProjectCell assigns the project to an execution cell, by cell slug.
+//
+// A repository only becomes a rig the node provisions when its project's
+// execution_cell_id matches the cell -- system_rigs_wanted joins on it. So a
+// project that has a repository but no cell (or a different cell) has its repo
+// silently ignored by every cell: no rig, no clone, "the repo isn't being
+// picked up" (the jopacc case). This is how a project is pointed at the cell
+// that should run it.
+func (s *Store) SetProjectCell(ctx context.Context, userID, slug, cell string) error {
+	cell = strings.TrimSpace(cell)
+	if cell == "" {
+		return fmt.Errorf("%w: an execution cell is required", ErrInvalid)
+	}
+	return authz.WithUser(ctx, s.db, userID, func(tx *sql.Tx) error {
+		id, err := projectIDBySlug(ctx, tx, slug)
+		if err != nil {
+			return err
+		}
+		var cellID string
+		err = tx.QueryRowContext(ctx,
+			`SELECT id::text FROM execution_cells WHERE slug = $1`, cell).Scan(&cellID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: no execution cell with the slug %q", ErrInvalid, cell)
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE projects
+			   SET execution_cell_id = $2::uuid, updated_at = now()
+			 WHERE id = $1::uuid`, id, cellID); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // projectIDBySlug resolves a project the caller may see.
 func projectIDBySlug(ctx context.Context, tx *sql.Tx, slug string) (string, error) {
 	var id string

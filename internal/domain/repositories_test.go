@@ -96,3 +96,12 @@ func TestSetOwnersRefusesTheSamePersonForBoth(t *testing.T) {
 		t.Errorf("same person (case-insensitive) should be ErrInvalid, got %v", err)
 	}
 }
+
+// Cell validation happens before the database, same nil-db assertion as the
+// others: an empty cell is refused without a query.
+func TestSetCellRefusesEmptyBeforeTheDatabase(t *testing.T) {
+	s := &Store{}
+	if err := s.SetProjectCell(context.Background(), "u", "jopacc", ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("empty cell should be ErrInvalid, got %v", err)
+	}
+}

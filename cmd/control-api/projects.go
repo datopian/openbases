@@ -207,27 +207,53 @@ func registerProjectWrites(
 				var body struct {
 					PrimaryOwner string `json:"primary_owner"`
 					BackupOwner  string `json:"backup_owner"`
+					Cell         string `json:"cell"`
 				}
 				if err := json.Unmarshal(wc.body, &body); err != nil {
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
 					return
 				}
-				err := store.SetProjectOwners(r.Context(), wc.id.UserID,
-					r.PathValue("slug"), body.PrimaryOwner, body.BackupOwner)
-				if err != nil {
+				// A partial update: change owners, the cell, or both. A field left
+				// out is left alone. Applied in a fixed order so the response is
+				// deterministic.
+				fail := func(err error, doing string) bool {
+					if err == nil {
+						return false
+					}
 					if status, b := projectErrStatus(err); status != 0 {
 						writeJSON(w, status, b)
+						return true
+					}
+					log.Error(doing, "error", err)
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+					return true
+				}
+				result := map[string]any{"status": "updated"}
+				changed := false
+				if strings.TrimSpace(body.PrimaryOwner) != "" || strings.TrimSpace(body.BackupOwner) != "" {
+					if fail(store.SetProjectOwners(r.Context(), wc.id.UserID,
+						r.PathValue("slug"), body.PrimaryOwner, body.BackupOwner), "setting project owners") {
 						return
 					}
-					log.Error("setting project owners", "error", err)
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+					result["primary_owner"] = body.PrimaryOwner
+					result["backup_owner"] = body.BackupOwner
+					changed = true
+				}
+				if strings.TrimSpace(body.Cell) != "" {
+					if fail(store.SetProjectCell(r.Context(), wc.id.UserID,
+						r.PathValue("slug"), body.Cell), "setting project cell") {
+						return
+					}
+					result["cell"] = body.Cell
+					changed = true
+				}
+				if !changed {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error": "nothing to update: provide primary_owner and backup_owner, and/or cell",
+						"code":  "invalid_project"})
 					return
 				}
-				writeJSON(w, http.StatusOK, map[string]any{
-					"status":        "updated",
-					"primary_owner": body.PrimaryOwner,
-					"backup_owner":  body.BackupOwner,
-				})
+				writeJSON(w, http.StatusOK, result)
 			}))
 }
 

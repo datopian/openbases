@@ -588,6 +588,12 @@ export const api = {
       `/v1/projects/${encodeURIComponent(slug)}`,
       { primary_owner: primaryOwner, backup_owner: backupOwner },
     ),
+
+  setCell: (slug: string, cell: string) =>
+    patch<{ status: string; cell: string }>(
+      `/v1/projects/${encodeURIComponent(slug)}`,
+      { cell },
+    ),
 };
 
 /**
