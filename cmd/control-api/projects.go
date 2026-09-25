@@ -255,6 +255,40 @@ func registerProjectWrites(
 				}
 				writeJSON(w, http.StatusOK, result)
 			}))
+
+	// Grant a person access to a project. This ADDS a member (see
+	// Store.AddProjectMember); it does not touch the two accountable owners, so
+	// it is how someone gets full access without displacing the owner or backup.
+	// role defaults to project_lead ("full access") when omitted. Runtime data,
+	// project.manage gates it. Idempotent, so a repeat grant is harmless.
+	authed.HandleFunc("POST /v1/projects/{slug}/members",
+		withIdempotency(idem, log, "POST /v1/projects/{slug}/members",
+			func(w http.ResponseWriter, r *http.Request, wc writeContext) {
+				var body struct {
+					Email string `json:"email"`
+					Role  string `json:"role"`
+				}
+				if err := json.Unmarshal(wc.body, &body); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+					return
+				}
+				if err := store.AddProjectMember(r.Context(), wc.id.UserID,
+					r.PathValue("slug"), body.Email, body.Role); err != nil {
+					if status, b := projectErrStatus(err); status != 0 {
+						writeJSON(w, status, b)
+						return
+					}
+					log.Error("adding project member", "error", err)
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+					return
+				}
+				role := strings.TrimSpace(body.Role)
+				if role == "" {
+					role = "project_lead"
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"status": "granted", "email": body.Email, "role": role})
+			}))
 }
 
 // beadLabels renders a bead's labels as a PostgreSQL text[] literal.

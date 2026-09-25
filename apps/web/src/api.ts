@@ -594,6 +594,14 @@ export const api = {
       `/v1/projects/${encodeURIComponent(slug)}`,
       { cell },
     ),
+
+  // Grant a person access to a project. Additive: it does not touch the owners.
+  // An empty role means full access (project_lead), matching the server default.
+  addMember: (slug: string, email: string, role: string) =>
+    post<{ status: string; email: string; role: string }>(
+      `/v1/projects/${encodeURIComponent(slug)}/members`,
+      role ? { email, role } : { email },
+    ),
 };
 
 /**

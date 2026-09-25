@@ -87,6 +87,7 @@ var routeActions = map[string]routeAction{
 	"POST /v1/node/pull-requests":                            {Action: authz.AgentInspect},
 	"GET /v1/projects/{slug}/repositories":                   {Action: authz.ProjectRead},
 	"POST /v1/projects/{slug}/repositories":                  {Action: authz.ProjectManage},
+	"POST /v1/projects/{slug}/members":                       {Action: authz.ProjectManage},
 	"DELETE /v1/projects/{slug}/repositories/{owner}/{name}": {Action: authz.ProjectManage},
 	// Setting a check command allows a repository's own command to be run on
 	// the cell after an agent edits it, so it needs the same authority as

@@ -514,3 +514,76 @@ export function ManageCell({
     </div>
   );
 }
+
+// Grant a person access to a project. Additive: unlike ManageOwners, this adds a
+// member without displacing the owner or backup. An empty role means full
+// access (project_lead), matching the server default.
+export function ManageMembers({
+  slug,
+  onSaved,
+}: {
+  slug: string;
+  onSaved?: (email: string, role: string) => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ email: string; role: string } | null>(
+    null,
+  );
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    setSaved(null);
+    try {
+      const r = await api.addMember(slug, email.trim(), role.trim());
+      setSaved({ email: r.email, role: r.role });
+      onSaved?.(r.email, r.role);
+      setEmail("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={css.card}>
+      <h3 style={{ fontSize: "0.9rem", marginTop: 0 }}>Grant access</h3>
+      <p style={{ ...css.muted, fontSize: "0.8rem", marginTop: 0 }}>
+        Add a member without changing the owners. The default role is full access
+        (project lead).
+      </p>
+      <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap" }}>
+        <Field
+          label="Member email"
+          value={email}
+          onChange={setEmail}
+          placeholder="person@datopian.com"
+          required
+        />
+        <Field
+          label="Role (optional)"
+          value={role}
+          onChange={setRole}
+          placeholder="project_lead (full access)"
+        />
+      </div>
+      <button
+        style={css.button}
+        onClick={save}
+        disabled={busy || !email.trim()}
+      >
+        {busy ? "Granting…" : "Grant access"}
+      </button>
+      {error && <p style={css.error}>{error}</p>}
+      {saved && (
+        <p style={{ ...css.muted, fontSize: "0.8rem", marginBottom: 0 }}>
+          {saved.email} now has {saved.role} access.
+        </p>
+      )}
+    </div>
+  );
+}

@@ -105,3 +105,21 @@ func TestSetCellRefusesEmptyBeforeTheDatabase(t *testing.T) {
 		t.Errorf("empty cell should be ErrInvalid, got %v", err)
 	}
 }
+
+// AddProjectMember validates the email and the role before the database, same
+// nil-db assertion: a missing email and a role outside the project set are both
+// refused without a query. An empty role is NOT invalid -- it defaults to
+// project_lead (full access) -- so it must fall through to the nil-db panic path
+// and is not asserted here.
+func TestAddMemberValidatesBeforeTheDatabase(t *testing.T) {
+	s := &Store{}
+	if err := s.AddProjectMember(context.Background(), "u", "jopacc", "", "project_lead"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("empty email should be ErrInvalid, got %v", err)
+	}
+	if err := s.AddProjectMember(context.Background(), "u", "jopacc", "a@x.com", "organisation_admin"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("an org-level role should be ErrInvalid, got %v", err)
+	}
+	if err := s.AddProjectMember(context.Background(), "u", "jopacc", "a@x.com", "wizard"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("an unknown role should be ErrInvalid, got %v", err)
+	}
+}
