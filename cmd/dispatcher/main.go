@@ -1271,6 +1271,13 @@ type beadRow struct {
 	Title  string `json:"title"`
 	Kind   string `json:"kind"`
 	Status string `json:"status"`
+	// The bead's own body: what to do (description) and what "done" means
+	// (acceptance criteria). Carried up so a reader -- and the MCP -- sees the
+	// brief, not only the title and the outcome. `bd list` has returned both all
+	// along. Omitted when empty, so an older control plane sees the payload it
+	// always saw.
+	Description string `json:"description,omitempty"`
+	Acceptance  string `json:"acceptance,omitempty"`
 	// Labels, because project attribution comes from the bead now: a
 	// project:<slug> label is what lets one cell serve several projects
 	// (wg-43n). Omitted when empty, so an older control plane sees the payload
@@ -1335,6 +1342,10 @@ func (d *dispatcher) readBeads(ctx context.Context, rig string) ([]beadRow, erro
 			row.Kind, _ = r["type"].(string)
 		}
 		row.Status, _ = r["status"].(string)
+		// The body, from the same `bd list` row. bd names the second field
+		// `acceptance_criteria`; the projection and the API call it `acceptance`.
+		row.Description, _ = r["description"].(string)
+		row.Acceptance, _ = r["acceptance_criteria"].(string)
 		if n, ok := r["comment_count"].(float64); ok {
 			row.commentCount = int(n)
 		}
