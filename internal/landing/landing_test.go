@@ -1400,3 +1400,54 @@ func TestCommittedPlumbingDoesNotLand(t *testing.T) {
 		t.Errorf("a branch of only plumbing should land nothing, got %+v", got)
 	}
 }
+
+// A repository's own git hook must not be able to strand a landing.
+//
+// datc-yft made a complete Prisma change -- schema, migration, key crypto, all
+// tests passing -- and closed UNLANDED, its work left uncommitted on the node,
+// because the landing's `git commit` tripped a `bd` pre-commit hook that failed:
+//
+//	git commit ...: exit status 1: Error: Failed to flush bd changes to
+//	storage. Run 'bd sync --flush-only' manually to diagnose
+//
+// The commit aborted, nothing was pushed, no pull request opened, and the job
+// still reported "done". The landing commit is mechanical -- it commits the
+// agent's already-produced code -- so it bypasses hooks (--no-verify); a hook
+// that fails cannot swallow an agent's work. Checks that must gate landing are
+// the project's check_command, run separately.
+func TestALandingIsNotStoppedByAFailingCommitHook(t *testing.T) {
+	dir, git := repo(t)
+
+	// A pre-commit hook that always fails, standing in for the bd flush hook.
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook,
+		[]byte("#!/bin/sh\necho 'Failed to flush bd changes to storage' >&2\nexit 1\n"),
+		0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The agent's real work.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Land(git, Spec{Bead: "datc-yft", Title: "Prisma models", Base: "main"})
+	if err != nil {
+		t.Fatalf("the failing hook stopped the landing: %v", err)
+	}
+	if got == nil {
+		t.Fatal("nothing landed, but the tree had a change the hook should not have blocked")
+	}
+	if !slices.Contains(got.Files, "README.md") {
+		t.Errorf("landed %v, want README.md among them", got.Files)
+	}
+
+	// And it reached the remote despite the hook.
+	remote, err := git("ls-remote", "--heads", "origin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(remote, "refs/heads/bead/datc-yft") {
+		t.Errorf("the branch is not on the remote:\n%s", remote)
+	}
+}
