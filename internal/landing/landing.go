@@ -841,7 +841,22 @@ func Land(git Git, s Spec) (*Result, error) {
 		return nil, nil
 	}
 
-	if _, err := git("commit", "-m", Message(s)); err != nil {
+	// --no-verify: the landing commit is a mechanical commit of the agent's
+	// already-produced code, and it must not be gated by the repository's git
+	// hooks. datc-yft made a complete Prisma change (schema, migration, tests,
+	// all verified) and then closed unlanded with the work stranded uncommitted
+	// on the node, because the commit tripped a `bd` pre-commit hook the rig's
+	// .beads directory installs:
+	//
+	//	git commit ...: exit status 1: Error: Failed to flush bd changes to
+	//	storage. Run 'bd sync --flush-only' manually to diagnose
+	//
+	// A hook that syncs a beads store, runs a linter, or runs tests belongs to a
+	// person committing by hand; firing it here turns any hook failure into lost
+	// work with a green "job done". Checks that must gate landing are the
+	// project's check_command, run separately, not whatever hooks happen to be
+	// installed in the checkout.
+	if _, err := git("commit", "--no-verify", "-m", Message(s)); err != nil {
 		return nil, err
 	}
 	sha, err := git("rev-parse", "HEAD")
