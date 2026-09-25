@@ -133,6 +133,9 @@ and attaching repositories**, filing work from a brief, and dispatching. Detachi
 setting a repository's check command are deliberately not tools — the first withdraws the route work
 travels on, the second is executed on the execution node from a repository an agent can edit.
 
+New here? [`docs/getting-started.md`](docs/getting-started.md) walks the first run end to end through
+the MCP — connect, create a project, attach repositories, file a plan (free), and dispatch (spends).
+
 ## How it fits together
 
 Two machines, neither with an inbound port. Everything a person touches goes through Cloudflare Access
@@ -324,6 +327,7 @@ infra/             OpenTofu (Hetzner, Cloudflare), Ansible (nodes, cells, harnes
 formulas/          workflow formulas
 policies/          policy bundles evaluated by the approval engine
 skills/            the skill for agents that use OpenBases as a tool
+docs/getting-started.md  run your first work through the MCP — start here for "how"
 docs/adr/          architecture decision records — start here for "why"
 docs/evaluations/  measured model and harness results, dated
 docs/runbooks/     operator runbooks
