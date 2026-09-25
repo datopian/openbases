@@ -312,6 +312,14 @@ func (s *Store) SetProjectOwners(ctx context.Context, userID, slug, primaryEmail
 		if err != nil {
 			return err
 		}
+		// Read the outgoing owners before the update, so the membership sync
+		// below can remove only their rows.
+		var oldPrimary, oldBackup sql.NullString
+		if err := tx.QueryRowContext(ctx, `
+			SELECT primary_owner_id::text, backup_owner_id::text
+			  FROM projects WHERE id = $1::uuid`, id).Scan(&oldPrimary, &oldBackup); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE projects
 			   SET primary_owner_id = $2::uuid,
@@ -320,10 +328,17 @@ func (s *Store) SetProjectOwners(ctx context.Context, userID, slug, primaryEmail
 			 WHERE id = $1::uuid`, id, primaryID, backupID); err != nil {
 			return err
 		}
+		// Remove only the OUTGOING owners' membership rows, not every lead. A
+		// project may carry additional project_lead members granted through
+		// AddProjectMember (someone with full access who is not the accountable
+		// owner), and a blanket delete here would silently revoke them on the
+		// next owner change.
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM project_memberships
 			 WHERE project_id = $1::uuid
-			   AND role_name IN ('project_lead', 'backup_operator')`, id); err != nil {
+			   AND ((role_name = 'project_lead'    AND user_id = $2::uuid)
+			     OR (role_name = 'backup_operator' AND user_id = $3::uuid))`,
+			id, oldPrimary, oldBackup); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -331,6 +346,61 @@ func (s *Store) SetProjectOwners(ctx context.Context, userID, slug, primaryEmail
 			VALUES ($1::uuid, $2::uuid, 'project_lead'),
 			       ($1::uuid, $3::uuid, 'backup_operator')
 			ON CONFLICT DO NOTHING`, id, primaryID, backupID); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// projectRoles are the role names a project membership may carry. The org-level
+// roles (organisation_admin, executive, portfolio_lead, function_lead) are not
+// project memberships and are refused here, so a grant cannot quietly widen a
+// person's scope past the project.
+var projectRoles = map[string]bool{
+	"project_lead":    true,
+	"backup_operator": true,
+	"contributor":     true,
+	"observer":        true,
+}
+
+// AddProjectMember grants a person a role on a project, by email.
+//
+// It is the additive counterpart to SetProjectOwners: SetProjectOwners fixes the
+// two accountable owners (and would displace one to add a third full-access
+// person), whereas this adds a further member without touching the owners. The
+// default role is project_lead -- "full project context and execution within
+// policy", i.e. full access -- which is what an unqualified grant means.
+//
+// Idempotent: re-granting a role the person already holds is a no-op, not an
+// error (the PK is (project_id, user_id, role_name)). Membership is runtime
+// data, not schema -- a person's email is a business record the disclosure guard
+// refuses in the public repo -- so this is the endpoint that changes it, gated
+// by project.manage on the route.
+func (s *Store) AddProjectMember(ctx context.Context, userID, slug, email, role string) error {
+	email = strings.TrimSpace(email)
+	role = strings.TrimSpace(role)
+	if role == "" {
+		role = "project_lead" // an unqualified grant is full access
+	}
+	if email == "" {
+		return fmt.Errorf("%w: a member email is required", ErrInvalid)
+	}
+	if !projectRoles[role] {
+		return fmt.Errorf("%w: %q is not a project role", ErrInvalid, role)
+	}
+	return authz.WithUser(ctx, s.db, userID, func(tx *sql.Tx) error {
+		id, err := projectIDBySlug(ctx, tx, slug)
+		if err != nil {
+			return err
+		}
+		memberID, err := userIDByEmail(ctx, tx, email)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO project_memberships (project_id, user_id, role_name)
+			VALUES ($1::uuid, $2::uuid, $3)
+			ON CONFLICT DO NOTHING`, id, memberID, role); err != nil {
 			return err
 		}
 		return nil
