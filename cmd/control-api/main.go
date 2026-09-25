@@ -906,15 +906,17 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		var payload struct {
 			Cell  string `json:"cell"`
 			Beads []struct {
-				Bead      string   `json:"bead"`
-				Title     string   `json:"title"`
-				Kind      string   `json:"kind"`
-				Status    string   `json:"status"`
-				Labels    []string `json:"labels"`
-				Blockers  []string `json:"blockers"`
-				Comment   string   `json:"comment"`
-				CommentAt string   `json:"comment_at"`
-				CommentBy string   `json:"comment_by"`
+				Bead        string   `json:"bead"`
+				Title       string   `json:"title"`
+				Kind        string   `json:"kind"`
+				Status      string   `json:"status"`
+				Description string   `json:"description"`
+				Acceptance  string   `json:"acceptance"`
+				Labels      []string `json:"labels"`
+				Blockers    []string `json:"blockers"`
+				Comment     string   `json:"comment"`
+				CommentAt   string   `json:"comment_at"`
+				CommentBy   string   `json:"comment_by"`
 			} `json:"beads"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&payload); err != nil {
@@ -940,6 +942,22 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 				log.Error("projecting a bead", "cell", payload.Cell, "bead", b.Bead, "error", err)
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 				return
+			}
+			// The body, after the bead itself exists (system_project_bead_body
+			// updates the row the call above inserted). Separate call, like the
+			// blockers below, so the big upsert's signature stays put and an
+			// older node that sends no body simply does not reach here with one.
+			if b.Description != "" || b.Acceptance != "" {
+				var updated bool
+				if err := db.QueryRowContext(r.Context(),
+					`SELECT system_project_bead_body($1,$2,$3,$4)`,
+					payload.Cell, b.Bead,
+					nullableParam(b.Description), nullableParam(b.Acceptance)).Scan(&updated); err != nil {
+					// Logged, not fatal: the bead is projected and useful without
+					// its body, and losing the whole pass over one row's body
+					// would be the wrong trade (same rule as the comment above).
+					log.Error("projecting a bead's body", "cell", payload.Cell, "bead", b.Bead, "error", err)
+				}
 			}
 			projected++
 		}

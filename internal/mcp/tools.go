@@ -212,6 +212,8 @@ var (
 	toolBead = &sdk.Tool{
 		Name: "workgraph_bead",
 		Description: "Everything known about one bead, including one still running: " +
+			"its own brief -- `description` (what to do) and `acceptance` (what done " +
+			"means) -- plus " +
 			"whether the work finished, why not if it did not, what the agent said, " +
 			"which HARNESS and MODEL are running it, what it has cost, and the pull " +
 			"request if it landed. `outcome` distinguishes `done` -- closed AND a " +
