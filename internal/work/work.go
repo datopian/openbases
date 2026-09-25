@@ -149,6 +149,23 @@ func (j Job) Instructions() string {
 			"Work the bead %s. Read it first, do what it asks, and close it when the work "+
 				"is done and not before. If you cannot complete it, leave it open and say why "+
 				"in a comment.%s\n\n"+
+				// Project orientation, said because its absence is expensive.
+				//
+				// The agent gets the bead and the checkout and nothing about the
+				// project itself -- no objective, no conventions -- so it
+				// rediscovers all of that by reading files, every run. datc-yft
+				// spent 872k input tokens across 177 steps on a task that was in
+				// part exploration it could have skipped. A repository usually
+				// states its own conventions; pointing the agent at them first is
+				// one line and turns a generic reimplementation into a change that
+				// fits the project a reviewer will accept.
+				"Before you change anything, get your bearings in this project. If it has "+
+				"guide files -- AGENTS.md, CLAUDE.md, README, CONTRIBUTING, or a docs/ "+
+				"directory -- read those first, then skim the code next to where you will "+
+				"work. They carry the conventions, the build, and the patterns this project "+
+				"already uses, so your change matches it rather than being a generic version a "+
+				"reviewer has to rework. This is cheap and saves the run that reimplements "+
+				"something the project already had a pattern for.\n\n"+
 				// The premature-stop guard. A run ends when a turn takes no action, so
 				// an agent that thinks out loud without editing or running anything
 				// stops mid-task -- ent4-tek exited after 3 minutes having only

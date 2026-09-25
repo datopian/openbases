@@ -108,3 +108,18 @@ func TestAWorkJobNamesTheCheckout(t *testing.T) {
 		}
 	}
 }
+
+// A work job tells the agent to orient in the project before it edits.
+//
+// Without it the agent rediscovers the project's conventions by reading files
+// every run: datc-yft spent 872k input tokens across 177 steps, part of it
+// exploration it could have skipped. The prompt now points it at the repo's own
+// guide files first.
+func TestTheWorkPromptTellsTheAgentToGetOriented(t *testing.T) {
+	got := Job{Kind: KindWork, Cell: "oss", Bead: "wg-1"}.Instructions()
+	for _, want := range []string{"get your bearings", "AGENTS.md", "CONTRIBUTING"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the instructions do not point the agent at project context (%q):\n%s", want, got)
+		}
+	}
+}
