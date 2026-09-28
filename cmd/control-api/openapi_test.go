@@ -210,6 +210,10 @@ var notIdempotent = map[string]string{
 	// GitHub decides its own retries and sends its own delivery id; an
 	// Idempotency-Key header is not something it can be asked to set.
 	"POST /v1/integrations/github/webhook": "the caller is GitHub, which sets its own delivery id",
+	// Recording a verdict is an overwrite: it sets the bead's verification
+	// columns to the value posted, so a repeat records the same verdict and a key
+	// would guard nothing a repeat could break.
+	"POST /v1/node/work/{bead}/verification": "an overwrite; a repeat records the same verdict",
 }
 
 func TestWritesDocumentIdempotencyAndRateLimiting(t *testing.T) {

@@ -167,6 +167,7 @@ var routeActions = map[string]routeAction{
 	// What a run is using, reported by the node when it starts.
 	"POST /v1/node/work/{id}/plan":                    {Public: true, Why: "cells service token, path-bound Access application"},
 	"POST /v1/node/work/project":                      {Public: true, Why: "cells service token, path-bound Access application"},
+	"POST /v1/node/work/{bead}/verification":          {Public: true, Why: "cells service token, path-bound Access application"},
 	"POST /v1/agent-health":                           {Public: true, Why: "cells service token, path-bound Access application"},
 	"GET /v1/budget/check":                            {Public: true, Why: "cells service token, path-bound Access application"},
 	"POST /v1/integrations/github/installation-token": {Public: true, Why: "cells service token, path-bound Access application"},
