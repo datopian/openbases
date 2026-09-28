@@ -42,8 +42,10 @@ import (
 
 	"github.com/datopian/openbases/internal/check"
 	"github.com/datopian/openbases/internal/gastown"
+	"github.com/datopian/openbases/internal/jev"
 	"github.com/datopian/openbases/internal/landing"
 	"github.com/datopian/openbases/internal/runner"
+	"github.com/datopian/openbases/internal/verify"
 	"github.com/datopian/openbases/internal/version"
 	"github.com/datopian/openbases/internal/work"
 )
@@ -1740,6 +1742,12 @@ func (d *dispatcher) landWork(ctx context.Context, job work.Job, rig, out string
 	}
 	d.log.Info("pull request", "bead", job.Bead, "url", url)
 
+	// The shadow-mode acceptance gate (ADR-0029): check the delivered change
+	// against the bead's acceptance criteria and record the verdict. Best-effort
+	// -- a failure here never affects the run, the landing, or the bead, and it
+	// does not change the outcome; it only records what the gate found.
+	d.verifyDelivery(ctx, git, job, rig, base, res)
+
 	// On the bead, so the agent's own record says where the work went. The
 	// interface reads this too, through work_refs.last_comment.
 	cmd := exec.CommandContext(ctx, "bd", "comment", job.Bead,
@@ -1830,6 +1838,96 @@ func (d *dispatcher) openPullRequest(ctx context.Context, job work.Job, rig stri
 		return "", errors.New("the control plane returned no pull request URL")
 	}
 	return answer.URL, nil
+}
+
+// verifyDelivery runs the shadow-mode acceptance gate for a landed change and
+// records the verdict on the bead (ADR-0029).
+//
+// Best-effort in every direction: it reads the bead's acceptance criteria and a
+// bounded diff summary, asks internal/verify (which asks Jev), and posts the
+// verdict. A failure at any step is logged and dropped -- the run has finished,
+// the change has landed, and in shadow mode the gate is a record, not a gate.
+func (d *dispatcher) verifyDelivery(ctx context.Context, git landing.Git, job work.Job, rig, base string, res *landing.Result) {
+	acceptance, closing := d.beadBody(ctx, d.rigOwning(job.Bead, rig), job.Bead)
+
+	// A bounded summary of the change, not the whole patch: Jev's context is 32k
+	// tokens and internal/verify judges against the summary plus the file list.
+	summary, _ := git("diff", "--stat", base+"..."+res.Branch)
+	if len(summary) > 8000 {
+		summary = summary[:8000]
+	}
+
+	token, _ := d.gatewayToken()
+	verdict, err := verify.Evaluate(ctx, jev.New(d.gatewayBaseURL(), token), verify.Input{
+		Acceptance:     acceptance,
+		ChangedFiles:   res.Files,
+		DiffSummary:    summary,
+		ClosingComment: closing,
+	}, verify.Thresholds{})
+	if err != nil {
+		d.log.Warn("shadow acceptance gate: could not verify", "bead", job.Bead, "error", err)
+		return
+	}
+
+	body, err := json.Marshal(map[string]any{"cell": d.cell, "verification": verdict})
+	if err != nil {
+		d.log.Warn("shadow acceptance gate: encoding the verdict", "bead", job.Bead, "error", err)
+		return
+	}
+	if _, err := d.call(ctx, http.MethodPost,
+		"/v1/node/work/"+job.Bead+"/verification", bytes.NewReader(body)); err != nil {
+		d.log.Warn("shadow acceptance gate: recording the verdict", "bead", job.Bead, "error", err)
+		return
+	}
+	d.log.Info("shadow acceptance gate", "bead", job.Bead, "pass", verdict.Pass,
+		"overall", verdict.OverallScore, "no_criteria", verdict.NoCriteria)
+}
+
+// beadBody reads a bead's acceptance criteria and its newest comment from the
+// graph, for the acceptance gate. Best-effort: an empty return is fine, the gate
+// records "no criteria" and moves on.
+func (d *dispatcher) beadBody(ctx context.Context, rig, bead string) (acceptance, lastComment string) {
+	cmd := exec.CommandContext(ctx, "bd", "show", bead, "--json")
+	cmd.Dir = d.cellRoot + "/town/" + rig
+	cmd.Env = append(os.Environ(), "HOME="+d.cellRoot)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", ""
+	}
+	var one map[string]any
+	if err := json.Unmarshal(out, &one); err != nil {
+		var many []map[string]any
+		if err2 := json.Unmarshal(out, &many); err2 != nil || len(many) == 0 {
+			return "", ""
+		}
+		one = many[0]
+	}
+	acceptance, _ = one["acceptance_criteria"].(string)
+	if list, ok := one["comments"].([]any); ok && len(list) > 0 {
+		if c, ok := list[len(list)-1].(map[string]any); ok {
+			lastComment, _ = c["text"].(string)
+		}
+	}
+	return acceptance, lastComment
+}
+
+// gatewayBaseURL reads the cell's own gateway endpoint out of its agent
+// settings, the prefix WITHOUT a provider segment -- the same value the runner
+// derives for the agent (cmd/runner gatewayBaseURL). Empty when it cannot be
+// read, which the caller treats as "cannot verify" and drops.
+func (d *dispatcher) gatewayBaseURL() string {
+	raw, err := os.ReadFile(filepath.Join(d.cellRoot, ".claude", "settings.json"))
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return ""
+	}
+	// .../<account>/<gateway>/anthropic -> .../<account>/<gateway>
+	return strings.TrimSuffix(strings.TrimSuffix(doc.Env["ANTHROPIC_BASE_URL"], "/"), "/anthropic")
 }
 
 // defaultBranch is the branch the repository itself considers default.

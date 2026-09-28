@@ -1579,6 +1579,75 @@
         ]
       }
     },
+    "/v1/node/work/{bead}/verification": {
+      "post": {
+        "summary": "Record a bead's shadow-mode acceptance verdict",
+        "operationId": "post_v1_node_work_bead_verification",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is missing the cell or the verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authenticated, but this credential or role may not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited for this token; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Execution-node path. The node computes the acceptance gate's verdict after a landing (ADR-0029) and records it here; shadow mode, so it does not change the bead's outcome.",
+        "parameters": [
+          {
+            "name": "bead",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/v1/node/work/{id}/heartbeat": {
       "post": {
         "summary": "Report that a running job is still alive",

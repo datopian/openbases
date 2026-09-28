@@ -999,6 +999,44 @@ func routes(cfg config.ControlAPI, db *sql.DB, auth authn.Authenticator, resolve
 		writeJSON(w, http.StatusOK, map[string]any{"projected": projected})
 	})
 
+	// The acceptance gate's shadow verdict for a bead (ADR-0029). The node
+	// computes it after a landing and reports it here, exactly like a
+	// projection. Shadow mode: this records the verdict, it does not change the
+	// bead's outcome. Service callers only.
+	authed.HandleFunc("POST /v1/node/work/{bead}/verification", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := authn.FromContext(r.Context())
+		if !id.IsService {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "service callers only"})
+			return
+		}
+		bead := strings.TrimSpace(r.PathValue("bead"))
+		var payload struct {
+			Cell         string          `json:"cell"`
+			Verification json.RawMessage `json:"verification"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
+			return
+		}
+		if strings.TrimSpace(payload.Cell) == "" || bead == "" || len(payload.Verification) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "cell, bead and verification are required"})
+			return
+		}
+		if db == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no database"})
+			return
+		}
+		var ok bool
+		if err := db.QueryRowContext(r.Context(),
+			`SELECT system_bead_verification($1,$2,$3)`,
+			payload.Cell, bead, string(payload.Verification)).Scan(&ok); err != nil {
+			log.Error("recording a bead's verification", "cell", payload.Cell, "bead", bead, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"recorded": ok})
+	})
+
 	// Agent health, reported by the deterministic witness on each execution
 	// node (cmd/witness). The pass is recorded whole — observations included —
 	// because the claim being made is that health monitoring needs no
