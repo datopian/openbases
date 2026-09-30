@@ -157,7 +157,7 @@ type Client struct {
 }
 
 // DefaultProviderPath is the gateway path for the Jev model.
-const DefaultProviderPath = "/workers-ai/typesafe/jev"
+const DefaultProviderPath = "/workers-ai/run/typesafe/jev"
 
 // New builds a client with a sane timeout and the default provider path.
 func New(baseURL, token string) *Client {

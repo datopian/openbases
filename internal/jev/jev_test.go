@@ -53,7 +53,7 @@ func TestEvaluateSendsTypedQuestionsAndParsesTypedAnswers(t *testing.T) {
 	}
 
 	// The request reached the model path with the gateway headers.
-	if !strings.HasSuffix(gotPath, "/workers-ai/typesafe/jev") {
+	if !strings.HasSuffix(gotPath, "/workers-ai/run/typesafe/jev") {
 		t.Errorf("path = %q, want it to end with the jev model path", gotPath)
 	}
 	if gotAuth != "Bearer tok-123" {
@@ -126,6 +126,29 @@ func TestEvaluateParsesUnwrappedResponse(t *testing.T) {
 	}
 	if a := resp.Answers["done"]; a.Noul == nil || *a.Noul != 0.4 {
 		t.Errorf("done = %+v", a)
+	}
+}
+
+// The exact envelope a live typesafe/jev call returned through the gateway on
+// 2026-09-30, so a change to the shape is caught rather than silently dropped.
+func TestEvaluateParsesTheLiveEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"state":"Completed","result":{"model":"jev-1.13.0",`+
+			`"answers":{"done":{"type":"noul","noul":0.94}},`+
+			`"usage":{"input_tokens":274,"output_tokens":20}}}`)
+	}))
+	defer srv.Close()
+	resp, err := c(srv).Evaluate(context.Background(), Request{
+		Questions: []Question{Noul("done", "the change adds a test")},
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if resp.Model != "jev-1.13.0" {
+		t.Errorf("model = %q", resp.Model)
+	}
+	if a := resp.Answers["done"]; a.Noul == nil || *a.Noul != 0.94 {
+		t.Errorf("done = %+v, want noul 0.94", a)
 	}
 }
 
