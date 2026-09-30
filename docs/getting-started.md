@@ -228,6 +228,26 @@ the authorisation expired, reconnect the connector.
 When the agent finishes, `workgraph_bead` links the pull request. Review and merge
 it like any other PR — the platform opened it, a human still lands it.
 
+### The acceptance check (shadow)
+
+`workgraph_bead` also carries a `verification` object: when a bead's work lands,
+the platform checks the delivered change against **that bead's own acceptance
+criteria** and records a verdict — one truth value per criterion plus an overall
+score, each calibrated with a confidence. This runs automatically; you do not
+invoke it.
+
+It uses [Jev](https://typesafe.ai), a model that returns typed judgements instead
+of prose, through the AI Gateway — so it is cheap enough to run on every bead and
+needs no extra credential. Right now it is **shadow mode**: the verdict is
+recorded and visible, but it does **not** block a close or change a bead's
+`outcome`. It is there so a reviewer can see, at a glance, whether the delivery
+actually met what the bead asked for — and so the thresholds can be calibrated
+before the check ever gates anything. The design is [ADR-0029](adr/0029-jev-acceptance-gate.md).
+
+The single best thing you can do to make it useful is to **write real acceptance
+criteria on your beads** (the `acceptance` field). A bead with none is recorded as
+unverifiable — which is itself worth knowing.
+
 ---
 
 ## The whole loop, once more
