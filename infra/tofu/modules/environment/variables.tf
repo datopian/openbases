@@ -147,13 +147,13 @@ variable "r2_location" {
 variable "cloudflared_version" {
   description = "Pinned cloudflared release. Bootstrapped by cloud-init and verified against cloudflared_sha256."
   type        = string
-  default     = "2026.7.3"
+  default     = "2026.10.4"
 }
 
 variable "cloudflared_sha256" {
   description = "SHA-256 of cloudflared-linux-amd64.deb for cloudflared_version. A mismatch aborts the bootstrap."
   type        = string
-  default     = "049777d30f9bf93da6df8bbe31383460eb2aa51a832c6551824d56f9fcc55974"
+  default     = "3d73cd9f085de5a947fce8a72d0acc34a6a18cb23f369549b1cd0efc51121e98"
 }
 
 variable "app_port" {
