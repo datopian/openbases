@@ -54,7 +54,7 @@ Two Hetzner machines, neither with an open inbound port:
 
 Cloudflare sits in front of both: Access for sign-in (your identity provider, MFA), Tunnels so the
 nodes dial out, AI Gateway so every model call is budgeted and attributed, and R2 for backups. The
-picture is in the README under [How it fits together](../README.md#how-it-fits-together).
+picture is in the README under [How it fits together](../ARCHITECTURE.md#how-it-fits-together).
 
 One company per deployment. Multi-tenancy is not supported.
 
