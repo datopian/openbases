@@ -43,6 +43,10 @@ Codex or OpenCode who need to track, limit and review what those agents do:
 - **Agents are sandboxed.** Each runs in an isolated cell with a budget it can't change. It can't run
   `git`. The platform opens the pull request, and a human merges.
 
+<p align="center">
+  <img src="docs/assets/how-it-works.svg" alt="How OpenBases works: four layers. You file work; the work graph holds it until it is ready; the runner gives it to a sandboxed agent; the platform opens a pull request on GitHub; you review and merge." width="820">
+</p>
+
 ### New here?
 
 | If you want to… | Start with |
