@@ -2,7 +2,11 @@
 
 OpenBases is a work graph for coding agents: self-hosted, shared by a team's people and its agents, with the agents running headless on a server in sandboxes. They cannot push, and every run is budgeted.
 
-Once you have more than a few agents working, the hard part stops being the agent. It is coordination: what work exists, what blocks what, who picked it up, and what is waiting on a human. Without a shared graph of work, agents duplicate tasks and nobody can answer "what is happening across the company". OpenBases is that layer. Datopian, an eight-person open-data consultancy, built it to run its own work. This page is the bets behind it; the decision records in [adr/](adr/) hold the detail, including the turns that were wrong.
+Once you have more than a few agents working, the hard part stops being the agent. **It is coordination: what work exists, what blocks what, who picked it up, and what is waiting on a human**.
+
+Without a shared graph of work, agents duplicate tasks and nobody can answer "what is happening across the company". OpenBases is that layer. [Datopian](https://datopian.com/), an agile data consultancy, built it to run its own work.
+
+This page details the bets behind it; the decision records in [adr/](adr/) hold the detail, including the mistakes that we made and learned from.
 
 ## The bets
 
