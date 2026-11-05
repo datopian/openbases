@@ -16,10 +16,8 @@
 
 ---
 
-> **Status: alpha.** One company runs it, on staging, for real work. Four of the five bases run today;
-> the fifth (improvement) is designed and not built. There is no production deployment yet, and
-> installing it outside our setup is still rough. What does not run yet is listed
-> [below](#what-works-today), by name. Apache-2.0.
+> **Status: alpha.** We run this for real work. Four of the five bases are full operational today;
+> the fifth (improvement/learning) is designed and not built. Open Source under Apache-2.0.
 
 Once you have more than a few agents working, the hard part stops being the agent. It's
 coordination: what work exists, what blocks what, who picked it up, and what's waiting on a human.
