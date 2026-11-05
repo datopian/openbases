@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <b>An open operating system for companies that run on agents.</b><br>
-  One shared work graph for people and agents · sandboxed execution · every run budgeted and attributed
+  <b>A work graph for coding agents.</b><br>
+  Self-hosted and shared by people and agents · agents run headless in sandboxes · they can't push · every run is budgeted
 </p>
 
 <p align="center">
