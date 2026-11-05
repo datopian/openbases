@@ -109,6 +109,17 @@ budget scoping became design inputs ([ADR-0017](docs/adr/0017-not-adopting-paper
 | Paperclip | your server | issues with heartbeats | per company; Bubblewrap optional | its approvals; no PRs |
 | OpenBases | your server, headless | a bead in one company graph | a Linux user per cell, no git credential, a budget | the platform opens a PR, a human merges |
 
+## Architecture
+
+<p align="center">
+  <img src="docs/assets/how-it-works.svg" alt="How OpenBases works: four layers. You file work; the work graph holds it until it is ready; the runner gives it to a sandboxed agent; the platform opens a pull request on GitHub; you review and merge." width="820">
+</p>
+
+Four layers. You and your assistants file and review work. The work graph holds it until it is
+ready. The runner checks the budget and gives it to an agent in a sandboxed cell. The foundations
+(Cloudflare Access, AI Gateway, GitHub) handle identity, spend and the pull request. The full
+picture, with the security boundaries: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
 ## What works today
 
 *Updated 5 November 2026. If this table and the code disagree, the code is right and this is a bug.*
