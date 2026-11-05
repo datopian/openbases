@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="OpenBases mark">
+  <title>OpenBases</title>
+  <style>
+    .edge{stroke:#cbd5e1;stroke-width:3;stroke-linecap:round}
+    .spoke{stroke:#64748b;stroke-width:3;stroke-linecap:round}
+    .hub{fill:#0f172a}
+    .word{fill:#0f172a;font:700 52px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;letter-spacing:-1px}
+    .word .light{font-weight:400}
+    @media (prefers-color-scheme: dark){
+      .edge{stroke:#334155}.spoke{stroke:#94a3b8}.hub{fill:#f8fafc}.word{fill:#f8fafc}
+    }
+  </style>
+  <line x1="60.0" y1="20.0" x2="98.0" y2="47.6" class="edge"/>
+  <line x1="98.0" y1="47.6" x2="83.5" y2="92.4" class="edge"/>
+  <line x1="83.5" y1="92.4" x2="36.5" y2="92.4" class="edge"/>
+  <line x1="36.5" y1="92.4" x2="22.0" y2="47.6" class="edge"/>
+  <line x1="22.0" y1="47.6" x2="60.0" y2="20.0" class="edge"/>
+  <line x1="60" y1="60" x2="60.0" y2="20.0" class="spoke"/>
+  <line x1="60" y1="60" x2="98.0" y2="47.6" class="spoke"/>
+  <line x1="60" y1="60" x2="83.5" y2="92.4" class="spoke"/>
+  <line x1="60" y1="60" x2="36.5" y2="92.4" class="spoke"/>
+  <line x1="60" y1="60" x2="22.0" y2="47.6" class="spoke"/>
+  <rect x="49" y="49" width="22" height="22" rx="5" class="hub"/>
+  <rect x="51.0" y="11.0" width="18" height="18" rx="4" fill="#2563eb"/>
+  <rect x="89.0" y="38.6" width="18" height="18" rx="4" fill="#0d9488"/>
+  <rect x="74.5" y="83.4" width="18" height="18" rx="4" fill="#d97706"/>
+  <rect x="27.5" y="83.4" width="18" height="18" rx="4" fill="#7c3aed"/>
+  <rect x="13.0" y="38.6" width="18" height="18" rx="4" fill="#94a3b8"/>
+</svg>
