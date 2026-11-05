@@ -8,9 +8,7 @@ Three ways in. Pick the one that matches what you want today.
 | Run OpenBases for your own team | [2. Deploy your own](#2-deploy-your-own) | a day, and some cloud accounts |
 | Use a deployment that already exists | [3. Run your first work](#3-run-your-first-work) | 15 minutes |
 
-OpenBases is alpha. One company runs it, on staging. Part 2 is written from that deployment and
-from the install tooling in this repository; nobody outside Datopian has yet followed it end to end
-on a clean host. If you try, [open an issue](https://github.com/datopian/openbases/issues) with
+OpenBases is alpha. If you try and have a problem please [open an issue](https://github.com/datopian/openbases/issues) with
 where it broke. That report is the most useful contribution anyone can make right now.
 
 ---
