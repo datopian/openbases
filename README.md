@@ -1,24 +1,62 @@
-# OpenBases
+<p align="center">
+  <img src="docs/assets/openbases-logo.svg" alt="OpenBases" width="400">
+</p>
 
-**An open operating system for companies that run on agents.** Five open bases — work, knowledge,
-attention, execution, improvement — that give every project, decision and agent a shared, governed
-home. Built to run together; designed to be adopted one at a time.
+<p align="center">
+  <b>An open operating system for companies that run on agents.</b><br>
+  One shared work graph for people and agents · sandboxed execution · every run budgeted and attributed
+</p>
 
-Built and operated by [Datopian](https://www.datopian.com), an eight-person open-data consultancy,
-to run its own client and product work. This repository is the whole system.
+<p align="center">
+  <a href="docs/getting-started.md">Getting started</a> ·
+  <a href="#what-works-today">What works today</a> ·
+  <a href="docs/adr/">Why it's built this way</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+---
 
 > **Status: alpha.** One company runs it, on staging, for real work. Four of the five bases run today;
-> the fifth (improvement) is designed and not built. There is no production deployment yet. This
-> README describes what runs; what does not run yet is listed [below](#what-works-today), by name.
+> the fifth (improvement) is designed and not built. There is no production deployment yet, and
+> installing it outside our setup is still rough. What does not run yet is listed
+> [below](#what-works-today), by name. Apache-2.0.
 
-> **On the name.** The system is OpenBases; the work base is still called Workgraph, which is what the
-> whole thing was called until September 2026. The code has not been renamed and mostly should not be:
-> binaries are `wg-*`, the database and its application role are `workgraph` and `workgraph_app`, bead
-> labels are `wg-project-<slug>`, and the MCP tools are `workgraph_*` — all of which belong to the work
-> base and are correct there. Where you see `wg` or `workgraph` below, it is the work base or its
-> heritage, not a rename left half-done.
+Once you have more than a few agents working, the hard part stops being the agent. It's
+coordination: what work exists, what blocks what, who picked it up, and what's waiting on a human.
+You need a graph of work for that, so agents can hand off and nobody does the same task twice.
+
+OpenBases is that layer, and it runs real work across [Datopian](https://www.datopian.com), the
+eight-person open-data consultancy that builds it. It is for teams already running Claude Code,
+Codex or OpenCode who need to track, limit and review what those agents do:
+
+- **The work graph is the control plane.** Work items live in
+  [Beads](https://github.com/gastownhall/beads), backed by Dolt. Agents and people read and write the
+  same graph — from a browser, or through MCP in Claude, Claude Code or Codex.
+- **It runs headless on a server, not on your laptop.** We started on
+  [Gas Town](https://github.com/gastownhall/gastown). Its orchestration didn't survive a headless node,
+  so we replaced it with a plain runner (one working directory, one settings file, one command) and a
+  health monitor that makes no model calls. The model bill roughly halved, and every run is
+  attributable to a work item ([ADR-0023](docs/adr/0023-direct-agent-runner.md)).
+- **Model choice is tuned per job, and measured.** On the same passing fix, GLM 5.3 Flash cost
+  **$0.0037** against **$0.27** for Sonnet. It's the default now, and any task can ask for a stronger
+  model. Monitoring, dispatch and reconciliation make no model calls at all: idle patrol agents used to
+  cost $13 a day; that's now zero.
+- **Agents are sandboxed.** Each runs in an isolated cell with a budget it can't change. It can't run
+  `git`. The platform opens the pull request, and a human merges.
+
+### New here?
+
+| If you want to… | Start with |
+|---|---|
+| Understand what it is | [The five bases](#the-five-bases) and [what happens to a piece of work](#what-happens-to-a-piece-of-work) |
+| Try it | [`docs/getting-started.md`](docs/getting-started.md), or [run it](#run-it) locally and [connect a client](#connect-a-client) over MCP |
+| Judge whether to trust it | [How it fits together](#how-it-fits-together) and the [threat model](docs/go-live/threat-model.md) |
+| Know why it is built this way | The ADRs in [`docs/adr/`](docs/adr/) and the measurements in [`docs/evaluations/`](docs/evaluations/) |
 
 ## The five bases
+
+Five bases — work, knowledge, attention, execution, improvement — give every project, decision and
+agent a shared, governed home. Built to run together; designed to be adopted one at a time.
 
 Each base solves one part of running a company with agents in the loop. They share one control plane,
 one identity model and one permission model, and none of them approves its own work.
@@ -57,29 +95,6 @@ Steps 1 and 6 are the work base; 2–4 the execution base; 5 the work base again
 6 is the attention base. Nothing on the path approves itself. An agent can propose work, edit files and
 comment on its bead. It cannot push, merge, widen a classification, or change its own budget. The pull
 request it produces says so in its body: *"Opened by a Workgraph agent run. Nobody has reviewed this."*
-
-## Installing it somewhere else
-
-This runs Datopian's own work, and a plain `migrate` still creates Datopian's organisation. To
-install into a database of your own:
-
-```bash
-workgraph-migrate -fresh          # schema and the permission model, nobody in it
-wg-init -org acme -org-name "Acme Ltd" \
-        -admin-email ops@acme.example -admin-name "Dana Ops"
-```
-
-`-fresh` refuses any database with a migration already applied. `wg-init` refuses to create a second
-organisation, and is safe to re-run.
-
-The address you give `wg-init` must be the one your identity provider asserts. No login identity is
-created and none can be: the provider issues the subject on first sign-in and it is matched to this
-user by address. Get it wrong and that administrator cannot sign in.
-
-Still missing before an outside deployment is realistic — an example environment that is not ours,
-and an install guide someone has followed end to end — with what each stage costs, in
-[docs/install/deployable-by-others.md](docs/install/deployable-by-others.md). One company per
-deployment; multi-tenancy is not supported.
 
 ## Run it
 
@@ -135,6 +150,29 @@ travels on, the second is executed on the execution node from a repository an ag
 
 New here? [`docs/getting-started.md`](docs/getting-started.md) walks the first run end to end through
 the MCP — connect, create a project, attach repositories, file a plan (free), and dispatch (spends).
+
+## Installing it somewhere else
+
+This runs Datopian's own work, and a plain `migrate` still creates Datopian's organisation. To
+install into a database of your own:
+
+```bash
+workgraph-migrate -fresh          # schema and the permission model, nobody in it
+wg-init -org acme -org-name "Acme Ltd" \
+        -admin-email ops@acme.example -admin-name "Dana Ops"
+```
+
+`-fresh` refuses any database with a migration already applied. `wg-init` refuses to create a second
+organisation, and is safe to re-run.
+
+The address you give `wg-init` must be the one your identity provider asserts. No login identity is
+created and none can be: the provider issues the subject on first sign-in and it is matched to this
+user by address. Get it wrong and that administrator cannot sign in.
+
+Still missing before an outside deployment is realistic — an example environment that is not ours,
+and an install guide someone has followed end to end — with what each stage costs, in
+[docs/install/deployable-by-others.md](docs/install/deployable-by-others.md). One company per
+deployment; multi-tenancy is not supported.
 
 ## How it fits together
 
@@ -315,6 +353,13 @@ one command — and a deterministic health monitor; the model bill roughly halve
 became attributable ([ADR-0023](docs/adr/0023-direct-agent-runner.md)). The vocabulary (cells, rigs,
 beads) is what is left of the town, and the thirty-one ADRs in [`docs/adr/`](docs/adr/) record every
 turn on the way, including the ones that were wrong.
+
+> **On the name.** The system is OpenBases; the work base is still called Workgraph, which is what the
+> whole thing was called until September 2026. The code has not been renamed and mostly should not be:
+> binaries are `wg-*`, the database and its application role are `workgraph` and `workgraph_app`, bead
+> labels are `wg-project-<slug>`, and the MCP tools are `workgraph_*` — all of which belong to the work
+> base and are correct there. Where you see `wg` or `workgraph` in this repository, it is the work base or its
+> heritage, not a rename left half-done.
 
 ## Layout
 
