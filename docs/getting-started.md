@@ -1,4 +1,167 @@
-# Getting started: run your first work through the MCP
+# Getting started
+
+Three ways in. Pick the one that matches what you want today.
+
+| You want to… | Go to | Takes |
+|---|---|---|
+| See the code run and read the interface | [1. Run it on your laptop](#1-run-it-on-your-laptop) | 10 minutes |
+| Run OpenBases for your own team | [2. Deploy your own](#2-deploy-your-own) | a day, and some cloud accounts |
+| Use a deployment that already exists | [3. Run your first work](#3-run-your-first-work) | 15 minutes |
+
+OpenBases is alpha. One company runs it, on staging. Part 2 is written from that deployment and
+from the install tooling in this repository; nobody outside Datopian has yet followed it end to end
+on a clean host. If you try, [open an issue](https://github.com/datopian/openbases/issues) with
+where it broke. That report is the most useful contribution anyone can make right now.
+
+---
+
+## 1. Run it on your laptop
+
+You need Go, Node, PostgreSQL and `make`.
+
+```bash
+git clone https://github.com/datopian/openbases.git
+cd openbases
+make bootstrap                          # pinned bd/dolt/opencode/claude, each SHA-256 verified
+export PATH="$PWD/.toolchain/bin:$PATH"
+
+createdb workgraph
+go run ./cmd/migrate -fresh -dsn postgres://localhost/workgraph
+go run ./cmd/init -dsn postgres://localhost/workgraph \
+  -org demo -org-name "Demo" -admin-email you@example.com -admin-name "You"
+
+WG_ENV=local WG_DATABASE_URL=postgres://localhost/workgraph go run ./cmd/control-api
+# the interface and /v1 are now on http://127.0.0.1:8080
+```
+
+What you get: the interface, the API and the MCP server against an empty organisation. What you do
+not get: agents. Dispatching needs a Cloudflare AI Gateway token, and a run without one is refused
+rather than reaching a model unbudgeted. There is no fixture work graph or sandbox cell yet, which is
+why `make dev` prints what it is waiting on instead of starting a stack.
+
+---
+
+## 2. Deploy your own
+
+### What you end up with
+
+Two Hetzner machines, neither with an open inbound port:
+
+- a **control node** running `control-api` (interface, `/v1`, `/mcp`), PostgreSQL, the company
+  work graph and the timers that reconcile, monitor and import cost;
+- an **execution node** holding one or more **cells**, each a Linux user with its own checkouts,
+  Beads graph, dispatcher and agent runner.
+
+Cloudflare sits in front of both: Access for sign-in (your identity provider, MFA), Tunnels so the
+nodes dial out, AI Gateway so every model call is budgeted and attributed, and R2 for backups. The
+picture is in the README under [How it fits together](../README.md#how-it-fits-together).
+
+One company per deployment. Multi-tenancy is not supported.
+
+### What you need first
+
+| | Why |
+|---|---|
+| A Cloudflare account and a DNS zone | Hostnames, Access, Tunnels, AI Gateway, R2. Use a zone you can grant DNS Write on. |
+| An R2 bucket for OpenTofu state | Turn on versioning. |
+| A Hetzner Cloud project and an SSH key | The two nodes. |
+| A GitHub App, installed on the repositories agents will work on | So the platform, not the agent, can open pull requests. |
+| An [age](https://age-encryption.org) key | For your own SOPS-encrypted secrets file. |
+| Locally: `tofu`, `ansible`, `sops`, `cloudflared` | Provisioning, configuration, secrets, reaching the nodes. |
+| *Optional:* a Google Cloud project with Workspace delegation | Only if you want Drive and Meet ingested. Off by default; nothing else depends on it. |
+
+### Step 1: secrets
+
+Start from the template, which names every value and holds none:
+
+```bash
+mkdir -p ~/.config/datopian-workgraph/secrets
+cp infra/secrets/staging.example.yaml /tmp/mine.yaml      # fill it in
+sops --encrypt --age <your-age-public-key> /tmp/mine.yaml \
+  > ~/.config/datopian-workgraph/secrets/mine.enc.yaml && rm /tmp/mine.yaml
+```
+
+The real file lives outside the repository on purpose; [`infra/secrets/README.md`](../infra/secrets/README.md)
+says why. Every later command reads it through `scripts/with_secrets.sh mine …`, which decrypts it
+into one child process and never to disk.
+
+### Step 2: infrastructure (OpenTofu)
+
+```bash
+cp -r infra/tofu/envs/example infra/tofu/envs/mine
+cd infra/tofu/envs/mine
+cp terraform.tfvars.example terraform.tfvars    # your zone, hostnames, server types
+cp backend.hcl.example backend.hcl              # your state bucket
+cd ../../../..
+scripts/with_secrets.sh mine scripts/tofu.sh mine plan
+scripts/with_secrets.sh mine scripts/tofu.sh mine apply
+```
+
+This creates the two nodes, the network and firewall, the tunnels, the Access applications and the
+R2 buckets. [`infra/tofu/envs/example/README.md`](../infra/tofu/envs/example/README.md) explains each
+value.
+
+### Step 3: configure the nodes (Ansible)
+
+Copy `infra/ansible/inventory/example.yml` to `inventory/mine.yml` and set its four hostnames to
+the ones step 2 created. Name your cells in your copy of `group_vars/example.yml.disabled`; the
+committed cell names are Datopian's.
+
+Then build and configure. **The first run must skip migrations.** The playbook runs a plain
+migrate, and on an empty database a plain migrate installs Datopian's own seed records. A fresh
+install has to run `-fresh` first:
+
+```bash
+make release && make build-linux
+cd infra/ansible
+cloudflared access login ssh.<your-zone>          # one-hour token; the playbook retries through expiry
+../../scripts/with_secrets.sh mine \
+  ansible-playbook -i inventory/mine.yml site.yml --skip-tags migrate
+```
+
+A full run takes about eleven minutes. The first line of a healthy run is
+`"msg": "15 binaries ready to install"`; if you see a refusal instead, the build step was skipped.
+
+### Step 4: create your organisation
+
+On the control node, as `postgres`:
+
+```bash
+# copy the migrate binary that step 3 skipped
+ansible control -i inventory/mine.yml -b -m copy \
+  -a "src=../../bin/linux-amd64/migrate dest=/usr/local/bin/wg-migrate mode=0755"
+
+# then, on the control node
+sudo -u postgres wg-migrate -fresh -dsn "postgresql:///workgraph?host=/var/run/postgresql"
+sudo -u postgres wg-init -org acme -org-name "Acme Ltd" \
+  -admin-email ops@acme.example -admin-name "Dana Ops"
+```
+
+`-fresh` applies the schema and the permission model with nobody in it, and refuses any database
+that already has a migration applied. `wg-init` creates the organisation and the first
+administrator, refuses a second organisation, and is safe to re-run.
+
+**The admin email must be the one your identity provider asserts.** No login identity is created
+here; the provider issues it on first sign-in and it is matched by address. Get it wrong and that
+administrator cannot sign in.
+
+From now on, ordinary playbook runs (without `--skip-tags`) are safe: every seed migration is
+already recorded as applied.
+
+### Step 5: check it
+
+1. Open `https://<your-host>` and sign in as the administrator.
+2. Connect a client (part 3, step 0) and ask **"what needs me?"**.
+3. Create a project, attach one repository, and dispatch a small bead (part 3, steps 1 to 4). A pull
+   request opened by the platform is the proof that every piece is wired.
+
+Day-two operations (deploys on merge, backups, restores, rotating a credential) are in
+[`docs/runbooks/`](runbooks/README.md). Everything still missing before an outside install is
+routine is listed in [`docs/install/deployable-by-others.md`](install/deployable-by-others.md).
+
+---
+
+## 3. Run your first work
 
 This is the recommended way to use OpenBases day to day. You do not open a web
 page and click buttons; you talk to a client you already use — Claude (desktop,
@@ -23,7 +186,7 @@ type the arguments yourself — the model reads your intent and fills them in.
 
 ---
 
-## 0. Connect the MCP server (once)
+### 0. Connect the MCP server (once)
 
 The connector has no password and no pasted token: your client opens your
 browser, you complete the normal login (Google Workspace, MFA, the same
@@ -64,7 +227,7 @@ here once "what needs me?" answers.
 
 ---
 
-## 1. Create a project
+### 1. Create a project
 
 A project is the unit of ownership and visibility. Its **slug is permanent** — it
 appears in bead labels (`wg-project-<slug>`) and decides who can read the work —
@@ -91,7 +254,7 @@ Underneath, that is `workgraph_project_create`:
 | `visibility` | no | `internal` (default), `public`, or `restricted` |
 | `cell` | no | usually omitted; the deployment's shared cell (`oss`) runs it. **Required when `visibility` is `restricted`** |
 
-### Changing owners, cell, or access later
+#### Changing owners, cell, or access later
 
 Owners are set at creation. Changing them afterwards — or assigning a project to
 a different execution cell, or granting a third person access — is **not** an MCP
@@ -114,7 +277,7 @@ who can see the work, so the person doing it should read what they are doing.
 
 ---
 
-## 2. Attach the repositories
+### 2. Attach the repositories
 
 Work runs against code. A cell provisions **one rig per attached repository**, and
 a dispatch is routed to the rig holding the code a bead is about. A project with
@@ -141,7 +304,7 @@ created for it and the result says so.
 
 ---
 
-## 3. Plan and file the work
+### 3. Plan and file the work
 
 You plan wherever you think best — in the chat with your client, in a doc, in your
 head — and then file the finished plan in one call. **Filing costs nothing:** no
@@ -188,7 +351,7 @@ it finish.
 
 ---
 
-## 4. Dispatch a bead
+### 4. Dispatch a bead
 
 This is the one that **spends money**: an agent runs against the bead in an
 isolated cell, does the work, and the platform (not the agent) lands the result as
@@ -215,7 +378,7 @@ the authorisation expired, reconnect the connector.
 
 ---
 
-## 5. Watch it and read the result
+### 5. Watch it and read the result
 
 | Say | Tool | Shows |
 |---|---|---|
@@ -228,7 +391,7 @@ the authorisation expired, reconnect the connector.
 When the agent finishes, `workgraph_bead` links the pull request. Review and merge
 it like any other PR — the platform opened it, a human still lands it.
 
-### The acceptance check (shadow)
+#### The acceptance check (shadow)
 
 `workgraph_bead` also carries a `verification` object: when a bead's work lands,
 the platform checks the delivered change against **that bead's own acceptance
@@ -250,7 +413,7 @@ unverifiable — which is itself worth knowing.
 
 ---
 
-## The whole loop, once more
+### The whole loop, once more
 
 ```
 connect ──▶ create project ──▶ attach repos ──▶ file plan (free) ──▶ dispatch (spends) ──▶ read PR
@@ -261,7 +424,7 @@ That is the complete first run. From here it is the same three tools over and
 over: **file** what you planned, **dispatch** what is ready, **read** what came
 back — and re-file to re-plan whenever the shape of the work changes.
 
-## The tool set
+### The tool set
 
 Ten tools, the same set over the hosted connector and over `wg mcp`, so nothing
 is available in one client and missing in another:
@@ -280,7 +443,7 @@ owners, cell, or membership (they decide accountability and who can read the
 work). See [ADR-0025](adr/0025-api-first-external-clients.md) for why the tool set
 is curated rather than the whole API.
 
-## Related
+### Related
 
 - [`docs/runbooks/connect-a-client.md`](runbooks/connect-a-client.md) — full
   connection setup, every client, and troubleshooting

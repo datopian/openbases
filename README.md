@@ -10,7 +10,7 @@
 <p align="center">
   <a href="docs/getting-started.md">Getting started</a> ·
   <a href="#what-works-today">What works today</a> ·
-  <a href="docs/adr/">Why it's built this way</a> ·
+  <a href="docs/why.md">Why we built it</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -37,10 +37,11 @@ Codex or OpenCode who need to track, limit and review what those agents do:
   so we replaced it with a plain runner (one working directory, one settings file, one command) and a
   health monitor that makes no model calls. The model bill roughly halved, and every run is
   attributable to a work item ([ADR-0023](docs/adr/0023-direct-agent-runner.md)).
-- **Model choice is tuned per job, and measured.** On the same passing fix, GLM 5.3 Flash cost
-  **$0.0037** against **$0.27** for Sonnet. It's the default now, and any task can ask for a stronger
-  model. Monitoring, dispatch and reconciliation make no model calls at all: idle patrol agents used to
-  cost $13 a day; that's now zero.
+- **Model choice is configuration, and measured.** On the same passing fix, GLM 5.3 Flash cost
+  **$0.0037** against **$0.27** for Sonnet, so it became the default. Then it looped on real work, and
+  a week later the default moved to Gemini 3.8 Flash. Any task can ask for a stronger model.
+  Monitoring, dispatch and reconciliation make no model calls at all: idle patrol agents used to cost
+  $13 a day; that's now zero.
 - **Agents are sandboxed.** Each runs in an isolated cell with a budget it can't change. It can't run
   `git`. The platform opens the pull request, and a human merges.
 
@@ -49,9 +50,9 @@ Codex or OpenCode who need to track, limit and review what those agents do:
 | If you want to… | Start with |
 |---|---|
 | Understand what it is | [The five bases](#the-five-bases) and [what happens to a piece of work](#what-happens-to-a-piece-of-work) |
-| Try it | [`docs/getting-started.md`](docs/getting-started.md), or [run it](#run-it) locally and [connect a client](#connect-a-client) over MCP |
+| Try it, or deploy it | [`docs/getting-started.md`](docs/getting-started.md): on your laptop, on your own servers, or on a deployment that exists |
 | Judge whether to trust it | [How it fits together](#how-it-fits-together) and the [threat model](docs/go-live/threat-model.md) |
-| Know why it is built this way | The ADRs in [`docs/adr/`](docs/adr/) and the measurements in [`docs/evaluations/`](docs/evaluations/) |
+| Know why it is built this way | [`docs/why.md`](docs/why.md), one page; then the ADRs in [`docs/adr/`](docs/adr/) |
 
 ## The five bases
 
@@ -79,7 +80,7 @@ are.
 
 ```mermaid
 flowchart LR
-    bead["<b>1. Bead</b><br/><small>a work item in the graph,<br/>filed by a person or planned by an agent</small>"]
+    bead["<b>1. Bead</b><br/><small>a work item in the graph,<br/>filed by a person or their assistant</small>"]
     dispatch["<b>2. Dispatch</b><br/><small>budget checked first;<br/>routed to the cell and rig<br/>that hold the repository</small>"]
     agent["<b>3. 🤖 Agent</b><br/><small>OpenCode or Claude Code,<br/>reads and edits in the rig checkout;<br/>can run <code>bd</code>, cannot run <code>git</code></small>"]
     land["<b>4. Land</b><br/><small>the dispatcher commits what the run<br/>changed to <code>bead/&lt;id&gt;</code>, pushes,<br/>control-api opens the PR</small>"]
@@ -97,6 +98,9 @@ comment on its bead. It cannot push, merge, widen a classification, or change it
 request it produces says so in its body: *"Opened by a Workgraph agent run. Nobody has reviewed this."*
 
 ## Run it
+
+The short version. [Getting started](docs/getting-started.md) has the full laptop setup and the
+guide to [deploying your own](docs/getting-started.md#2-deploy-your-own).
 
 ```bash
 git clone git@github.com:datopian/openbases.git
@@ -148,8 +152,8 @@ and attaching repositories**, filing work from a brief, and dispatching. Detachi
 setting a repository's check command are deliberately not tools — the first withdraws the route work
 travels on, the second is executed on the execution node from a repository an agent can edit.
 
-New here? [`docs/getting-started.md`](docs/getting-started.md) walks the first run end to end through
-the MCP — connect, create a project, attach repositories, file a plan (free), and dispatch (spends).
+New here? [`docs/getting-started.md`](docs/getting-started.md) covers all three ways in: on your laptop,
+deploying your own, and running your first work through the MCP.
 
 ## Installing it somewhere else
 
@@ -202,7 +206,7 @@ flowchart TB
         subgraph cell1["cell: oss"]
             disp1["<b>wg-dispatcher</b><br/><small>claims work, lands the diff</small>"]
             run1["<b>wg-runner</b><br/><small>one run, one deadline,<br/>one settings file</small>"]
-            ag1["🤖 <b>agent</b><br/><small>OpenCode · GLM 5.3 Flash (default)<br/>Claude Code · Sonnet (per run)</small>"]
+            ag1["🤖 <b>agent</b><br/><small>OpenCode · Gemini 3.8 Flash (default)<br/>Claude Code · Sonnet (per run)</small>"]
             rigs1["rigs<br/><small>one checkout per repository</small>"]
             bd1[("Beads<br/><small>(Dolt)</small>")]
         end
@@ -297,20 +301,24 @@ deployed configuration; the tool allowlist is code somebody reviews.
 
 | Role | Harness | Model | Since |
 |---|---|---|---|
-| `polecat`, `crew` — the agents that do the work, **and the planner** | OpenCode | `workers-ai/@cf/zai-org/glm-5.3-flash` | 7 Sep 2026 |
+| `polecat`, `crew`: the agents that do the work | OpenCode | `google-ai-studio/gemini-3.8-flash` | 14 Sep 2026 |
 | any run, on request | Claude Code | `anthropic/claude-sonnet-5` | `-runtime claude -model anthropic/claude-sonnet-5` |
 
-Why the default moved: on the bake-off screens — context, tool use, a real fix scored on the edit — both
-passed, and GLM 5.3 Flash cost **$0.0037** against Sonnet's **$0.2732** for the same passing result, with
-every call arriving in `usage_records` tagged by role, cell and bead. That is not evidence that GLM
-matches Sonnet on hard work; it is evidence it can do the work at all, attributably, at a fiftieth of the
-price — enough to be the default when any bead can say it needs more. Measurements and their caveats:
-[`docs/evaluations/`](docs/evaluations/).
+How the default got here. On the bake-off screens (context, tool use, a real fix scored on the edit)
+GLM 5.3 Flash and Sonnet both passed, and GLM cost **$0.0037** against Sonnet's **$0.2732** for the same
+passing result, every call tagged by role, cell and bead in `usage_records`. GLM became the default on
+7 September. On real beads it looped and landed nothing: one bead cost $3.26, twice, for no change. On
+14 September the default moved to Gemini 3.8 Flash, through the same AI Gateway and the same bill.
+The bake-off measured whether a model can do the work at all; only real work measured whether it
+finishes. Measurements and their caveats: [`docs/evaluations/`](docs/evaluations/).
 
-Planning runs as the same role as execution, so it moved to the same model. That was not a separate
-decision and it deserves one: breaking a brief into work is judgement, and it is the step whose mistakes
-are multiplied by every agent that acts on its output. The screens that justified the move were an
-off-by-one and a file edit — execution tasks. Nothing has yet measured decomposition.
+Gemini runs on its native API through a loopback proxy on the node, because the OpenAI-compatible
+route drops the signature Gemini attaches to each tool call and the second call fails. The gateway
+token lives in that proxy, never in the agent's configuration.
+
+Planning is no longer an agent's job. Breaking a goal into work is judgement, and it is best done by the
+person who knows the goal, in whatever tool they already think in (Claude, Codex, a document).
+OpenBases records the plan as beads and runs it; filing costs nothing and starts no agent.
 
 Two rules that survived every measurement. **Context is a hard filter before quality**: OpenCode's system
 prompt is ~19,900 tokens, so a model with a 24k window cannot be a worker whatever the leaderboard says.
@@ -323,23 +331,25 @@ afterwards.
 
 ## What works today
 
-*Updated 8 September 2026. If this table and the code disagree, the code is right and this is a bug.*
+*Updated 5 November 2026. If this table and the code disagree, the code is right and this is a bug.*
 
 | Base | Capability | State |
 |---|---|---|
 | Work | Login via Cloudflare Access; projects, work, inbox, ask in the browser | works |
 | Work | Remote MCP (`/mcp`) with Access Managed OAuth; `wg` CLI; `wg mcp` stdio | works — confirmed clients in the runbook |
-| Work | Brief → agent plans → beads under a project; create a project and attach repositories from MCP | works |
+| Work | File a plan as beads under a project, from MCP, the CLI or the API (free, no agent); create a project and attach repositories from MCP | works; agent-run planning was removed on 10 September |
 | Work | Bead detail — outcome, the agent's own words, harness and model, cost, pull requests | works in the API, MCP and the bead page; a run in flight reports its harness and model, and says when its cost has not been imported yet |
 | Work | Role-permission matrix enforcement | seeded; enforcement flag off until every role has a real user |
 | Knowledge | Meeting transcript → typed candidates → human review → bead or knowledge PR | works via API and MCP; **no review page in the interface** — review is an API call today |
 | Attention | Ranked inbox of witness and monitor escalations; four fixed chief-of-staff questions | works; approvals have no producer yet, free-text ask is by design absent |
-| Execution | Dispatch → agent edits in the rig → branch → pull request → state next to the bead | works |
+| Execution | Dispatch → agent edits in the rig → branch → pull request → state next to the bead | works; ready beads run in parallel, up to three per cell by default |
+| Execution | Acceptance check: a judge model scores the delivered change against the bead's acceptance criteria ([ADR-0029](docs/adr/0029-jev-acceptance-gate.md)) | shadow mode: the verdict is recorded on the bead and blocks nothing |
 | Execution | Per-bead budget refusal; cost per bead from gateway import | works (cost arrives on an hourly import) |
 | Execution | Isolated cells, one rig per repository, deterministic witness, `wg-browse` | works |
 | Execution | A repository's own build or test command run against the change, with one retry | works where the cell can run it; **not enabled for any repository yet**, and PortalJS does not fit — `npm ci` alone needs 7m5s against a 7.5-minute budget |
 | Improvement | Evidence-backed change proposals with tests | designed, not built |
 | — | Local `make dev` stack | not assembled; run `control-api` directly |
+| — | Deploy on merge to `main` | works, to staging |
 | — | Production deployment | not yet; staging only |
 
 ## How this came to be
