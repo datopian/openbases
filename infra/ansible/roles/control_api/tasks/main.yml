@@ -184,13 +184,54 @@
 # this role: the schema moved, the code did not, and the run reported success.
 # A tag that always carries both makes that mistake unavailable instead of
 # documenting it.
-- name: Apply database migrations
+# A NEW deployment must not get Datopian's records. A plain migrate on an empty
+# database applies the seed migrations, which insert Datopian's organisation,
+# people, projects and repositories (docs/install/deployable-by-others.md).
+# `-fresh` skips them, and refuses any database that already has a migration
+# applied, so it is only ever passed when the count below is zero.
+#
+# migrate_on_empty_database decides what an EMPTY database gets:
+#   fresh  (default) schema and permission model, nobody in it; then wg-init
+#   seed   the historical behaviour, Datopian's records included
+# A database with migrations already applied is migrated normally either way,
+# so existing deployments are unaffected by this setting.
+- name: Count the migrations already applied
   become: true
   become_user: postgres
   ansible.builtin.command:
     cmd: >-
+      psql -d {{ postgresql_database }} -tAc
+      "SELECT count(*) FROM schema_migrations"
+  register: migrate_applied
+  changed_when: false
+  # A missing table is an empty database, which is exactly the case this is
+  # for. Any other failure is NOT read as empty: the plain migrate below then
+  # meets the same problem and reports it. And if it ever were misread, -fresh
+  # refuses a database with a migration applied, so the worst case is a
+  # failed deploy, never Datopian's records in somebody else's database.
+  failed_when: false
+  when: migrate_local_binary | length > 0
+  tags: [binaries, code, migrate]
+
+- name: Refuse an unknown migrate_on_empty_database
+  ansible.builtin.assert:
+    that: migrate_on_empty_database in ['fresh', 'seed']
+    fail_msg: "migrate_on_empty_database must be 'fresh' or 'seed', not '{{ migrate_on_empty_database }}'"
+  when: migrate_local_binary | length > 0
+  tags: [binaries, code, migrate]
+
+- name: Apply database migrations
+  become: true
+  become_user: postgres
+  vars:
+    migrate_database_empty: >-
+      {{ ('schema_migrations' in migrate_applied.stderr and 'does not exist' in migrate_applied.stderr)
+         or (migrate_applied.rc == 0 and (migrate_applied.stdout | trim | int) == 0) }}
+  ansible.builtin.command:
+    cmd: >-
       {{ migrate_binary }}
       -dsn postgresql:///{{ postgresql_database }}?host=/var/run/postgresql
+      {{ '-fresh' if (migrate_database_empty | bool and migrate_on_empty_database == 'fresh') else '' }}
   register: migrate_run
   # The tool logs one "applied" line per migration and "database is up to date"
   # when there was nothing to do, so this reports a change only when the schema

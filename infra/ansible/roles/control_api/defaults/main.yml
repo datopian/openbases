@@ -43,6 +43,11 @@ work_binary: /usr/local/bin/wg-work
 migrate_local_binary: ""
 migrate_binary: /usr/local/bin/wg-migrate
 
+# What an EMPTY database gets on its first deploy: `fresh` (schema and the
+# permission model, nobody in it; run wg-init next) or `seed` (Datopian's own
+# records, the historical behaviour). Ignored once any migration is applied.
+migrate_on_empty_database: fresh
+
 # wg-init, run once by hand at install time. Empty by default like the others:
 # the playbook copies it only when a build has produced it.
 init_local_binary: ""

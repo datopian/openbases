@@ -107,46 +107,39 @@ Copy `infra/ansible/inventory/example.yml` to `inventory/mine.yml` and set its f
 the ones step 2 created. Name your cells in your copy of `group_vars/example.yml.disabled`; the
 committed cell names are Datopian's.
 
-Then build and configure. **The first run must skip migrations.** The playbook runs a plain
-migrate, and on an empty database a plain migrate installs Datopian's own seed records. A fresh
-install has to run `-fresh` first:
+Then build and configure:
 
 ```bash
 make release && make build-linux
 cd infra/ansible
 cloudflared access login ssh.<your-zone>          # one-hour token; the playbook retries through expiry
 ../../scripts/with_secrets.sh mine \
-  ansible-playbook -i inventory/mine.yml site.yml --skip-tags migrate
+  ansible-playbook -i inventory/mine.yml site.yml
 ```
+
+On an empty database the playbook migrates with `-fresh`: the schema and the permission model, with
+nobody in it. (Without it, the seed migrations would install Datopian's own organisation, people and
+projects; `migrate_on_empty_database: seed` keeps that old behaviour if you want it.) A database that
+already has migrations applied is migrated normally.
 
 A full run takes about eleven minutes. The first line of a healthy run is
 `"msg": "15 binaries ready to install"`; if you see a refusal instead, the build step was skipped.
 
 ### Step 4: create your organisation
 
-On the control node, as `postgres`:
+On the control node:
 
 ```bash
-# copy the migrate binary that step 3 skipped
-ansible control -i inventory/mine.yml -b -m copy \
-  -a "src=../../bin/linux-amd64/migrate dest=/usr/local/bin/wg-migrate mode=0755"
-
-# then, on the control node
-sudo -u postgres wg-migrate -fresh -dsn "postgresql:///workgraph?host=/var/run/postgresql"
-sudo -u postgres wg-init -org acme -org-name "Acme Ltd" \
+sudo -u postgres wg-init -dsn "postgresql:///workgraph?host=/var/run/postgresql" \
+  -org acme -org-name "Acme Ltd" \
   -admin-email ops@acme.example -admin-name "Dana Ops"
 ```
 
-`-fresh` applies the schema and the permission model with nobody in it, and refuses any database
-that already has a migration applied. `wg-init` creates the organisation and the first
-administrator, refuses a second organisation, and is safe to re-run.
+`wg-init` creates the organisation and the first administrator, refuses a second organisation, and is safe to re-run.
 
 **The admin email must be the one your identity provider asserts.** No login identity is created
 here; the provider issues it on first sign-in and it is matched by address. Get it wrong and that
 administrator cannot sign in.
-
-From now on, ordinary playbook runs (without `--skip-tags`) are safe: every seed migration is
-already recorded as applied.
 
 ### Step 5: check it
 
