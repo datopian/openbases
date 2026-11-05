@@ -56,6 +56,40 @@ Codex or OpenCode who need to track, limit and review what those agents do:
 | Judge whether to trust it | [How it fits together](#how-it-fits-together) and the [threat model](docs/go-live/threat-model.md) |
 | Know why it is built this way | [`docs/why.md`](docs/why.md), one page; then the ADRs in [`docs/adr/`](docs/adr/) |
 
+## How it compares
+
+**What it is like to use.** You talk to Claude or Codex as you already do; it files beads into the
+shared graph through MCP. You dispatch one, or let the dispatcher pick up what is ready. A pull
+request arrives on GitHub with its cost next to it, and you review and merge.
+
+**What else is out there.** Three groups. *Session managers* (Conductor, Vibe Kanban, Kanbots,
+Emdash and a dozen more) run several Claude Code or Codex sessions in parallel on one laptop, often
+as a kanban; a good job, and a different one from holding a team's work. *Agent sandboxes* (NVIDIA
+OpenShell, Runtime, OneCLI) answer "how do we let a team run agents safely" with a confined runtime
+and credentials kept out of the agent; they do not hold the work. *Orchestrators* break work up and
+hand it off: Gas Town, Paperclip, Claude's Agent Teams, Optio. OpenBases is an orchestrator with the
+sandbox group's stance, built around one graph of work for the whole company.
+
+**Gas Town.** We started on it and kept Beads, its work graph. Gas Town is built to be driven by a
+person at a terminal, where tmux sessions exist because somebody made them, and its patrol roles are
+model sessions. Our nodes have nobody at a terminal, so we replaced the orchestration with a plain
+runner and a monitor that makes no model calls ([ADR-0023](docs/adr/0023-direct-agent-runner.md),
+[ADR-0019](docs/adr/0019-deterministic-witness.md)).
+
+**Paperclip.** Closest in ambition: self-hosted, issues with dependencies, budgets with hard stops,
+approval gates, optional Bubblewrap confinement. We did not adopt it because its isolation unit is
+the company and ours has to be the client engagement inside one; it deliberately does not open pull
+requests; and its approvals are not bound to a digest of what was approved. Its review policies and
+budget scoping became design inputs ([ADR-0017](docs/adr/0017-not-adopting-paperclip.md)).
+
+| | Where it runs | Unit of work | Isolation | Who lands the result |
+|---|---|---|---|---|
+| Session managers | your laptop | a session or card | one person's machine | you |
+| Agent sandboxes | a confined runtime | a run | the product's point | your own tooling |
+| Gas Town | a machine with a terminal | beads in convoys | a worktree per polecat | its merge queue |
+| Paperclip | your server | issues with heartbeats | per company; Bubblewrap optional | its approvals; no PRs |
+| OpenBases | your server, headless | a bead in one company graph | a Linux user per cell, no git credential, a budget | the platform opens a PR, a human merges |
+
 ## The five bases
 
 Five bases — work, knowledge, attention, execution, improvement — give every project, decision and
